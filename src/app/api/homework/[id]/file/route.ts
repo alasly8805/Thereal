@@ -70,10 +70,15 @@ export async function GET(
       contentType = `image/${ext.replace(".", "")}`;
     }
 
+    // Strip anything that could break out of the quoted filename param (quotes,
+    // control chars, CR/LF) before putting it in the response header.
+    const headerName = cleanFileName.replace(/[^\w.\- ]+/g, "_");
+
     return new Response(buffer, {
       headers: {
         "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename="${cleanFileName}"`,
+        "Content-Disposition": `attachment; filename="${headerName}"; filename*=UTF-8''${encodeURIComponent(cleanFileName)}`,
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (err) {

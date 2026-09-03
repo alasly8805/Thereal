@@ -135,6 +135,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "يوجد كورس بنفس العنوان لديك" }, { status: 400 });
     }
 
+    const deliveryModeRaw = typeof body.deliveryMode === "string" ? body.deliveryMode.toUpperCase().trim() : "ONLINE";
+    const deliveryMode = ["ONLINE", "CENTER", "BOTH"].includes(deliveryModeRaw) ? deliveryModeRaw : "ONLINE";
+
     const course = await prisma.course.create({
       data: {
         title,
@@ -144,6 +147,7 @@ export async function POST(req: NextRequest) {
         educationalStage,
         teacherId: session.id,
         contactPhone: contactPhone || null,
+        deliveryMode,
       },
     });
 

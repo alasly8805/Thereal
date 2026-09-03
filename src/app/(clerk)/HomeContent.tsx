@@ -10,6 +10,7 @@ import { FeaturesSection } from "@/components/home/FeaturesSection";
 import { ContactSection } from "@/components/home/ContactSection";
 import type { MeUser } from "@/lib/fetch-me";
 import type { SiteText } from "@/lib/site-text";
+import { safeJsonLd } from "@/lib/jsonld";
 
 /**
  * Client shell for the homepage. Site copy (`text`) is server-rendered and
@@ -44,7 +45,7 @@ export function HomeContent({ text }: { text: SiteText }) {
         id="organization-schema"
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
+          __html: safeJsonLd({
             "@context": "https://schema.org",
             "@type": "Organization",
             "name": "منصة Code-UP الكورسات",

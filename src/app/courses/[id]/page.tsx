@@ -10,6 +10,8 @@ import { CourseFeedbackForm } from "@/components/ai/CourseFeedbackForm";
 import { SecurePlayer } from "@/components/ui/SecurePlayer";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { clientErrorMessage } from "@/lib/client-error-message";
+import { safeJsonLd } from "@/lib/jsonld";
+import { KeyRound } from "lucide-react";
 
 type CoursePreview = {
   id: string;
@@ -32,6 +34,7 @@ type CoursePreview = {
   hasAccess: boolean;
   allowDirectInstall: boolean;
   isOwnerTeacher?: boolean;
+  deliveryMode?: string;
 };
 
 function buildWhatsAppUrl(phone: string, message: string) {
@@ -92,6 +95,16 @@ export default function CourseProductPage() {
   // Free/demo inline player
   const [demo, setDemo] = useState<{ title: string; embedUrl: string; provider?: string } | null>(null);
   const [demoLoading, setDemoLoading] = useState<string | null>(null);
+  const [isCenterMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const host = window.location.hostname;
+    return (
+      host.startsWith("center.") ||
+      host.includes("center.code-up.tech") ||
+      window.location.search.includes("center=1") ||
+      document.cookie.includes("center_mode=1")
+    );
+  });
 
   const countdown = useCountdown(course?.discountExpiresAt ?? null);
 
@@ -301,7 +314,7 @@ export default function CourseProductPage() {
           id="course-schema"
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
+            __html: safeJsonLd({
               "@context": "https://schema.org",
               "@type": "Course",
               "name": course.title,
@@ -453,7 +466,12 @@ export default function CourseProductPage() {
               <div className="p-6 space-y-5">
 
                 {/* Price display */}
-                {!course.isPaid ? (
+                {isCenterMode || course.deliveryMode === "CENTER" ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl font-black text-amber-500 dark:text-amber-400">🏛️ حصة سنتر حضوري</span>
+                    <span className="text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-bold">تفعيل بالكود فقط</span>
+                  </div>
+                ) : !course.isPaid ? (
                   <div className="flex items-center gap-2">
                     <span className="text-3xl font-black text-emerald-600 dark:text-emerald-400">مجاني</span>
                     <span className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full font-medium">بالكامل</span>
@@ -494,6 +512,52 @@ export default function CourseProductPage() {
                         أنت أستاذ هذا الكورس — يمكنك معاينته ودخوله مباشرة مجاناً دون الحاجة للدفع.
                       </p>
                     )}
+                  </div>
+                ) : isCenterMode || course.deliveryMode === "CENTER" ? (
+                  /* Center Mode — exclusively unlock via Access Code, no prices or payment gateways */
+                  <div className="p-4 sm:p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+                        <KeyRound className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-amber-300">تفعيل الحصة بكود السنتر</h4>
+                        <p className="text-[11px] text-slate-400">ينزل الكورس مباشرة في مكتبتك بمجرد إدخال الكود</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      <input
+                        type="text"
+                        value={code}
+                        onChange={(e) => setCode(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => e.key === "Enter" && applyCode()}
+                        placeholder="أدخل كود السنتر (المسلّم لك في القاعة)"
+                        className="w-full px-4 py-3 rounded-xl border border-amber-500/40 bg-slate-900 text-center font-mono text-base font-bold tracking-widest text-amber-300 outline-none focus:border-amber-400 transition-all placeholder:text-slate-500 placeholder:text-xs placeholder:font-sans placeholder:tracking-normal"
+                        dir="ltr"
+                      />
+
+                      <button
+                        onClick={applyCode}
+                        disabled={applying || !code.trim()}
+                        className="w-full py-3 rounded-xl text-slate-950 font-black text-sm transition-all disabled:opacity-50 cursor-pointer shadow-lg bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 flex items-center justify-center gap-2"
+                      >
+                        {applying ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                            <span>جارٍ التفعيل...</span>
+                          </>
+                        ) : (
+                          <span>تفعيل الكورس وإضافته لمكتبتي فوراً 🚀</span>
+                        )}
+                      </button>
+
+                      {!user && (
+                        <p className="text-[11px] text-center text-slate-400">
+                          يلزم <button onClick={() => router.push(`/login?redirect_url=/courses/${courseId}`)} className="text-amber-400 font-bold underline">تسجيل الدخول</button> أولاً لحفظ الكورس في حسابك
+                        </p>
+                      )}
+                    </div>
                   </div>
                 ) : (!course.isPaid || course.effectivePrice === 0) ? (
                   /* Free course — always direct install, no code needed */
@@ -559,7 +623,7 @@ export default function CourseProductPage() {
                               {[
                                 { id: "vf_cash", label: "فودافون كاش", color: "#E60000" },
                               ].map(m => (
-                                <button key={m.id} type="button" onClick={() => setSelectedWalletMethod(m.id as any)}
+                                <button key={m.id} type="button" onClick={() => setSelectedWalletMethod(m.id as "vf_cash")}
                                   className="py-2 px-1 rounded-lg text-xs font-bold border cursor-pointer transition-all text-center flex items-center justify-center gap-1"
                                   style={{
                                     borderColor: selectedWalletMethod === m.id ? m.color : "var(--border)",
@@ -679,7 +743,7 @@ export default function CourseProductPage() {
                           )}
                         </button>
                         {!user && <p className="text-xs text-center" style={{ color: "var(--ink-3)" }}><button onClick={() => router.push(`/login?redirect_url=/courses/${courseId}`)} className="underline" style={{ color: "var(--brand)" }}>سجّل الدخول</button> أولاً</p>}
-                        <p className="text-xs text-center" style={{ color: "var(--ink-3)" }}>يمكنك إضافة رصيد من قسم "رصيدي" في حسابك</p>
+                        <p className="text-xs text-center" style={{ color: "var(--ink-3)" }}>يمكنك إضافة رصيد من قسم &quot;رصيدي&quot; في حسابك</p>
                       </>
                     )}
 

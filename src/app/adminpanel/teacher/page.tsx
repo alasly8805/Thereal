@@ -74,6 +74,7 @@ interface Course {
   price?: number | null;
   discountPercent?: number | null;
   discountExpiresAt?: string | null;
+  deliveryMode?: string;
 }
 
 interface Folder {
@@ -161,7 +162,7 @@ export default function TeacherDashboardPage() {
   const [creatingCourse, setCreatingCourse] = useState(false);
   // Forms
   const [newCourse, setNewCourse] = useState({
-    title: "", subject: "", description: "", thumbnailUrl: "", educationalStage: "",
+    title: "", subject: "", description: "", thumbnailUrl: "", educationalStage: "", deliveryMode: "ONLINE",
   });
   const [newFolder, setNewFolder] = useState("");
   const [newFolderPublishAt, setNewFolderPublishAt] = useState("");
@@ -691,7 +692,7 @@ export default function TeacherDashboardPage() {
   });
   const [newMaterial, setNewMaterial] = useState({ title: "", url: "", type: "pdf", folderId: "" });
   const [courseSettings, setCourseSettings] = useState({
-    title: "", subject: "", description: "", thumbnailUrl: "", educationalStage: "", maxWatchCount: 3, sequentialAccess: true, homeworkUrl: "",
+    title: "", subject: "", description: "", thumbnailUrl: "", educationalStage: "", maxWatchCount: 3, sequentialAccess: true, homeworkUrl: "", deliveryMode: "ONLINE",
   });
   const [showExternalThumbUrl, setShowExternalThumbUrl] = useState(false);
   const [pricingSettings, setPricingSettings] = useState({
@@ -805,6 +806,7 @@ export default function TeacherDashboardPage() {
       description: newCourse.description.trim(),
       thumbnailUrl: newCourse.thumbnailUrl.trim(),
       educationalStage: newCourse.educationalStage.trim(),
+      deliveryMode: newCourse.deliveryMode || "ONLINE",
     };
     if (!payload.title || !payload.subject || !payload.educationalStage) {
       notify("error", "العنوان والمادة والمرحلة مطلوبة");
@@ -821,7 +823,7 @@ export default function TeacherDashboardPage() {
       const data = await readJson<{ error?: string }>(res);
       if (res.ok) {
         notify("success", "تم إنشاء الكورس بنجاح");
-        setNewCourse({ title: "", subject: "", description: "", thumbnailUrl: "", educationalStage: "" });
+        setNewCourse({ title: "", subject: "", description: "", thumbnailUrl: "", educationalStage: "", deliveryMode: "ONLINE" });
         await fetchCourses();
         setActiveSection("courses");
       } else {
@@ -1452,6 +1454,7 @@ export default function TeacherDashboardPage() {
       maxWatchCount: course.maxWatchCount ?? 3,
       sequentialAccess: course.sequentialAccess ?? true,
       homeworkUrl: course.homeworkUrl || "",
+      deliveryMode: (course as any).deliveryMode || "ONLINE",
     });
     setPricingSettings({
       isPaid: course.isPaid ?? false,
@@ -1505,6 +1508,7 @@ export default function TeacherDashboardPage() {
         homeworkUrl: courseSettings.homeworkUrl || null,
         maxWatchCount: courseSettings.maxWatchCount,
         sequentialAccess: courseSettings.sequentialAccess,
+        deliveryMode: courseSettings.deliveryMode || "ONLINE",
       }),
     });
     const data = await readJson<{ course?: Course; error?: string }>(res);
@@ -3067,6 +3071,52 @@ export default function TeacherDashboardPage() {
 
                           <div>
                             <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
+                              طبيعة الكورس ونطاق العرض <span className="text-rose-500">*</span>
+                            </label>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => setCourseSettings({ ...courseSettings, deliveryMode: "ONLINE" })}
+                                className={`p-2.5 rounded-xl border text-right transition-all flex flex-col gap-1 cursor-pointer ${
+                                  courseSettings.deliveryMode === "ONLINE"
+                                    ? "border-sky-500 bg-sky-500/15 text-sky-400 font-bold shadow-sm"
+                                    : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 hover:border-slate-400"
+                                }`}
+                              >
+                                <span className="text-xs">🌐 أونلاين فقط</span>
+                                <span className="text-[10px] opacity-75">منصة code-up.tech</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setCourseSettings({ ...courseSettings, deliveryMode: "CENTER" })}
+                                className={`p-2.5 rounded-xl border text-right transition-all flex flex-col gap-1 cursor-pointer ${
+                                  courseSettings.deliveryMode === "CENTER"
+                                    ? "border-amber-500 bg-amber-500/15 text-amber-400 font-bold shadow-sm"
+                                    : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 hover:border-slate-400"
+                                }`}
+                              >
+                                <span className="text-xs">🏛️ سنتر وحضوري</span>
+                                <span className="text-[10px] opacity-75">منصة center.code-up.tech</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setCourseSettings({ ...courseSettings, deliveryMode: "BOTH" })}
+                                className={`p-2.5 rounded-xl border text-right transition-all flex flex-col gap-1 cursor-pointer ${
+                                  courseSettings.deliveryMode === "BOTH"
+                                    ? "border-emerald-500 bg-emerald-500/15 text-emerald-400 font-bold shadow-sm"
+                                    : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 hover:border-slate-400"
+                                }`}
+                              >
+                                <span className="text-xs">🔄 كلاهما معاً</span>
+                                <span className="text-[10px] opacity-75">السنتر والأونلاين</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
                               وصف الكورس والأهداف التعليمية
                             </label>
                             <textarea
@@ -3482,6 +3532,49 @@ export default function TeacherDashboardPage() {
                     <option value="">اختر المرحلة</option>
                     {EDUCATIONAL_STAGES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
+                </div>
+                <div>
+                  <label className={label}>طبيعة الكورس ونطاق العرض *</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setNewCourse({ ...newCourse, deliveryMode: "ONLINE" })}
+                      className={`p-3 rounded-xl border text-right transition-all flex flex-col gap-1 cursor-pointer ${
+                        newCourse.deliveryMode === "ONLINE"
+                          ? "border-sky-500 bg-sky-500/15 text-sky-400 font-bold shadow-sm"
+                          : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--ink-muted)] hover:border-slate-500"
+                      }`}
+                    >
+                      <span className="text-sm font-bold">🌐 أونلاين فقط</span>
+                      <span className="text-[11px] opacity-80">يظهر على المنصة العامة code-up.tech</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setNewCourse({ ...newCourse, deliveryMode: "CENTER" })}
+                      className={`p-3 rounded-xl border text-right transition-all flex flex-col gap-1 cursor-pointer ${
+                        newCourse.deliveryMode === "CENTER"
+                          ? "border-amber-500 bg-amber-500/15 text-amber-400 font-bold shadow-sm"
+                          : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--ink-muted)] hover:border-slate-500"
+                      }`}
+                    >
+                      <span className="text-sm font-bold">🏛️ سنتر وحضوري</span>
+                      <span className="text-[11px] opacity-80">يظهر على منصة center.code-up.tech</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setNewCourse({ ...newCourse, deliveryMode: "BOTH" })}
+                      className={`p-3 rounded-xl border text-right transition-all flex flex-col gap-1 cursor-pointer ${
+                        newCourse.deliveryMode === "BOTH"
+                          ? "border-emerald-500 bg-emerald-500/15 text-emerald-400 font-bold shadow-sm"
+                          : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--ink-muted)] hover:border-slate-500"
+                      }`}
+                    >
+                      <span className="text-sm font-bold">🔄 كلاهما معاً</span>
+                      <span className="text-[11px] opacity-80">يظهر في السنتر والأونلاين</span>
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className={label}>الصورة المصغرة (رابط أو رفع من الجهاز)</label>

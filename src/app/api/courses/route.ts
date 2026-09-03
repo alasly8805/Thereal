@@ -16,8 +16,18 @@ export async function GET(req: NextRequest) {
     const isTesterUser = session?.accountMode === "TESTER";
     const canSeeDemo = isSuperadmin || isTesterUser;
 
+    const host = req.headers.get("host") || "";
+    const isCenterMode =
+      req.headers.get("x-center-mode") === "1" ||
+      host.startsWith("center.") ||
+      searchParams.get("mode") === "center" ||
+      req.cookies.get("center_mode")?.value === "1";
+
     const where: Record<string, unknown> = {
       teacher: teacherId ? (canSeeDemo ? { isDeleted: false } : { isDeleted: false, isDemo: false }) : { isDeleted: false, isDemo: false },
+      deliveryMode: isCenterMode
+        ? { in: ["CENTER", "BOTH"] }
+        : { in: ["ONLINE", "BOTH"] },
     };
     if (stage) where.educationalStage = stage;
     if (subject) where.subject = subject;
@@ -64,6 +74,24 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
+    // Center hub cards advertise the number of recorded sessions per course.
+    // `_count` can't traverse Course → Folder → Video, so resolve it with one
+    // extra grouped read — and only in center mode, to keep the public list lean.
+    const lessonsByCourse = new Map<string, number>();
+    if (isCenterMode && courses.length > 0) {
+      const folderRows = await prisma.folder.findMany({
+        where: { courseId: { in: courses.map((course) => course.id) } },
+        select: { courseId: true, _count: { select: { videos: true } } },
+      });
+      for (const row of folderRows) {
+        lessonsByCourse.set(row.courseId, (lessonsByCourse.get(row.courseId) || 0) + row._count.videos);
+      }
+    }
+    const withLessons = <T extends { id: string }>(course: T) => ({
+      ...course,
+      lessonsCount: lessonsByCourse.get(course.id) || 0,
+    });
+
     const formattedTeachers = allTeachers.map((t) => ({
       id: t.id,
       name: t.teacherProfile?.displayName || t.name,
@@ -75,7 +103,7 @@ export async function GET(req: NextRequest) {
 
     if (!session) {
       const response = NextResponse.json({
-        courses: courses.map((course) => ({ ...course, hasAccess: false })),
+        courses: courses.map((course) => ({ ...withLessons(course), hasAccess: false })),
         teachers: formattedTeachers,
       });
       response.headers.set("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
@@ -98,7 +126,7 @@ export async function GET(req: NextRequest) {
         const isDemoBypass = await canBypassPayment(session.role, course.teacherId, session.accountMode);
         const hasAccess = accessMap.has(course.id) || isOwnerTeacher || isAdminPreview || isDemoBypass || isTesterUser;
         return {
-          ...course,
+          ...withLessons(course),
           hasAccess,
           isOwnerTeacher,
         };

@@ -43,9 +43,19 @@ export async function POST(
   if (!file) return NextResponse.json({ error: "لم يتم إرفاق ملف" }, { status: 400 });
 
   // Validate file extension
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  // Reject server-executable types outright, even with no per-homework allow-list.
+  // (Stored outside the webroot and only served as an authenticated attachment,
+  // so this is defence-in-depth, not the primary control.)
+  const DANGEROUS_EXT = new Set([
+    "php", "phtml", "php3", "php4", "php5", "phar",
+    "sh", "bash", "exe", "bat", "cmd", "com", "cgi", "jsp", "asp", "aspx",
+  ]);
+  if (!ext || DANGEROUS_EXT.has(ext)) {
+    return NextResponse.json({ error: "نوع الملف غير مسموح" }, { status: 400 });
+  }
   if (hw.allowedFileTypes) {
     const allowed = hw.allowedFileTypes.split(",").map((e) => e.trim().toLowerCase());
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!allowed.includes(ext)) {
       return NextResponse.json(
         { error: `نوع الملف غير مسموح. الأنواع المسموحة: ${hw.allowedFileTypes}` },

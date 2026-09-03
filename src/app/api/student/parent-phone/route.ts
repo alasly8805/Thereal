@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { reissueParentToken, resetParentVerificationLimits } from "@/lib/whatsapp/parentToken";
 
 export async function POST(req: NextRequest) {
@@ -12,10 +13,9 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as {
       parentPhone?: string;
       studentId?: string;
-      allowSamePhone?: boolean;
       resetCount?: boolean;
     };
-    const { parentPhone, studentId, allowSamePhone, resetCount } = body;
+    const { parentPhone, studentId, resetCount } = body;
 
     let targetStudentId = session.id;
     let isAdmin = false;
@@ -26,6 +26,26 @@ export async function POST(req: NextRequest) {
       }
       targetStudentId = studentId;
       isAdmin = true;
+    }
+
+    // Self-service path: only a student may change their own parent contact, and
+    // only before parent verification has been completed. Once a parent link is
+    // verified, re-pointing it (e.g. to the student's own number) would defeat
+    // parent monitoring, so that requires an admin.
+    if (!isAdmin) {
+      if (session.role !== "student") {
+        return NextResponse.json({ error: "هذا الإجراء مخصص للطلاب فقط" }, { status: 403 });
+      }
+      const self = await prisma.user.findUnique({
+        where: { id: session.id },
+        select: { parentVerified: true, parentVerificationStatus: true },
+      });
+      if (self?.parentVerified || self?.parentVerificationStatus === "CONFIRMED") {
+        return NextResponse.json(
+          { error: "تم توثيق رقم ولي الأمر بالفعل. لتغييره تواصل مع إدارة المنصة." },
+          { status: 403 }
+        );
+      }
     }
 
     if (resetCount) {
@@ -47,7 +67,9 @@ export async function POST(req: NextRequest) {
     const userAgent = req.headers.get("user-agent") || undefined;
 
     const result = await reissueParentToken(targetStudentId, parentPhone, ip, userAgent, {
-      allowSamePhone: allowSamePhone || isAdmin,
+      // `allowSamePhone` (parent phone == student phone) is an admin-only override;
+      // never honour it from a student's request body.
+      allowSamePhone: isAdmin,
       bypassRateLimit: isAdmin,
       resetLimits: isAdmin,
     });
@@ -66,7 +88,8 @@ export async function POST(req: NextRequest) {
       dispatchSuccess,
       dispatchError,
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error?.message || "تعذر إرسال الرابط" }, { status: 400 });
+  } catch (error) {
+    console.error("[student/parent-phone] error:", error);
+    return NextResponse.json({ error: "تعذر إرسال رابط ولي الأمر — يرجى المحاولة مرة أخرى" }, { status: 400 });
   }
 }

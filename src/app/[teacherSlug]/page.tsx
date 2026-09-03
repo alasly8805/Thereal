@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { RESERVED_SLUGS } from "@/lib/slug";
+import { safeJsonLd } from "@/lib/jsonld";
 import { BookingButton } from "@/components/teacher/BookingModal";
 import { SubscriptionStatusBadge } from "@/components/teacher/SubscriptionStatusBadge";
 import { SetTeacherRefCookie } from "@/components/teacher/SetTeacherRefCookie";
@@ -136,7 +137,7 @@ export default async function TeacherPage({ params }: { params: Promise<{ teache
     <main dir="rtl" style={theme} className="min-h-screen bg-[var(--bg)] text-[var(--ink)]">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }}
       />
       <DemoBanner show={isDemo} />
       <SetTeacherRefCookie teacherId={p.teacherId} />

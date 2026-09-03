@@ -21,6 +21,7 @@ type CoursePatchInput = {
   homeworkUrl?: string | null;
   sequentialAccess?: boolean;
   enableWatchedButton?: boolean;
+  deliveryMode?: string;
 };
 
 function validateCourseData(data: CoursePatchInput): { valid: boolean; error?: string } {
@@ -187,6 +188,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     if (data.enableWatchedButton !== undefined) {
       updateData.enableWatchedButton = !!data.enableWatchedButton;
+    }
+    if (data.deliveryMode !== undefined) {
+      const mode = typeof data.deliveryMode === "string" ? data.deliveryMode.toUpperCase().trim() : "ONLINE";
+      if (["ONLINE", "CENTER", "BOTH"].includes(mode)) {
+        updateData.deliveryMode = mode;
+      }
     }
 
     const updated = await prisma.course.update({

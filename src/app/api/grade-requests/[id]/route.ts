@@ -72,6 +72,14 @@ export async function PATCH(
 
     // Apply the grade change if approved
     if (action === "approve" && newScore !== undefined && newScore !== null) {
+      // QuizResult.score is a 0–100 percentage — reject anything outside that
+      // range (or non-numeric) so a request cannot set an arbitrary score.
+      if (typeof newScore !== "number" || !Number.isFinite(newScore) || newScore < 0 || newScore > 100) {
+        return NextResponse.json(
+          { error: "الدرجة الجديدة يجب أن تكون رقماً بين 0 و 100" },
+          { status: 400 }
+        );
+      }
       const quizResult = await prisma.quizResult.findFirst({
         where: { quizId: request_.quizId, studentId: request_.studentId },
       });

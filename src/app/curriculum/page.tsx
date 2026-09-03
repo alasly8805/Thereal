@@ -4,6 +4,7 @@ import Script from "next/script";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { SEO_KEYWORD_MATRIX } from "@/lib/seo-keywords";
+import { safeJsonLd } from "@/lib/jsonld";
 
 export const metadata: Metadata = {
   title: "منهج البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة | منصة Code-UP",
@@ -88,7 +89,7 @@ export default function CurriculumPage() {
       <Script
         id="curriculum-schema"
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(curriculumJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: safeJsonLd(curriculumJsonLd) }}
       />
       <Navbar user={null} />
 

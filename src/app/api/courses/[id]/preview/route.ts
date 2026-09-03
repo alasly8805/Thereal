@@ -68,6 +68,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       educationalStage: course.educationalStage,
       teacher: course.teacher,
       isPaid: course.isPaid,
+      deliveryMode: course.deliveryMode || "ONLINE",
       price: course.price,
       discountPercent: discountActive ? course.discountPercent : null,
       discountExpiresAt: discountActive ? course.discountExpiresAt : null,

@@ -1,28 +1,98 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { motion } from "framer-motion";
 import Link from "next/link";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { ProfileGuard } from "@/components/auth/ProfileGuard";
 import { fetchMeWithRetry, type MeUser } from "@/lib/fetch-me";
+import {
+  Play,
+  RotateCcw,
+  Copy,
+  Check,
+  ZoomIn,
+  ZoomOut,
+  Sparkles,
+  Terminal,
+  Code2,
+  ChevronLeft,
+} from "lucide-react";
 
-const DEFAULT_CODE = `// اكتب كود JavaScript هنا
-console.log("مرحباً بالعالم!");
+const JS_SNIPPETS = [
+  {
+    name: "مرحباً بالعالم",
+    code: `// برنامج ترحيبي بـ JavaScript
+const studentName = "طالب Code-UP";
+console.log("أهلاً بك يا", studentName);
+console.log("استعد لبرمجة مواقع وتطبيقات تفاعلية!");
+`,
+  },
+  {
+    name: "المصفوفات (Arrays)",
+    code: `// التعامل مع المصفوفات
+const scores = [85, 92, 78, 96, 88];
 
-const numbers = [1, 2, 3, 4, 5];
-const doubled = numbers.map(n => n * 2);
-console.log("الأرقام مضاعفة:", doubled);
+// مضاعفة الدرجات
+const boosted = scores.map(s => s + 5);
+console.log("الدرجات بعد الزيادة:", boosted);
 
-// جرب كتابة كودك الخاص
-`;
+// الدرجات فوق 90
+const excellent = scores.filter(s => s >= 90);
+console.log("درجات الامتياز:", excellent);
+`,
+  },
+  {
+    name: "الكائنات (Objects)",
+    code: `// تعريف كائن يمثل طالباً
+const student = {
+  name: "أحمد محمد",
+  stage: "الثانوية العامة",
+  courses: ["فيزياء", "رياضيات", "برمجة"],
+  isEnrolled: true,
+};
+
+console.log("اسم الطالب:", student.name);
+console.log("عدد الكورسات المسجل بها:", student.courses.length);
+`,
+  },
+  {
+    name: "الدوال والسهم (Arrow Functions)",
+    code: `// دالة سهمية لحساب المتوسط الحسابي
+const getAverage = (numbers) => {
+  const sum = numbers.reduce((total, n) => total + n, 0);
+  return sum / numbers.length;
+};
+
+const myNumbers = [10, 20, 30, 40, 50];
+console.log("المتوسط هو:", getAverage(myNumbers));
+`,
+  },
+];
+
+const JS_QUICK_CHARS = ["(", ")", "{", "}", "[", "]", ";", "=", "=>", '"', "'", "`", "$", "+", "-", "*", "/", "."];
+
+function formatOutput(arg: unknown): string {
+  if (arg === null) return "null";
+  if (arg === undefined) return "undefined";
+  if (typeof arg === "object") {
+    try {
+      return JSON.stringify(arg, null, 2);
+    } catch {
+      return String(arg);
+    }
+  }
+  return String(arg);
+}
 
 export default function JavaScriptEditorPage() {
   const [user, setUser] = useState<MeUser | null>(null);
-  const [code, setCode] = useState(DEFAULT_CODE);
+  const [code, setCode] = useState(JS_SNIPPETS[0].code);
   const [output, setOutput] = useState<Array<{ type: "log" | "error"; message: string }>>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [fontSize, setFontSize] = useState(14);
+  const [copied, setCopied] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const consoleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,14 +102,63 @@ export default function JavaScriptEditorPage() {
   }, [output]);
 
   useEffect(() => {
-    fetchMeWithRetry(2, 100).then(me => setUser(me)).catch(() => {});
+    fetchMeWithRetry(2, 100).then((me) => setUser(me)).catch(() => {});
   }, []);
+
+  const lineCount = Math.max(code.split("\n").length, 1);
+  const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const spaces = "  "; // 2 spaces standard JS indent
+
+      const newCode = code.substring(0, start) + spaces + code.substring(end);
+      setCode(newCode);
+
+      requestAnimationFrame(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + spaces.length;
+      });
+    }
+  };
+
+  const insertChar = (char: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setCode((prev) => prev + char);
+      return;
+    }
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const newCode = code.substring(0, start) + char + code.substring(end);
+    setCode(newCode);
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.selectionStart = textarea.selectionEnd = start + char.length;
+    });
+  };
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback
+    }
+  };
 
   const runCode = () => {
     setIsRunning(true);
     setOutput([]);
 
-    // Override console methods
     const originalLog = console.log;
     const originalError = console.error;
     const originalWarn = console.warn;
@@ -47,29 +166,29 @@ export default function JavaScriptEditorPage() {
     const logs: Array<{ type: "log" | "error"; message: string }> = [];
 
     console.log = (...args: unknown[]) => {
-      logs.push({ type: "log", message: args.map(a => formatOutput(a)).join(" ") });
-      originalLog(...args);
+      logs.push({ type: "log", message: args.map((a) => formatOutput(a)).join(" ") });
     };
 
     console.error = (...args: unknown[]) => {
-      logs.push({ type: "error", message: args.map(a => formatOutput(a)).join(" ") });
-      originalError(...args);
+      logs.push({ type: "error", message: args.map((a) => formatOutput(a)).join(" ") });
     };
 
     console.warn = (...args: unknown[]) => {
-      logs.push({ type: "log", message: args.map(a => formatOutput(a)).join(" ") });
-      originalWarn(...args);
+      logs.push({ type: "log", message: `⚠️ ${args.map((a) => formatOutput(a)).join(" ")}` });
     };
 
     try {
-      // Execute the code
-      const func = new Function(code);
-      func();
+      const sandbox = new Function(code);
+      sandbox();
+
+      if (logs.length === 0) {
+        logs.push({ type: "log", message: "تم تنفيذ الكود بنجاح (بدون مخرجات console.log)." });
+      }
+
       setOutput(logs);
     } catch (error) {
-      setOutput([...logs, { type: "error", message: error instanceof Error ? error.message : String(error) }]);
+      setOutput([{ type: "error", message: error instanceof Error ? error.message : String(error) }]);
     } finally {
-      // Restore console methods
       console.log = originalLog;
       console.error = originalError;
       console.warn = originalWarn;
@@ -77,163 +196,218 @@ export default function JavaScriptEditorPage() {
     }
   };
 
-  const formatOutput = (value: unknown): string => {
-    if (value === null) return "null";
-    if (value === undefined) return "undefined";
-    if (typeof value === "object") {
-      try {
-        return JSON.stringify(value, null, 2);
-      } catch {
-        return String(value);
-      }
-    }
-    return String(value);
-  };
-
-  const clearConsole = () => {
-    setCode(DEFAULT_CODE);
-    setOutput([]);
-  };
-
   return (
     <ProfileGuard>
-      <div className="flex flex-col min-h-screen bg-gray-50 dark:bg-gray-950">
+      <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100" dir="rtl">
         <Navbar user={user ? { name: user.name, role: user.role } : null} />
-        <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+        <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-6 lg:px-8 py-6 space-y-5">
           {/* Header */}
-          <motion.div
-            className="mb-6"
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <Link
-              href="/environments/programming"
-              className="inline-flex items-center gap-2 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white mb-4 transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              العودة للبرمجة
-            </Link>
-            <div className="flex items-center gap-3">
-              <div className="text-4xl">⚡</div>
-              <div>
-                <h1 className="text-3xl font-black text-gray-900 dark:text-white">JavaScript Editor</h1>
-                <p className="text-gray-500 dark:text-gray-400">اكتب وشغّل كود JavaScript مباشرة</p>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <Link
+                href="/environments/programming"
+                className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white mb-2 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4 rotate-180" />
+                <span>العودة لبيئات البرمجة</span>
+              </Link>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500 to-yellow-500 flex items-center justify-center text-slate-950 shadow-lg">
+                  <Code2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-xl sm:text-2xl font-black text-white">محرر جافاسكريبت (JavaScript IDE)</h1>
+                  <p className="text-xs text-slate-400">محرر تفاعلي مباشر مع ترقيم الأسطر، دعم المسافات، ومساعد الرموز</p>
+                </div>
               </div>
             </div>
-          </motion.div>
 
-          {/* Editor and Console */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Code Editor */}
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
+            {/* Quick Templates Buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>أمثلة سريعة:</span>
+              </span>
+              {JS_SNIPPETS.map((snippet) => (
+                <button
+                  key={snippet.name}
+                  onClick={() => {
+                    setCode(snippet.code);
+                    setOutput([]);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-bold border border-slate-800 transition-all cursor-pointer"
+                >
+                  {snippet.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Quick Mobile Programming Symbol Helper Bar */}
+          <div className="p-2 bg-slate-900/90 border border-slate-800 rounded-2xl flex items-center gap-1.5 overflow-x-auto no-scrollbar shadow-sm">
+            <span className="text-[11px] font-bold text-slate-400 px-2 shrink-0">رموز سريعة:</span>
+            {JS_QUICK_CHARS.map((char) => (
+              <button
+                key={char}
+                type="button"
+                onClick={() => insertChar(char)}
+                className="px-2.5 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 font-mono font-bold text-sm flex items-center justify-center shrink-0 transition-colors cursor-pointer active:scale-95"
+              >
+                {char}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => insertChar("  ")}
+              className="px-2.5 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-yellow-400 font-mono font-bold text-xs flex items-center justify-center shrink-0 transition-colors cursor-pointer"
             >
-              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden border border-gray-100 dark:border-gray-700">
-                {/* Editor Header */}
-                <div className="bg-gradient-to-r from-yellow-400 to-amber-500 px-4 py-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-red-500 rounded-full" />
-                    <div className="w-3 h-3 bg-yellow-500 rounded-full" />
-                    <div className="w-3 h-3 bg-green-500 rounded-full" />
+              Tab ⇥
+            </button>
+          </div>
+
+          {/* Editor and Console Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {/* Code Editor */}
+            <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col">
+              {/* Toolbar */}
+              <div className="bg-slate-950 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-rose-500/80" />
+                    <span className="w-3 h-3 rounded-full bg-amber-500/80" />
+                    <span className="w-3 h-3 rounded-full bg-emerald-500/80" />
                   </div>
-                  <span className="text-white font-medium text-sm">script.js</span>
+                  <span className="text-xs font-mono font-semibold text-slate-300 ml-2">app.js</span>
                 </div>
 
-                {/* Editor Area */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setFontSize((s) => Math.min(s + 1, 22))}
+                    title="تكبير الخط"
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setFontSize((s) => Math.max(s - 1, 11))}
+                    title="تصغير الخط"
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={copyCode}
+                    title="نسخ الكود"
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center gap-1 text-xs"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">{copied ? "تم النسخ" : "نسخ"}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCode("");
+                      setOutput([]);
+                    }}
+                    title="مسح الكود"
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Workspace with Line Numbers */}
+              <div className="relative flex-1 flex bg-[#0c101a] min-h-[420px] max-h-[550px] overflow-hidden">
+                <div
+                  className="w-11 py-4 bg-[#090d15] text-slate-600 select-none font-mono text-xs text-right pr-3 border-l border-slate-800/80 leading-6 shrink-0"
+                  dir="ltr"
+                >
+                  {lineNumbers.map((num) => (
+                    <div key={num} className="h-6">{num}</div>
+                  ))}
+                </div>
+
                 <textarea
+                  ref={textareaRef}
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  className="w-full h-[500px] p-4 font-mono text-sm bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 resize-none focus:outline-none"
-                  placeholder="اكتب كود JavaScript هنا..."
+                  onKeyDown={handleKeyDown}
+                  className="flex-1 w-full p-4 font-mono bg-transparent text-amber-300 resize-none outline-none leading-6 placeholder:text-slate-600 focus:ring-0 selection:bg-amber-500/20 selection:text-amber-200"
+                  style={{ fontSize: `${fontSize}px` }}
+                  placeholder="// اكتب كود JavaScript هنا..."
                   spellCheck={false}
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  dir="ltr"
                 />
-
-                {/* Action Buttons */}
-                <div className="px-4 py-3 bg-gray-100 dark:bg-gray-700 flex gap-3">
-                  <motion.button
-                    onClick={runCode}
-                    disabled={isRunning}
-                    className="flex-1 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-2"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    {isRunning ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        جاري التشغيل...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        تشغيل الكود
-                      </>
-                    )}
-                  </motion.button>
-                  <motion.button
-                    onClick={clearConsole}
-                    className="px-4 py-2.5 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium rounded-xl hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    مسح
-                  </motion.button>
-                </div>
               </div>
-            </motion.div>
 
-            {/* Console Output */}
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5, delay: 0.3 }}
-            >
-              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl overflow-hidden border border-gray-100 dark:border-gray-700 h-[600px] flex flex-col">
-                {/* Console Header */}
-                <div className="bg-gradient-to-r from-gray-700 to-gray-800 px-4 py-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    <span className="text-white font-medium text-sm">Console</span>
-                  </div>
-                  <span className="text-gray-300 text-xs">{output.length} رسائل</span>
-                </div>
+              {/* Action Run Bar */}
+              <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-3">
+                <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+                  {lineCount} أسطر | {code.length} أحرف
+                </span>
 
-                {/* Console Output */}
-                <div
-                  ref={consoleRef}
-                  className="flex-1 overflow-y-auto p-4 font-mono text-sm space-y-2 bg-gray-50 dark:bg-gray-900"
+                <button
+                  onClick={runCode}
+                  disabled={isRunning || !code.trim()}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                 >
-                  {output.length === 0 ? (
-                    <div className="text-center text-gray-400 py-8">
-                      <div className="text-4xl mb-2">💻</div>
-                      <p>اضغط &quot;تشغيل الكود&quot; لرؤية النتائج هنا</p>
-                    </div>
+                  {isRunning ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                      <span>جارٍ التشغيل...</span>
+                    </>
                   ) : (
-                    output.map((item, index) => (
-                      <div
-                        key={index}
-                        className={`p-2 rounded-lg ${
-                          item.type === "error"
-                            ? "bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800"
-                            : "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800"
-                        }`}
-                      >
-                        <pre className="whitespace-pre-wrap break-words">{item.message}</pre>
-                      </div>
-                    ))
+                    <>
+                      <Play className="w-4 h-4 fill-current" />
+                      <span>تشغيل الكود البرمجي</span>
+                    </>
                   )}
-                </div>
+                </button>
               </div>
-            </motion.div>
+            </div>
+
+            {/* Terminal Console */}
+            <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col min-h-[420px] max-h-[600px]">
+              <div className="bg-slate-950 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <Terminal className="w-4 h-4 text-amber-400" />
+                  <span className="text-xs font-bold">شاشة المخرجات (Console)</span>
+                </div>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {output.length} رسائل
+                </span>
+              </div>
+
+              <div
+                ref={consoleRef}
+                className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2 bg-[#080c14]"
+                dir="ltr"
+              >
+                {output.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center text-slate-600 py-16 space-y-2">
+                    <Terminal className="w-10 h-10 opacity-30 text-slate-500" />
+                    <p className="text-xs text-slate-500">اضغط "تشغيل الكود" لتظهر النتائج هنا</p>
+                  </div>
+                ) : (
+                  output.map((item, index) => (
+                    <div
+                      key={index}
+                      className={`p-2.5 rounded-xl text-xs font-mono ${
+                        item.type === "error"
+                          ? "bg-rose-950/30 text-rose-400 border border-rose-800/40"
+                          : "bg-slate-900/80 text-amber-300 border border-slate-800/60"
+                      }`}
+                    >
+                      <span className="opacity-50 select-none mr-2">&gt;</span>
+                      <span>{item.message}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </main>
         <Footer />

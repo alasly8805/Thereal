@@ -558,7 +558,7 @@ export function DrmPlayer({
           resolvedManifestUrl = window.location.origin + resolvedManifestUrl;
         }
 
-        await localPlayer.load(resolvedManifestUrl, initialPosition > 0 ? initialPosition : undefined);
+        await (localPlayer as any).load(resolvedManifestUrl, initialPosition > 0 ? initialPosition : undefined);
         if (isCancelled) {
           await localPlayer.destroy().catch(() => {});
           return;

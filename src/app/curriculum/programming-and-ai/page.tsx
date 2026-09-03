@@ -4,6 +4,7 @@ import Script from "next/script";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { SEO_KEYWORD_MATRIX } from "@/lib/seo-keywords";
+import { safeJsonLd } from "@/lib/jsonld";
 
 export const metadata: Metadata = {
   title: "دليل مادة البرمجة والذكاء الاصطناعي (نظري وعملي) | منصة Code-UP",
@@ -58,7 +59,7 @@ export default function ProgrammingAndAiCurriculumPage() {
       <Script
         id="programming-ai-jsonld"
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }}
       />
 
       <main className="flex-1">

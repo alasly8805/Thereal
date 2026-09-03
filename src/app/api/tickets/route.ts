@@ -14,6 +14,12 @@ export async function POST(req: NextRequest) {
     if (!title || !description) {
       return NextResponse.json({ error: "العنوان والوصف مطلوبان" }, { status: 400 });
     }
+    if (typeof title !== "string" || typeof description !== "string" || title.length > 200 || description.length > 5000) {
+      return NextResponse.json({ error: "العنوان أو الوصف طويل جداً" }, { status: 400 });
+    }
+    // Clamp priority to a known set so a crafted value can't sort above real
+    // urgent tickets; unknown values fall back to the caller's intent as "normal".
+    const safePriority = ["low", "normal", "high", "urgent"].includes(String(priority)) ? String(priority) : "normal";
 
     if (courseId) {
       const isEnrolled = await checkCourseEnrollment(session.id, courseId);
@@ -29,7 +35,7 @@ export async function POST(req: NextRequest) {
         title,
         description,
         type: type || "other",
-        priority: priority || "normal",
+        priority: safePriority,
         status: "open",
       },
     });

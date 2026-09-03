@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore, useCallback, useMemo } from "react";
 import { getResolvedTheme, setThemePreference, type Theme } from "@/lib/theme";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { useToast } from "@/components/ui/Toast";
@@ -70,6 +70,16 @@ function formatStudentName(name: string): string {
 
 export function Navbar({ user: propUser }: NavbarProps) {
   const [fetchedUser, setFetchedUser] = useState<{ id?: string; name: string; role: string } | null>(null);
+  const [isCenterMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const host = window.location.hostname;
+    return (
+      host.startsWith("center.") ||
+      host.includes("center.code-up.tech") ||
+      window.location.search.includes("center=1") ||
+      document.cookie.includes("center_mode=1")
+    );
+  });
 
   useEffect(() => {
     if (propUser !== undefined) return;
@@ -249,6 +259,13 @@ export function Navbar({ user: propUser }: NavbarProps) {
     searchResults.videos.length > 0
   );
 
+  const navLinks = useMemo(() => {
+    if (isCenterMode) {
+      return NAV_LINKS.filter((l) => l.href !== "/plans");
+    }
+    return NAV_LINKS;
+  }, [isCenterMode]);
+
   return (
     <>
       <ParentVerificationBanner isStudent={user?.role === "student"} />
@@ -266,7 +283,7 @@ export function Navbar({ user: propUser }: NavbarProps) {
 
         {/* Desktop nav */}
         <nav className="hidden lg:flex items-center gap-1 justify-self-center" role="navigation">
-          {NAV_LINKS.map((link) => (
+          {navLinks.map((link) => (
             <Link key={link.href} href={link.href} aria-current={isActive(link.href) ? "page" : undefined} className="no-underline whitespace-nowrap transition-colors"
               style={{ padding: "9px 15px", borderRadius: 10, fontSize: 15, fontWeight: 600,
                 color: isActive(link.href) ? "var(--brand)" : "var(--ink-2)",

@@ -86,10 +86,19 @@ export async function checkQuizAccess(userId: string, role: string, quizId: stri
   if (!quiz) return false;
 
   if (role === "teacher") {
-    return (
-      (quiz.folder?.course?.teacherId === userId) ||
-      (quiz.planLessonId !== null)
-    );
+    // Course/folder quiz: must own the course.
+    if (quiz.folder?.course?.teacherId === userId) return true;
+    // Plan-lesson quiz: must have a source assigned to this teacher on that
+    // lesson. A bare `quiz.planLessonId !== null` check previously handed every
+    // plan-lesson quiz (questions + answer key) to any teacher account.
+    if (quiz.planLessonId) {
+      const ownsLessonSource = await prisma.planLessonSource.findFirst({
+        where: { planLessonId: quiz.planLessonId, teacherId: userId },
+        select: { id: true },
+      });
+      return Boolean(ownsLessonSource);
+    }
+    return false;
   }
 
   if (role !== "student") return false;

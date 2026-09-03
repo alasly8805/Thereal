@@ -19,12 +19,19 @@ const PROTECTED_PAGE_PREFIXES = [
   "/account",
 ];
 
-/** Protected API routes — require a valid session; return 401 JSON on failure */
+/** Protected API routes — require a valid session; return 401 JSON on failure.
+ *  These groups contain no public endpoints, so gating them here is a
+ *  defence-in-depth backstop: a handler that forgets its own getSession() check
+ *  still returns 401 instead of running unauthenticated. */
 const PROTECTED_API_PREFIXES = [
   "/api/library",
   "/api/quizzes",
   "/api/progress",
   "/api/auth/complete-profile",
+  "/api/teacher",
+  "/api/student",
+  "/api/homework",
+  "/api/notifications",
 ];
 
 /** Paths under /courses that require auth (the learning room) */
@@ -83,7 +90,7 @@ async function hasValidSession(req: NextRequest) {
     const secret = new TextEncoder().encode(secretStr);
     await jwtVerify(token, secret);
     return true;
-  } catch (err: any) {
+  } catch {
     return false;
   }
 }
@@ -91,13 +98,46 @@ async function hasValidSession(req: NextRequest) {
 export default async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
+  const host = req.headers.get("host") || "";
+  const isCenterMode =
+    host.startsWith("center.") ||
+    host.includes("center.code-up.tech") ||
+    req.nextUrl.searchParams.get("center") === "1" ||
+    req.cookies.get("center_mode")?.value === "1";
+
   // Forward the current path to server components (root layout reads this to
   // decide maintenance gating — middleware runs on Edge and can't touch the DB).
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-pathname", pathname);
-  const pass = () => NextResponse.next({ request: { headers: requestHeaders } });
+  if (isCenterMode) {
+    requestHeaders.set("x-center-mode", "1");
+  }
 
-  if (pathname === "/") return pass();
+  const pass = () => {
+    const res = NextResponse.next({ request: { headers: requestHeaders } });
+    if (isCenterMode && req.cookies.get("center_mode")?.value !== "1") {
+      res.cookies.set("center_mode", "1", { path: "/" });
+    } else if (!isCenterMode && req.cookies.get("center_mode")?.value === "1" && !host.startsWith("center.")) {
+      res.cookies.delete("center_mode");
+    }
+    return res;
+  };
+
+  // Root of the center subdomain serves the Center Student Hub instead of the
+  // public marketing home. Rewritten (not redirected) so the URL stays
+  // `https://center.code-up.tech/`.
+  if (pathname === "/") {
+    if (isCenterMode) {
+      const centerUrl = req.nextUrl.clone();
+      centerUrl.pathname = "/center";
+      const res = NextResponse.rewrite(centerUrl, { request: { headers: requestHeaders } });
+      if (req.cookies.get("center_mode")?.value !== "1") {
+        res.cookies.set("center_mode", "1", { path: "/" });
+      }
+      return res;
+    }
+    return pass();
+  }
 
   // Admin panel login page — always public
   if (isAdminLoginPage(pathname)) return pass();

@@ -279,7 +279,7 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
                       </button>
                     )}
 
-                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "edit_teachers") && (
+                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "edit_teacher_name") && (
                       <button
                         type="button"
                         onClick={() => {
@@ -292,7 +292,7 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
                       </button>
                     )}
 
-                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "edit_teachers") && (
+                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "reset_teacher_password") && (
                       <button
                         type="button"
                         onClick={() => setResetTarget({ id: t.id, name: t.name })}
@@ -302,7 +302,7 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
                       </button>
                     )}
 
-                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "delete_teachers") && (
+                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "delete_teacher") && (
                       <button
                         type="button"
                         onClick={() => setDeleteTarget({ id: t.id, name: t.name })}
@@ -416,6 +416,10 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
           teacherId={resetTarget.id}
           teacherName={resetTarget.name}
           onClose={() => setResetTarget(null)}
+          onSuccess={() => {
+            setResetTarget(null);
+            refreshTeachers();
+          }}
         />
       )}
 

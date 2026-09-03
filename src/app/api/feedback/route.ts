@@ -12,6 +12,14 @@ export async function POST(req: NextRequest) {
     if (!courseId || !content || !type) {
       return NextResponse.json({ error: "بيانات ناقصة" }, { status: 400 });
     }
+    if (typeof content !== "string" || content.length > 4000 || String(type).length > 40) {
+      return NextResponse.json({ error: "بيانات الملاحظة غير صالحة" }, { status: 400 });
+    }
+    const ratingNum =
+      rating === undefined || rating === null ? null : Number(rating);
+    if (ratingNum !== null && (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5)) {
+      return NextResponse.json({ error: "التقييم يجب أن يكون بين 1 و 5" }, { status: 400 });
+    }
 
     const course = await prisma.course.findUnique({
       where: { id: courseId },
@@ -39,7 +47,7 @@ export async function POST(req: NextRequest) {
         teacherId: course.teacherId,
         type,
         content,
-        rating: rating ?? null,
+        rating: ratingNum,
       },
     });
 

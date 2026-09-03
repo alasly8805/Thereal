@@ -5,6 +5,7 @@ import { ToastProvider } from "@/components/ui/Toast";
 import { ErrorReporter } from "@/components/ErrorReporter";
 import { AIAssistant } from "@/components/ai/AIAssistant";
 import { MobileTabBar } from "@/components/ui/MobileTabBar";
+import { CenterModeBanner } from "@/components/center/CenterModeBanner";
 import { MaintenanceScreen } from "@/components/MaintenanceScreen";
 import { OverloadWaitingScreen } from "@/components/OverloadWaitingScreen";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -12,6 +13,7 @@ import { verifyToken } from "@/lib/auth";
 import { getMaintenanceMode, getMaintenanceMessage } from "@/lib/settings";
 import { getOverloadProtectionState } from "@/lib/overload-protection";
 import { SEO_KEYWORD_MATRIX } from "@/lib/seo-keywords";
+import { safeJsonLd } from "@/lib/jsonld";
 import "./globals.css";
 
 interface GateResult {
@@ -235,7 +237,7 @@ export default async function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}` }} />
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }}
         />
       </head>
       <body suppressHydrationWarning>
@@ -253,6 +255,7 @@ export default async function RootLayout({
             <>
               <ErrorReporter />
               <ToastProvider>
+                <CenterModeBanner />
                 {children}
                 <AIAssistant />
                 <MobileTabBar />
