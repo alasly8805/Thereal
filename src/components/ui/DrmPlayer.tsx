@@ -285,14 +285,21 @@ export function DrmPlayer({
         (typeof e.getModifierState === "function" &&
           (e.getModifierState("Meta") || e.getModifierState("OS")));
 
-      const isWinSnipping = isMeta && e.shiftKey && lowerK === "s";
-      const isWinGameBar = isMeta && (lowerK === "g" || (e.altKey && lowerK === "r"));
+      // Physical KeyS or Arabic "س"
+      const isKeyS = lowerK === "s" || lowerK === "س" || e.code === "KeyS" || e.keyCode === 83;
+      // Physical KeyG or Arabic "ل"
+      const isKeyG = lowerK === "g" || lowerK === "ل" || e.code === "KeyG" || e.keyCode === 71;
+      // Physical KeyR or Arabic "ق"
+      const isKeyR = lowerK === "r" || lowerK === "ق" || e.code === "KeyR" || e.keyCode === 82;
+
+      const isWinSnipping = isMeta && e.shiftKey && isKeyS;
+      const isWinGameBar = isMeta && (isKeyG || (e.altKey && isKeyR));
       const isMacScreenshot = isMeta && e.shiftKey && ["3", "4", "5", "#", "$", "%"].includes(k);
-      const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && lowerK === "s";
+      const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && isKeyS;
       const isDevTools =
         k === "F12" ||
-        ((e.ctrlKey || isMeta) && e.shiftKey && (lowerK === "i" || lowerK === "j" || lowerK === "c")) ||
-        ((e.ctrlKey || isMeta) && lowerK === "u");
+        ((e.ctrlKey || isMeta) && e.shiftKey && (lowerK === "i" || lowerK === "j" || lowerK === "c" || lowerK === "ه" || lowerK === "ـ" || lowerK === "ؤ")) ||
+        ((e.ctrlKey || isMeta) && (lowerK === "u" || lowerK === "ع"));
 
       if (isPrtScn || isWinSnipping || isWinGameBar || isMacScreenshot || isBrowserScreenshot) {
         e.preventDefault();
@@ -306,9 +313,11 @@ export function DrmPlayer({
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44) {
-        e.preventDefault();
-        triggerBlackout(5000);
+      const k = e.key;
+      const lowerK = k.toLowerCase();
+      const isKeyS = lowerK === "s" || lowerK === "س" || e.code === "KeyS" || e.keyCode === 83;
+      const isPrtScn = k === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44;
+      if (isPrtScn || isKeyS) {
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
           navigator.clipboard.writeText("").catch(() => {});
         }
@@ -461,7 +470,10 @@ export function DrmPlayer({
             : PLAYREADY_SW;
 
         if (licenseServers?.widevine) servers["com.widevine.alpha"] = toAbsolute(licenseServers.widevine)!;
-        if (licenseServers?.playready && playreadyHardware) servers[playreadyKeySystem] = toAbsolute(licenseServers.playready)!;
+        if (licenseServers?.playready) {
+          servers[playreadyKeySystem] = toAbsolute(licenseServers.playready)!;
+          servers[PLAYREADY_SW] = toAbsolute(licenseServers.playready)!;
+        }
         if (licenseServers?.fairplay) servers["com.apple.fps.1_0"] = toAbsolute(licenseServers.fairplay)!;
 
         // Strict mode is the opt-out: hardware or nothing, no SD fallback.
@@ -493,11 +505,14 @@ export function DrmPlayer({
           };
         }
 
-        // Only prefer PlayReady if hardware PlayReady is genuinely present (e.g. Edge Windows)
-        // Otherwise do not force preferredKeySystems so Shaka cleanly negotiates Widevine on Chrome/Edge/Firefox/Android.
+        // On Edge/Windows, prefer PlayReady so that Media Foundation protected swapchain
+        // hardware overlay blanks out screen recorders and snipping tools.
+        const playreadyAny = playreadyHardware || (await supportsRobustness(PLAYREADY_SW, "", ""));
         const preferredKeySystems = playreadyHardware
           ? [playreadyKeySystem, "com.widevine.alpha"]
-          : undefined;
+          : playreadyAny
+            ? [playreadyKeySystem, PLAYREADY_SW, "com.widevine.alpha"]
+            : undefined;
 
         localPlayer.configure({
           drm: {

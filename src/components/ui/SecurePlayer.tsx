@@ -382,20 +382,27 @@ export function SecurePlayer({
     const handleKeyDown = (e: KeyboardEvent) => {
       const k = e.key;
       const lowerK = k.toLowerCase();
-      const isPrtScn = k === "PrintScreen" || e.code === "PrintScreen";
+      const isPrtScn = k === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44;
       const isMeta =
         e.metaKey ||
         (typeof e.getModifierState === "function" &&
           (e.getModifierState("Meta") || e.getModifierState("OS")));
 
-      const isWinSnipping = isMeta && e.shiftKey && lowerK === "s";
-      const isWinGameBar = isMeta && (lowerK === "g" || (e.altKey && lowerK === "r"));
+      // Physical KeyS or Arabic "س"
+      const isKeyS = lowerK === "s" || lowerK === "س" || e.code === "KeyS" || e.keyCode === 83;
+      // Physical KeyG or Arabic "ل"
+      const isKeyG = lowerK === "g" || lowerK === "ل" || e.code === "KeyG" || e.keyCode === 71;
+      // Physical KeyR or Arabic "ق"
+      const isKeyR = lowerK === "r" || lowerK === "ق" || e.code === "KeyR" || e.keyCode === 82;
+
+      const isWinSnipping = isMeta && e.shiftKey && isKeyS;
+      const isWinGameBar = isMeta && (isKeyG || (e.altKey && isKeyR));
       const isMacScreenshot = isMeta && e.shiftKey && ["3", "4", "5", "#", "$", "%"].includes(k);
-      const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && lowerK === "s";
+      const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && isKeyS;
       const isDevTools =
         k === "F12" ||
-        ((e.ctrlKey || isMeta) && e.shiftKey && (lowerK === "i" || lowerK === "j" || lowerK === "c")) ||
-        ((e.ctrlKey || isMeta) && lowerK === "u");
+        ((e.ctrlKey || isMeta) && e.shiftKey && (lowerK === "i" || lowerK === "j" || lowerK === "c" || lowerK === "ه" || lowerK === "ـ" || lowerK === "ؤ")) ||
+        ((e.ctrlKey || isMeta) && (lowerK === "u" || lowerK === "ع"));
 
       if (isPrtScn || isWinSnipping || isWinGameBar || isMacScreenshot || isBrowserScreenshot || isDevTools) {
         if (isPrtScn || isWinSnipping || isMacScreenshot || isBrowserScreenshot) {
@@ -409,8 +416,11 @@ export function SecurePlayer({
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen" || e.code === "PrintScreen") {
-        triggerBlackout(5000);
+      const k = e.key;
+      const lowerK = k.toLowerCase();
+      const isKeyS = lowerK === "s" || lowerK === "س" || e.code === "KeyS" || e.keyCode === 83;
+      const isPrtScn = k === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44;
+      if (isPrtScn || isKeyS) {
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
           navigator.clipboard.writeText("").catch(() => {});
         }

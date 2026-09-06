@@ -129,13 +129,20 @@ export function VideoGuard({
         (typeof e.getModifierState === "function" &&
           (e.getModifierState("Meta") || e.getModifierState("OS")));
 
-      const isWinSnipping = isMeta && e.shiftKey && lowerK === "s";
-      const isWinGameBar = isMeta && (lowerK === "g" || (e.altKey && lowerK === "r"));
+      // Physical KeyS or Arabic "س"
+      const isKeyS = lowerK === "s" || lowerK === "س" || e.code === "KeyS" || e.keyCode === 83;
+      // Physical KeyG or Arabic "ل"
+      const isKeyG = lowerK === "g" || lowerK === "ل" || e.code === "KeyG" || e.keyCode === 71;
+      // Physical KeyR or Arabic "ق"
+      const isKeyR = lowerK === "r" || lowerK === "ق" || e.code === "KeyR" || e.keyCode === 82;
+
+      const isWinSnipping = isMeta && e.shiftKey && isKeyS;
+      const isWinGameBar = isMeta && (isKeyG || (e.altKey && isKeyR));
       const isMacScreenshot = isMeta && e.shiftKey && ["3", "4", "5", "#", "$", "%"].includes(k);
-      const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && lowerK === "s";
+      const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && isKeyS;
 
       // F12 / DevTools
-      if (k === "F12" || ((e.ctrlKey || isMeta) && e.shiftKey && ["i", "j", "c"].includes(lowerK))) {
+      if (k === "F12" || ((e.ctrlKey || isMeta) && e.shiftKey && ["i", "j", "c", "ه", "ـ", "ؤ"].includes(lowerK))) {
         e.preventDefault();
         e.stopPropagation();
         pauseAllVideos();
@@ -144,7 +151,7 @@ export function VideoGuard({
       }
 
       // View Source
-      if ((e.ctrlKey || isMeta) && lowerK === "u") {
+      if ((e.ctrlKey || isMeta) && (lowerK === "u" || lowerK === "ع")) {
         e.preventDefault();
         e.stopPropagation();
         triggerViolationModal("DEVTOOLS", "View Source attempt");
@@ -152,7 +159,7 @@ export function VideoGuard({
       }
 
       // Save / Print
-      if ((e.ctrlKey || isMeta) && (lowerK === "s" || lowerK === "p")) {
+      if ((e.ctrlKey || isMeta) && (isKeyS || lowerK === "p" || lowerK === "ح")) {
         if (e.shiftKey) {
           // Handled as screenshot below
         } else {
@@ -177,7 +184,10 @@ export function VideoGuard({
 
     const handleKeyUp = (e: KeyboardEvent) => {
       const k = e.key;
-      if (k === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44) {
+      const lowerK = k.toLowerCase();
+      const isKeyS = lowerK === "s" || lowerK === "س" || e.code === "KeyS" || e.keyCode === 83;
+      const isPrtScn = k === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44;
+      if (isPrtScn || isKeyS) {
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
           navigator.clipboard.writeText("").catch(() => {});
         }
@@ -267,19 +277,19 @@ export function VideoGuard({
       `}</style>
 
       {/* Main Video Content */}
-      <div className={hasViolation ? "filter blur-lg pointer-events-none opacity-20" : ""}>
+      <div className={hasViolation ? "hidden pointer-events-none" : ""}>
         {children}
       </div>
 
-      {/* Tab Hidden Blur Overlay */}
+      {/* Tab Hidden Blur Overlay — 100% solid black barrier to block all snipping tools */}
       {isTabHidden && !hasViolation && (
-        <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md z-40 flex flex-col items-center justify-center p-6 text-center text-white">
+        <div className="absolute inset-0 bg-black z-50 flex flex-col items-center justify-center p-6 text-center text-white select-none">
           <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-2xl mb-3">
             ⏸️
           </div>
           <h3 className="text-lg font-bold">تم إيقاف المشاهدة مؤقتاً</h3>
           <p className="text-slate-400 text-xs mt-1 max-w-sm">
-            تم التوقف تلقائياً عند مغادرة الصفحة للحفاظ على رصيد المشاهدة الخاص بك.
+            تم التوقف وتعتيم الشاشة تلقائياً عند مغادرة الصفحة لحماية المحتوى ورصيد المشاهدة.
           </p>
         </div>
       )}

@@ -215,6 +215,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Sanitize manifest to remove HDR TransferCharacteristics tags that break SDR hardware overlays
+    if (fs.existsSync(manifestPath)) {
+      try {
+        let manifestContent = fs.readFileSync(manifestPath, "utf8");
+        manifestContent = manifestContent.replace(
+          /<SupplementalProperty schemeIdUri="urn:mpeg:mpegB:cicp:TransferCharacteristics"[^>]*\/>\s*/g,
+          ""
+        );
+        fs.writeFileSync(manifestPath, manifestContent, "utf8");
+      } catch (mpdErr) {
+        console.warn("[drm-package] Warning: failed to sanitize manifest MPD:", mpdErr);
+      }
+    }
+
     const keyMeta = {
       assetId: safeAssetId,
       keyId,
