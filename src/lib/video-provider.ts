@@ -85,6 +85,23 @@ export async function resolveEmbedUrl(
 
   switch (provider) {
     case "axinom": {
+      // Graceful fallback: If it's a Google Drive stream or local video without an existing DRM manifest on disk,
+      // fall back to the Native Engine (alasly) so the student never sees Shaka Error 1001 (BAD_HTTP_STATUS 404).
+      const fs = await import("fs");
+      const path = await import("path");
+      const safeId = id.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const manifestPath = path.resolve(process.cwd(), "uploads", "drm", safeId, "manifest.mpd");
+
+      if ((id.startsWith("gdrive_") || id.startsWith("local_")) && !fs.existsSync(manifestPath)) {
+        console.warn(`[video-provider] DRM manifest not found on disk for ${id}. Falling back to alasly.`);
+        const result = await getAlaslyPlaybackToken({
+          videoId: id,
+          userId: options?.userId,
+          domain: options?.domain,
+        });
+        return { embedUrl: result.embedUrl, provider: "alasly", signed: true, expiresInSeconds: result.expiresInSeconds };
+      }
+
       const { mintAxinomTokenWithPool } = await import("./axinom-pool");
       const result = await mintAxinomTokenWithPool({
         videoId: id,

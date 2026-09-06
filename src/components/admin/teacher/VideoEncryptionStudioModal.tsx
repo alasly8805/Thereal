@@ -355,9 +355,12 @@ export function VideoEncryptionStudioModal({
             const packData = await packRes.json();
             if (packRes.ok && packData.success && packData.assetId) {
               finalVideoId = packData.assetId;
+            } else {
+              setProvider("alasly");
             }
           } catch (e) {
             console.warn("Axinom DRM packaging error:", e);
+            setProvider("alasly");
           }
         }
 
@@ -399,6 +402,11 @@ export function VideoEncryptionStudioModal({
 
     setSubmitting(true);
 
+    const effectiveProvider =
+      providerVideoId.trim().startsWith("gdrive_") && provider === "axinom"
+        ? "alasly"
+        : provider;
+
     try {
       const res = await fetch(`/api/admin/folders/${folderId}/videos`, {
         method: "POST",
@@ -408,7 +416,7 @@ export function VideoEncryptionStudioModal({
         },
         body: JSON.stringify({
           title: title.trim(),
-          videoProvider: provider,
+          videoProvider: effectiveProvider,
           providerVideoId: providerVideoId.trim(),
           durationMinutes: Number(durationMinutes) || 0,
           maxWatchesPerUser: Number(maxWatchesPerUser) || 3,
