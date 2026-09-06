@@ -290,15 +290,14 @@ export function DrmPlayer({
         ((e.ctrlKey || isMeta) && e.shiftKey && (lowerK === "i" || lowerK === "j" || lowerK === "c")) ||
         ((e.ctrlKey || isMeta) && lowerK === "u");
 
-      if (isPrtScn || isWinSnipping || isWinGameBar || isMacScreenshot || isBrowserScreenshot || isDevTools) {
-        // Deliberately no blackout here.
-        //
-        // Win+Shift+S, PrintScreen and Cmd+Shift+3/4/5 are intercepted by the OS
-        // shell, so this handler mostly never runs — and when it does, the frame
-        // is already captured before React can repaint. It bought nothing, while
-        // a single stuck trigger blanked the player for the whole session, which
-        // is what students were actually experiencing. Real capture protection
-        // comes from the hardware DRM path and the CDM key-status lock below.
+      if (isPrtScn || isWinSnipping || isWinGameBar || isMacScreenshot || isBrowserScreenshot) {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerBlackout(2500);
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          navigator.clipboard.writeText("").catch(() => {});
+        }
+      } else if (isDevTools) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -308,23 +307,30 @@ export function DrmPlayer({
       if (e.key === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44) {
         e.preventDefault();
         e.stopPropagation();
+        triggerBlackout(2500);
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          navigator.clipboard.writeText("").catch(() => {});
+        }
       }
     };
 
     const handleBlur = () => {
-      // Focus loss is not evidence of capture: clicking the address bar, an
-      // extension popup or a second monitor all fire it. Backgrounding the tab
-      // is handled by visibilitychange, which is the signal that means the
-      // student genuinely cannot see the player.
+      // When an external screen capture or snipping tool steals focus while playing,
+      // black out the video instantly to prevent capturing frames.
+      if (videoRef.current && !videoRef.current.paused) {
+        triggerBlackout(2500);
+      }
     };
 
     const handleFocus = () => {
-      // Keep small grace period before unblacking
-      setTimeout(() => {
-        if (isVisible()) {
-          setIsBlackoutActive(false);
-        }
-      }, 300);
+      if (blackoutTimer) clearTimeout(blackoutTimer);
+      setIsBlackoutActive(false);
+    };
+
+    const handlePointerActivity = () => {
+      if (document.hasFocus()) {
+        setIsBlackoutActive(false);
+      }
     };
 
     const handleVisibilityChange = () => {
@@ -338,13 +344,14 @@ export function DrmPlayer({
     // Safety net: if anything above latched the blackout while the page is
     // visible, release it rather than leaving a permanently black player.
     const stuckGuard = setInterval(() => {
-      if (isVisible()) {
-        setIsBlackoutActive((active) => (active ? false : active));
+      if (isVisible() && document.hasFocus()) {
+        setIsBlackoutActive(false);
       }
-    }, 4000);
+    }, 3000);
 
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("mousemove", handlePointerActivity, { passive: true });
     if (!isTouchDevice) window.addEventListener("blur", handleBlur);
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -353,6 +360,7 @@ export function DrmPlayer({
       if (blackoutTimer) clearTimeout(blackoutTimer);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("mousemove", handlePointerActivity);
       window.removeEventListener("blur", handleBlur);
       clearInterval(stuckGuard);
       window.removeEventListener("focus", handleFocus);
@@ -494,6 +502,14 @@ export function DrmPlayer({
         localPlayer.configure({
           drm: {
             servers: Object.keys(servers).length > 0 ? servers : undefined,
+            preferredKeySystems: [
+              playreadyKeySystem,
+              PLAYREADY_HW,
+              PLAYREADY_HW_ALT,
+              PLAYREADY_SW,
+              "com.apple.fps.1_0",
+              "com.widevine.alpha",
+            ],
             clearKeys: clearKeys || undefined,
             advanced,
           },
