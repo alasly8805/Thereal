@@ -185,6 +185,7 @@ export async function POST(req: NextRequest) {
       `in=${sourcePath},stream=video,output=${videoOut}`,
       `in=${sourcePath},stream=audio,output=${audioOut}`,
       `--temp_dir=${TEMP_DIR}`,
+      "--io_cache_size=67108864",
       "--enable_raw_key_encryption",
       `--keys=label=:key_id=${keyId}:key=${key}`,
       "--protection_systems=Widevine,PlayReady",

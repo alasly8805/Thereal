@@ -100,6 +100,24 @@ export function VideoEncryptionStudioModal({
     filename?: string;
   } | null>(null);
 
+  const [gdriveStage, setGdriveStage] = useState<"idle" | "downloading" | "encrypting" | "finalizing">("idle");
+  const [gdriveElapsedSeconds, setGdriveElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (gdriveImporting) {
+      setGdriveElapsedSeconds(0);
+      timer = setInterval(() => {
+        setGdriveElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setGdriveElapsedSeconds(0);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [gdriveImporting]);
+
   const [submitting, setSubmitting] = useState(false);
 
   // Verify User Session: if superadmin/owner or authorized teacher, unlock DRM automatically
@@ -317,6 +335,7 @@ export function VideoEncryptionStudioModal({
     }
 
     setGdriveImporting(true);
+    setGdriveStage("downloading");
     setGdriveSuccessInfo(null);
 
     const endpoint =
@@ -343,6 +362,7 @@ export function VideoEncryptionStudioModal({
         let finalVideoId = data.videoId || data.providerVideoId;
 
         if (provider === "axinom") {
+          setGdriveStage("encrypting");
           try {
             const packRes = await fetch("/api/teacher/drm-package", {
               method: "POST",
@@ -364,6 +384,7 @@ export function VideoEncryptionStudioModal({
           }
         }
 
+        setGdriveStage("finalizing");
         setProviderVideoId(finalVideoId);
         setGdriveSuccessInfo({
           sizeFormatted: data.sizeFormatted || "مكتمل",
@@ -378,7 +399,7 @@ export function VideoEncryptionStudioModal({
           setDurationMinutes(data.durationMinutes);
         }
 
-        toastSuccess(data.message || "تم استيراد الفيديو بنجاح من Google Drive!");
+        toastSuccess(data.message || "تم استيراد وتشفير الفيديو بنجاح من Google Drive!");
       } else {
         toastError(data.error || "فشل استيراد الفيديو من Google Drive");
       }
@@ -386,6 +407,7 @@ export function VideoEncryptionStudioModal({
       toastError("حدث خطأ في الاتصال أثناء استيراد الفيديو من Google Drive");
     } finally {
       setGdriveImporting(false);
+      setGdriveStage("idle");
     }
   };
 
@@ -954,6 +976,77 @@ export function VideoEncryptionStudioModal({
                 </span>
               </div>
 
+              {/* Active Progress & Stage Card */}
+              {gdriveImporting && (
+                <div className="p-4 rounded-2xl border-2 border-blue-500/40 bg-white dark:bg-slate-900 shadow-xl space-y-3 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-950/80 text-blue-600 flex items-center justify-center">
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-900 dark:text-white">
+                          {gdriveStage === "downloading"
+                            ? "المرحلة 1: تنزيل الفيديو من Google Drive..."
+                            : gdriveStage === "encrypting"
+                            ? "المرحلة 2: التشفير العتادي CENC Shaka Packager..."
+                            : "المرحلة 3: إتمام المعالجة وحفظ المفاتيح..."}
+                        </h4>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                          {provider === "axinom"
+                            ? "تشفير عتادي Widevine + PlayReady (شاشة سوداء عند التصوير)"
+                            : "معالجة تدفق الفيديو سحابياً"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/80 border border-blue-200 dark:border-blue-900 text-[11px] font-mono font-black text-blue-700 dark:text-blue-300">
+                      ⏱️ {gdriveElapsedSeconds} ثانية
+                    </div>
+                  </div>
+
+                  {/* Stage Visual Stepper */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div
+                      className={`p-2.5 rounded-xl border text-[10.5px] flex items-center gap-2 transition-all ${
+                        gdriveStage === "downloading"
+                          ? "border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-900 dark:text-blue-300 font-bold shadow-xs ring-1 ring-blue-400/30"
+                          : "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 font-bold"
+                      }`}
+                    >
+                      {gdriveStage === "downloading" ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      )}
+                      <span>1. التنزيل من Google Drive</span>
+                    </div>
+
+                    <div
+                      className={`p-2.5 rounded-xl border text-[10.5px] flex items-center gap-2 transition-all ${
+                        gdriveStage === "encrypting"
+                          ? "border-purple-500 bg-purple-50 dark:bg-purple-950/50 text-purple-900 dark:text-purple-300 font-bold shadow-xs ring-1 ring-purple-400/30"
+                          : gdriveStage === "finalizing"
+                          ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 font-bold"
+                          : "border-slate-200 dark:border-slate-800 text-slate-400 opacity-60"
+                      }`}
+                    >
+                      {gdriveStage === "encrypting" ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-600 shrink-0" />
+                      ) : gdriveStage === "finalizing" ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      <span>2. التشفير العتادي DRM</span>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] text-amber-800 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-900/40 leading-relaxed">
+                    💡 <strong>معلومة تقنية هامة:</strong> الفيديوهات الكبيرة (2 جيجابايت فأكثر) تحتاج عادة بين 60 إلى 90 ثانية لمعالجة وتشفير مليارات البايتات عتادياً بتشفير AES-128-CTR. العملية تعمل بنجاح في الخلفية، يرجى عدم إغلاق النافذة.
+                  </div>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={handleGoogleDriveImport}
@@ -963,7 +1056,11 @@ export function VideoEncryptionStudioModal({
                 {gdriveImporting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>جاري تنزيل وتشفير الفيديو سحابياً...</span>
+                    <span>
+                      {gdriveStage === "downloading"
+                        ? `جاري التنزيل من Drive (${gdriveElapsedSeconds}ث)...`
+                        : `جاري التشفير العتادي DRM (${gdriveElapsedSeconds}ث)...`}
+                    </span>
                   </>
                 ) : (
                   <>
