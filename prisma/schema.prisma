@@ -1851,3 +1851,65 @@ model VdoCipherReservation {
   @@index([sessionToken])
   @@index([expiresAt])
 }
+
+/// Superadmin-managed Axinom Multi-DRM accounts.
+/// Supports multiple pooled accounts, quota/license certificate tracking,
+/// priority failover, and automatic fallback when an account expires or runs out of licenses.
+model AxinomAccount {
+  id                  String                 @id @default(cuid())
+  name                String                 // e.g. "Axinom Main 01"
+  tenantId            String                 // Axinom Tenant ID
+  communicationKeyId  String                 // Axinom Communication Key ID (GUID)
+  communicationKeyEnc String                 // AES-256-GCM encrypted communication key
+  keySeedId           String?                // Optional Axinom Key Seed ID
+  widevineLicenseUrl  String?                // Custom Widevine License Server URL (defaults to tenant URL if null)
+  playreadyLicenseUrl String?                // Custom PlayReady License Server URL (defaults to tenant URL if null)
+  fairplayLicenseUrl  String?                // Custom FairPlay License Server URL (defaults to tenant URL if null)
+  fairplayCertUrl     String?                // Custom FairPlay Certificate URL
+  licenseLimit        Int                    @default(10000) // Total certificates/licenses quota allowed
+  licensesUsed        Int                    @default(0)     // Number of consumed licenses/tokens
+  expiresAt           DateTime               // Account validity expiration
+  isActive            Boolean                @default(true)
+  isPrimary           Boolean                @default(false)
+  priority            Int                    @default(1)     // 1 = top priority, 2 = fallback 1, etc.
+  notes               String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  licenseEvents       AxinomLicenseEvent[]
+
+  @@index([isActive, expiresAt])
+  @@index([priority])
+  @@index([isPrimary])
+}
+
+/// Tracks DRM license token minting events for accurate auditing and quota tracking.
+model AxinomLicenseEvent {
+  id                  String                 @id @default(cuid())
+  accountId           String
+  videoId             String
+  studentId           String?
+  ipAddress           String?
+  userAgent           String?
+  createdAt           DateTime               @default(now())
+
+  account             AxinomAccount          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@index([videoId])
+}
+
+/// Stores DRM Content Key metadata per video in DB for cross-account decryption and disaster recovery.
+model AxinomVideoKey {
+  id                  String                 @id @default(cuid())
+  videoId             String                 @unique
+  assetId             String
+  keyId               String
+  keyEnc              String                 // AES-256-GCM encrypted content key
+  manifestUrl         String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  @@index([assetId])
+}
+

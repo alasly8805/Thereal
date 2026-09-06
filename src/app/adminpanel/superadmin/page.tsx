@@ -23,6 +23,7 @@ import { PlansSection } from "@/components/admin/superadmin/PlansSection";
 import { WhatsAppSection } from "@/components/admin/WhatsAppSection";
 import { SecuritySection } from "@/components/admin/SecuritySection";
 import { VdoCipherSection } from "@/components/admin/superadmin/VdoCipherSection";
+import { AxinomSection } from "@/components/admin/superadmin/AxinomSection";
 import { IconTrash } from "@/components/admin/AdminIcons";
 import dynamic from "next/dynamic";
 
@@ -820,6 +821,8 @@ export default function SuperadminPage() {
           {activeSection === "wallet" && <WalletSection />}
 
           {activeSection === "vdocipher-accounts" && <VdoCipherSection />}
+
+          {activeSection === "axinom-accounts" && <AxinomSection />}
 
           {activeSection === "students" && <StudentsSection userRole={userRole} refreshKey={refreshKey} />}
 

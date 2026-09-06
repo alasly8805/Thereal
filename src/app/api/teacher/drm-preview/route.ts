@@ -178,7 +178,8 @@ export async function POST(req: NextRequest) {
     // 2 hours expiration = 7200 seconds
     const EXPIRES_IN_SECONDS = 2 * 60 * 60;
 
-    const drmResult = createAxinomDrmToken({
+    const { mintAxinomTokenWithPool } = await import("@/lib/axinom-pool");
+    const drmResult = await mintAxinomTokenWithPool({
       videoId: assetId,
       userId: studentIdentifier,
       expiresInSeconds: EXPIRES_IN_SECONDS,

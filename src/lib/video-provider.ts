@@ -85,7 +85,8 @@ export async function resolveEmbedUrl(
 
   switch (provider) {
     case "axinom": {
-      const result = createAxinomDrmToken({
+      const { mintAxinomTokenWithPool } = await import("./axinom-pool");
+      const result = await mintAxinomTokenWithPool({
         videoId: id,
         userId: options?.userId,
       });

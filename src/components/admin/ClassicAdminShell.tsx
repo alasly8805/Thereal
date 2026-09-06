@@ -8,6 +8,7 @@ import {
   Wallet,
   Bot,
   Settings,
+  Shield,
   ShieldAlert,
   Video,
   Phone,
@@ -128,6 +129,7 @@ export function ClassicAdminShell({
         { id: "wallet", label: "إدارة الرصيد والمحافظ", icon: <Wallet className="w-3.5 h-3.5" /> },
         { id: "plans", label: "الخطط الدراسية", icon: <FileText className="w-3.5 h-3.5" /> },
         { id: "vdocipher-accounts", label: "باقات وسيرفرات VdoCipher", icon: <Video className="w-3.5 h-3.5" /> },
+        { id: "axinom-accounts", label: "باقات وتراخيص Axinom DRM", icon: <Shield className="w-3.5 h-3.5" /> },
       ],
     },
     {

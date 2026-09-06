@@ -144,6 +144,20 @@ export async function POST(req: NextRequest) {
     };
     fs.writeFileSync(path.join(DRM_KEYS_DIR, `${safeAssetId}.json`), JSON.stringify(keyMeta, null, 2));
 
+    // Save to PostgreSQL AxinomVideoKey table for disaster recovery and cross-account failover
+    try {
+      const { saveVideoDrmKey } = await import("@/lib/axinom-pool");
+      await saveVideoDrmKey({
+        videoId: rawVideoId,
+        assetId: safeAssetId,
+        keyId,
+        keyHex: key,
+        manifestUrl: `/api/videos/drm/${safeAssetId}/manifest.mpd`,
+      });
+    } catch (dbSaveErr) {
+      console.error("[drm-package] Warning: failed to save DRM key to database:", dbSaveErr);
+    }
+
     return NextResponse.json({
       success: true,
       assetId: safeAssetId,
