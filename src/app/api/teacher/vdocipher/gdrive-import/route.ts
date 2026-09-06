@@ -1,4 +1,4 @@
-import { createWriteStream, openAsBlob } from "node:fs";
+import { createWriteStream, openAsBlob, existsSync, mkdirSync } from "node:fs";
 import { stat, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -260,7 +260,9 @@ export async function POST(req: NextRequest) {
       throw new Error(`فشل تنزيل الفيديو من Google Drive (${gdriveRes.status})`);
     }
 
-    tempPath = path.join(os.tmpdir(), `codeup-vdocipher-${randomUUID()}.mp4`);
+    const tempDir = path.resolve(process.cwd(), "uploads", "temp");
+    if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true });
+    tempPath = path.join(tempDir, `codeup-vdocipher-${randomUUID()}.mp4`);
     await pipeline(
       Readable.fromWeb(gdriveRes.body as Parameters<typeof Readable.fromWeb>[0]),
       createWriteStream(tempPath)

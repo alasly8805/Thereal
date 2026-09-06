@@ -411,6 +411,26 @@ export default function TeacherDashboardPage() {
       setGdriveUrl("");
 
       if (currentProvider === "axinom") {
+        setGdriveStatus("جاري تشفير الفيديو عتادياً بنظام CENC Widevine + PlayReady...");
+        try {
+          const currentDrmPass = drmVerifiedPassword || (typeof window !== "undefined" ? sessionStorage.getItem("drm_verified_pass") || "" : "");
+          const packRes = await fetch("/api/teacher/drm-package", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoId: data.videoId, drmPassword: currentDrmPass }),
+          });
+          const packData = await packRes.json();
+          if (packRes.ok && packData.success && packData.assetId) {
+            const packagedId = packData.assetId;
+            setNewVideo((prev) => ({ ...prev, providerVideoId: packagedId }));
+            setLastUploadedVideoId(packagedId);
+            handleGenerateDrmPreview(packagedId);
+            notify("success", "تم تشفير الفيديو عتادياً بـ CENC Widevine + PlayReady بنجاح! 🔒");
+            return;
+          }
+        } catch (e) {
+          console.warn("Axinom packaging error:", e);
+        }
         handleGenerateDrmPreview(data.videoId);
       }
 

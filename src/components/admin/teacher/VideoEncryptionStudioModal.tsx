@@ -356,11 +356,11 @@ export function VideoEncryptionStudioModal({
             if (packRes.ok && packData.success && packData.assetId) {
               finalVideoId = packData.assetId;
             } else {
-              setProvider("alasly");
+              toastError(packData.error || "تعذر إتمام التشفير العتادي Shaka Packager");
             }
           } catch (e) {
             console.warn("Axinom DRM packaging error:", e);
-            setProvider("alasly");
+            toastError("حدث خطأ أثناء التشفير العتادي Shaka DRM");
           }
         }
 
@@ -402,10 +402,36 @@ export function VideoEncryptionStudioModal({
 
     setSubmitting(true);
 
-    const effectiveProvider =
-      providerVideoId.trim().startsWith("gdrive_") && provider === "axinom"
-        ? "alasly"
-        : provider;
+    let effectiveVideoId = providerVideoId.trim();
+
+    // If teacher selected Axinom DRM but the ID is still an unencrypted Google Drive reference, package it before saving
+    if (provider === "axinom" && (effectiveVideoId.startsWith("gdrive_") || effectiveVideoId.includes("drive.google.com"))) {
+      try {
+        const packRes = await fetch("/api/teacher/drm-package", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(drmPasscode ? { "x-drm-password": drmPasscode } : {}),
+          },
+          body: JSON.stringify({ videoId: effectiveVideoId, drmPassword: drmPasscode }),
+        });
+        const packData = await packRes.json();
+        if (packRes.ok && packData.success && packData.assetId) {
+          effectiveVideoId = packData.assetId;
+          setProviderVideoId(effectiveVideoId);
+        } else {
+          toastError(packData.error || "تعذر تشفير الفيديو بنظام Axinom Multi-DRM عتادياً");
+          setSubmitting(false);
+          return;
+        }
+      } catch (packErr) {
+        toastError("حدث خطأ أثناء تشفير الفيديو بنظام Axinom Multi-DRM");
+        setSubmitting(false);
+        return;
+      }
+    }
+
+    const effectiveProvider = provider;
 
     try {
       const res = await fetch(`/api/admin/folders/${folderId}/videos`, {
@@ -417,7 +443,7 @@ export function VideoEncryptionStudioModal({
         body: JSON.stringify({
           title: title.trim(),
           videoProvider: effectiveProvider,
-          providerVideoId: providerVideoId.trim(),
+          providerVideoId: effectiveVideoId,
           durationMinutes: Number(durationMinutes) || 0,
           maxWatchesPerUser: Number(maxWatchesPerUser) || 3,
           publishAt: publishAt || null,
