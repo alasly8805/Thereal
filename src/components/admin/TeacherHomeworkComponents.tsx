@@ -234,6 +234,7 @@ export function HomeworkManagerSection({
     type: "exam" as "link" | "exam" | "terminal" | "upload",
     linkUrl: "",
     courseId: selectedCourse?.id || "",
+    folderId: "",
     videoId: "",
     dueAt: "",
     timeLimitMinutes: 30,
@@ -304,6 +305,7 @@ export function HomeworkManagerSection({
         description: form.description || undefined,
         type: form.type,
         courseId: form.courseId || selectedCourse?.id || undefined,
+        folderId: form.folderId || undefined,
         videoId: form.videoId || undefined,
         dueAt: form.dueAt || undefined,
         timeLimitMinutes: form.timeLimitMinutes,
@@ -329,7 +331,7 @@ export function HomeworkManagerSection({
         notify("success", "تم إنشاء الواجب بنجاح ✅");
         setShowForm(false);
         void fetchHomeworks();
-        setForm(f => ({ ...f, title: "", description: "", linkUrl: "", videoId: "", expectedOutput: "", codeTemplate: "", questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }] }));
+        setForm(f => ({ ...f, title: "", description: "", linkUrl: "", folderId: "", videoId: "", expectedOutput: "", codeTemplate: "", questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }] }));
       } else {
         notify("error", data.error || "تعذر إنشاء الواجب");
       }
@@ -485,13 +487,13 @@ export function HomeworkManagerSection({
             </div>
           </div>
 
-          {/* Course & Lesson Selectors */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Course, Folder & Lesson Selectors */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className={label}>الكورس التابع له الواجب</label>
               <select
                 value={form.courseId}
-                onChange={e => setForm(f => ({ ...f, courseId: e.target.value, videoId: "" }))}
+                onChange={e => setForm(f => ({ ...f, courseId: e.target.value, folderId: "", videoId: "" }))}
                 className={input}
               >
                 <option value="">— اختر الكورس —</option>
@@ -502,10 +504,46 @@ export function HomeworkManagerSection({
             </div>
 
             <div>
+              <label className={label}>المحاضرة / الوحدة (Folder)</label>
+              <select
+                value={form.folderId}
+                onChange={e => setForm(f => ({ ...f, folderId: e.target.value, videoId: "" }))}
+                className={input}
+                disabled={!form.courseId || loadingFolders}
+              >
+                {!form.courseId ? (
+                  <option value="">اختر الكورس أولاً</option>
+                ) : loadingFolders ? (
+                  <option value="">جارٍ تحميل المحاضرات...</option>
+                ) : courseFolders.length === 0 ? (
+                  <option value="">لا توجد محاضرات في هذا الكورس بعد</option>
+                ) : (
+                  <>
+                    <option value="">— اختر المحاضرة —</option>
+                    {courseFolders.map(f => (
+                      <option key={f.id} value={f.id}>
+                        📁 {f.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
+
+            <div>
               <label className={label}>ربط بدرس محدد (اختياري)</label>
               <select
                 value={form.videoId}
-                onChange={e => setForm(f => ({ ...f, videoId: e.target.value }))}
+                onChange={e => {
+                  const selectedVidId = e.target.value;
+                  const matchingVideo = allVideos.find(v => v.id === selectedVidId);
+                  const matchingFolder = matchingVideo ? courseFolders.find(f => f.videos?.some(v => v.id === selectedVidId)) : null;
+                  setForm(f => ({
+                    ...f,
+                    videoId: selectedVidId,
+                    folderId: f.folderId || matchingFolder?.id || f.folderId,
+                  }));
+                }}
                 className={input}
                 disabled={!form.courseId || loadingFolders}
               >
@@ -517,10 +555,13 @@ export function HomeworkManagerSection({
                   <option value="">لا توجد دروس في هذا الكورس بعد</option>
                 ) : (
                   <>
-                    <option value="">— الكورس ككل (بدون تحديد درس) —</option>
-                    {allVideos.map(v => (
+                    <option value="">— بدون تحديد درس معين —</option>
+                    {(form.folderId
+                      ? (courseFolders.find(f => f.id === form.folderId)?.videos ?? [])
+                      : allVideos
+                    ).map((v: any) => (
                       <option key={v.id} value={v.id}>
-                        📁 {v.folderName} ← 🎥 {v.title}
+                        {v.folderName ? `📁 ${v.folderName} ← ` : ""}🎥 {v.title}
                       </option>
                     ))}
                   </>

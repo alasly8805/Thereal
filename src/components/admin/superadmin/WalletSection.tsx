@@ -399,7 +399,7 @@ export function WalletSection() {
           {/* Generator form */}
           <div className="rounded-[18px] p-6 space-y-4" style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}>
             <h3 style={{ fontFamily: "var(--font-head)", fontWeight: 800, fontSize: 18, color: "var(--ink)", margin: 0 }}>إنشاء أكواد رصيد جديدة</h3>
-            <form onSubmit={handleGenerate} className="grid gap-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
+            <form onSubmit={handleGenerate} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold mb-2" style={{ color: "var(--ink-2)" }}>المبلغ (جنيه) *</label>
                 <input type="number" min="1" step="0.5" required value={amount} onChange={e => setAmount(e.target.value)}
@@ -420,12 +420,12 @@ export function WalletSection() {
                 <input type="datetime-local" value={expiresAt} onChange={e => setExpiresAt(e.target.value)}
                   dir="ltr" className={input} style={inputStyle} />
               </div>
-              <div style={{ gridColumn: "1 / -1" }}>
+              <div className="sm:col-span-2">
                 <label className="block text-sm font-semibold mb-2" style={{ color: "var(--ink-2)" }}>كلمة مرور إجراءات المشرف *</label>
                 <input type="password" required value={moneyActionPassword} onChange={e => setMoneyActionPassword(e.target.value)}
                   placeholder="أدخل كلمة مرور إجراءات المشرف" dir="ltr" className={input} style={inputStyle} />
               </div>
-              <div style={{ gridColumn: "1 / -1" }}>
+              <div className="sm:col-span-2">
                 <button type="submit" disabled={generating}
                   className="w-full cursor-pointer border-none rounded-[12px] text-white font-bold transition-opacity hover:opacity-90 disabled:opacity-50"
                   style={{ padding: "13px", background: "var(--brand)", fontSize: 15, fontFamily: "var(--font-head)", boxShadow: "0 6px 16px -6px var(--brand-shadow)" }}>
@@ -472,7 +472,7 @@ export function WalletSection() {
             </div>
             {codesLoaded && (
               <div style={{ overflowX: "auto" }}>
-                <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+                <table className="w-full text-sm" style={{ borderCollapse: "collapse", minWidth: "640px" }}>
                   <thead>
                     <tr style={{ background: "var(--bg)", borderBottom: "2px solid var(--border)" }}>
                       {["الكود","المبلغ","الحالة","مستخدم من","الانتهاء","تاريخ الإنشاء"].map(h => (
@@ -773,7 +773,7 @@ export function WalletSection() {
               </div>
 
               <form onSubmit={handleCredit} className="space-y-4">
-                <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold mb-2" style={{ color: "var(--ink-2)" }}>المبلغ (جنيه) — سالب للخصم</label>
                     <input type="number" step="0.5" required value={creditAmt} onChange={e => setCreditAmt(e.target.value)}

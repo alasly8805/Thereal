@@ -192,19 +192,19 @@ export function MoneyControlModal({ isOpen, onClose, onUpdated }: MoneyControlMo
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn" dir="rtl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-sm animate-fadeIn" dir="rtl">
       <div
-        className="w-full max-w-5xl max-h-[90vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-slate-700/80 bg-slate-900 text-slate-100"
+        className="w-full max-w-5xl max-h-[92vh] rounded-3xl overflow-hidden flex flex-col shadow-2xl border border-slate-700/80 bg-slate-900 text-slate-100"
         style={{ background: "linear-gradient(180deg, #101927 0%, #0b111a 100%)" }}
       >
         {/* Header */}
-        <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
+        <div className="p-4 sm:p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-2xl shadow-inner">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-xl sm:text-2xl shadow-inner shrink-0">
               💰
             </div>
             <div>
-              <h2 className="text-xl font-black text-white flex items-center gap-2">
+              <h2 className="text-base sm:text-xl font-black text-white flex items-center gap-2">
                 التحكم في الأموال ونسب الأرباح والمصروفات
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -214,14 +214,14 @@ export function MoneyControlModal({ isOpen, onClose, onUpdated }: MoneyControlMo
           </div>
           <button
             onClick={onClose}
-            className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer border-none text-lg"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer border-none text-base sm:text-lg shrink-0"
           >
             ✕
           </button>
         </div>
 
         {/* Summary Financial Cards */}
-        <div className="p-6 pb-2 grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="p-4 sm:p-6 pb-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/50">
             <div className="text-xs font-semibold text-slate-400">إجمالي دخل المعلمين</div>
             <div className="text-2xl font-black text-amber-400 mt-1 font-mono">
@@ -325,7 +325,8 @@ export function MoneyControlModal({ isOpen, onClose, onUpdated }: MoneyControlMo
 
               {/* Teachers table */}
               <div className="rounded-2xl overflow-hidden border border-slate-800 bg-slate-900/60">
-                <table className="w-full text-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs min-w-[620px]">
                   <thead className="bg-slate-800/80 border-b border-slate-700/80 text-slate-400 font-medium">
                     <tr>
                       <th className="px-4 py-3 text-right">المعلم</th>
@@ -401,7 +402,8 @@ export function MoneyControlModal({ isOpen, onClose, onUpdated }: MoneyControlMo
                       );
                     })}
                   </tbody>
-                </table>
+                  </table>
+                </div>
               </div>
             </div>
           ) : (
@@ -487,7 +489,7 @@ export function MoneyControlModal({ isOpen, onClose, onUpdated }: MoneyControlMo
                   <p className="p-8 text-xs text-center text-slate-500">لا توجد مصروفات مسجلة بعد.</p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
+                    <table className="w-full text-xs min-w-[550px]">
                       <thead className="bg-slate-800/40 border-b border-slate-700/60 text-slate-400 font-medium">
                         <tr>
                           <th className="px-3 py-2 text-right">المصروف</th>

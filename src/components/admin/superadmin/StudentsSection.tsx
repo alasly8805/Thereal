@@ -458,7 +458,7 @@ export function StudentsSection({ userRole = "superadmin", refreshKey }: { userR
         ) : (
           <>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-gray-700 text-gray-400">
                     <th className="text-right px-4 py-3 font-medium">الاسم</th>
