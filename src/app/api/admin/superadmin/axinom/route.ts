@@ -15,7 +15,44 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 403 });
     }
 
-    const { accounts, kpis } = await getAllAxinomAccountsWithStats();
+    let { accounts, kpis } = await getAllAxinomAccountsWithStats();
+
+    // Auto-seed default account from .env if database has no accounts yet
+    if (accounts.length === 0) {
+      const envTenant = (process.env.AXINOM_TENANT_ID || "").trim();
+      const envComKeyId = (process.env.AXINOM_COMMUNICATION_KEY_ID || "").trim();
+      const envComKey = (process.env.AXINOM_COMMUNICATION_KEY || "").trim();
+
+      if (envTenant && envComKeyId && envComKey) {
+        try {
+          await prisma.axinomAccount.create({
+            data: {
+              name: "حساب Axinom الأساسي (من ملف .env)",
+              tenantId: envTenant,
+              communicationKeyId: envComKeyId,
+              communicationKeyEnc: encryptAxinomSecret(envComKey),
+              keySeedId: process.env.AXINOM_KEY_SEED_ID || null,
+              widevineLicenseUrl: process.env.AXINOM_WIDEVINE_LICENSE_URL || null,
+              playreadyLicenseUrl: process.env.AXINOM_PLAYREADY_LICENSE_URL || null,
+              fairplayLicenseUrl: process.env.AXINOM_FAIRPLAY_LICENSE_URL || null,
+              fairplayCertUrl: process.env.AXINOM_FAIRPLAY_CERT_URL || null,
+              licenseLimit: 10000,
+              licensesUsed: 0,
+              expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+              isActive: true,
+              isPrimary: true,
+              priority: 1,
+              notes: "تم إدراجه تلقائياً من ملف البيئة .env - الحساب الأساسي لتشغيل التراخيص",
+            },
+          });
+          const refreshed = await getAllAxinomAccountsWithStats();
+          accounts = refreshed.accounts;
+          kpis = refreshed.kpis;
+        } catch (seedErr) {
+          console.error("[Axinom Accounts API] Auto-seed from .env failed:", seedErr);
+        }
+      }
+    }
 
     return NextResponse.json({
       success: true,

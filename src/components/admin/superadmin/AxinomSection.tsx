@@ -62,6 +62,7 @@ export function AxinomSection() {
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<AxinomAccount | null>(null);
+  const [importingEnv, setImportingEnv] = useState(false);
 
   // Form State for Add
   const [addForm, setAddForm] = useState({
@@ -146,6 +147,24 @@ export function AxinomSection() {
       notify("error", err.message || "تعذر إجراء الفحص");
     } finally {
       setTestingKey(false);
+    }
+  };
+
+  // Import from .env
+  const handleImportEnv = async () => {
+    try {
+      setImportingEnv(true);
+      const res = await fetch("/api/admin/superadmin/axinom/import-env", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "تعذر استيراد الحساب من .env");
+      notify("success", data.message || "تم استيراد حساب .env بنجاح! 🚀");
+      fetchAccounts();
+    } catch (err: any) {
+      notify("error", err.message);
+    } finally {
+      setImportingEnv(false);
     }
   };
 
@@ -386,6 +405,18 @@ export function AxinomSection() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
               تحديث
+            </button>
+
+            <button
+              onClick={handleImportEnv}
+              disabled={importingEnv || loading}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/30 transition flex items-center gap-2 disabled:opacity-50"
+              title="استيراد أو مزامنة الحساب الموجود في ملف .env"
+            >
+              <svg className={`w-4 h-4 ${importingEnv ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              {importingEnv ? "جاري الاستيراد..." : "📥 استيراد من .env"}
             </button>
 
             <button
