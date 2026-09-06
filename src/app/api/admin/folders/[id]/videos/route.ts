@@ -1,4 +1,5 @@
 import { logAdminAction, verifyDrmPassword } from "@/lib/admin-auth";
+import { isDrmAuthorized, isDrmRequestAuthorized } from "@/lib/drm-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -61,10 +62,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ? (body.videoProvider as VideoProvider)
       : "vdocipher";
 
-    // Enforce DRM access password for restricted Axinom DRM creation
-    if (videoProvider === "axinom") {
+    // Enforce DRM authorization (Exclusive to Authorized Users or Valid Passcode)
+    if (videoProvider === "axinom" || videoProvider === "vdocipher") {
       const drmPass = req.headers.get("x-drm-password") || body.drmPassword || "";
-      if (!verifyDrmPassword(drmPass)) {
+      const isAuthorized = await isDrmRequestAuthorized(session, drmPass);
+      if (!isAuthorized) {
         return NextResponse.json(
           { error: "كلمة مرور حماية الـ DRM مطلوبة أو غير صحيحة" },
           { status: 403 }

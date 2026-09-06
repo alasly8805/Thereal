@@ -21,7 +21,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: captchaGate.error }, { status: captchaGate.status });
     }
 
-    const normalized = normalizeEgyptPhone(String(phone));
+    let normalized: string;
+    try {
+      normalized = normalizeEgyptPhone(String(phone));
+    } catch {
+      return NextResponse.json(
+        { error: "رقم الهاتف غير صالح. يرجى استخدام رقم مصري صحيح يبدأ بـ 01" },
+        { status: 400 }
+      );
+    }
 
     const user = await prisma.user.findFirst({
       where: { phone: normalized, role: "student" },

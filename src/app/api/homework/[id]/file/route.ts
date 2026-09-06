@@ -52,7 +52,15 @@ export async function GET(
   const filePath = path.join(UPLOAD_BASE, homeworkId, cleanStudentId, cleanFileName);
 
   if (!existsSync(filePath)) {
-    return NextResponse.json({ error: "الملف غير موجود" }, { status: 404 });
+    // Check if file exists in S3
+    try {
+      const { getPresignedDownloadUrl } = await import("@/lib/s3");
+      const s3Key = `homework/${homeworkId}/${cleanStudentId}/${cleanFileName}`;
+      const presignedUrl = await getPresignedDownloadUrl(s3Key, 300);
+      return NextResponse.redirect(presignedUrl);
+    } catch {
+      return NextResponse.json({ error: "الملف غير موجود" }, { status: 404 });
+    }
   }
 
   try {

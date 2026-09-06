@@ -3,10 +3,10 @@ module.exports = {
     name: 'Thefake',
     script: 'server.js',
     cwd: '/home/ec2-user/Thefake',
-    instances: 2,              // one per vCPU -- the second CPU was idle on the old box
-    exec_mode: 'cluster',
-    node_args: '--max-old-space-size=768',
-    max_memory_restart: '1000M',
+    instances: 1,
+    exec_mode: 'fork',
+    node_args: '--max-old-space-size=1280',
+    max_memory_restart: '1500M',
 
     // --- crash-loop guardrails (added after the 2026-09-02 reboot-loop incident) ---
     // When the .next build is missing, every worker throws on boot and exits(1).

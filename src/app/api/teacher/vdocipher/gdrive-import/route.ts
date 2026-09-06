@@ -22,6 +22,7 @@ import {
   decryptVdoCipherSecret,
 } from "@/lib/vdocipher-accounts";
 import { isAuthorizedStaffUpload } from "@/lib/preview-auth";
+import { isDrmAuthorized, isDrmRequestAuthorized } from "@/lib/drm-auth";
 
 const activeImportsByStaff = new Map<string, number>();
 const hourlyImportsByStaff = new Map<string, { count: number; resetAt: number }>();
@@ -98,8 +99,8 @@ export async function POST(req: NextRequest) {
 
     if (!isAuthorizedStaffUpload(session) || !session?.id) {
       return NextResponse.json(
-        { error: "غير مصرح لك بالوصول. يتطلب استيراد الفيديوهات تسجيل الدخول بحساب معلم أو مسؤول." },
-        { status: 403 }
+        { error: "غير مصرح لك بالوصول. تسجيل الدخول كمعلم أو مشرف مطلوب." },
+        { status: 401 }
       );
     }
 
@@ -122,7 +123,17 @@ export async function POST(req: NextRequest) {
       durationMinutes?: number;
       maxWatchesPerUser?: number;
       publishAt?: string | null;
+      drmPassword?: string;
     };
+
+    const drmPass = req.headers.get("x-drm-password") || body.drmPassword || "";
+    const isAuthorized = await isDrmRequestAuthorized(session, drmPass);
+    if (!isAuthorized) {
+      return NextResponse.json(
+        { error: "كلمة مرور حماية DRM غير صحيحة أو مطلوبة للتشفير" },
+        { status: 403 }
+      );
+    }
 
     const rawUrl = body.url || body.driveUrl || "";
     const fileId = extractGoogleDriveFileId(rawUrl);

@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
 import { AdminActionPasswordBar } from "@/components/admin/AdminActionPasswordBar";
+import { MaintenanceWarningBanner } from "@/components/ui/MaintenanceWarningBanner";
 
 export interface NavSection {
   id: string;
@@ -350,6 +351,7 @@ export function ClassicAdminShell({
           </div>
         </div>
       </header>
+      <MaintenanceWarningBanner />
 
       {/* ── Main Layout (Sidebar + Content) ── */}
       <div className="flex-1 flex w-full max-w-[1720px] mx-auto pb-24 sm:pb-8">

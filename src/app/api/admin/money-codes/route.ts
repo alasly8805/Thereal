@@ -2,10 +2,11 @@ import { logAdminAction, verifyRoleActionPassword } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { randomInt } from "node:crypto";
 
 function generateCode(prefix = "CODEUP"): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const random = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const random = Array.from({ length: 8 }, () => chars[randomInt(chars.length)]).join("");
   return `${prefix}-${random}`;
 }
 

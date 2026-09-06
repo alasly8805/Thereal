@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Calendar,
   Layers,
+  UploadCloud,
+  HardDrive,
 } from "lucide-react";
 
 export interface VideoItem {
@@ -150,6 +152,7 @@ export function TeacherCurriculumStudio({
   const [activeVideoModal, setActiveVideoModal] = useState<{
     folderId: string;
     folderName: string;
+    initialMode?: "upload" | "gdrive" | "manual" | "youtube";
   } | null>(null);
 
   // Color picker open per folder
@@ -523,16 +526,51 @@ export function TeacherCurriculumStudio({
                       )}
                     </div>
 
-                    {/* The Hero Button: "Add Video" / "Add One" */}
+                    {/* Direct Upload Button */}
                     <button
                       type="button"
                       onClick={() =>
                         setActiveVideoModal({
                           folderId: folder.id,
                           folderName: folder.name,
+                          initialMode: "upload",
                         })
                       }
-                      className="px-3.5 py-1.5 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white dark:bg-emerald-700 dark:hover:bg-emerald-600 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      title="رفع فيديو مباشر من جهازك لهذه المحاضرة"
+                    >
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">رفع من الجهاز</span>
+                    </button>
+
+                    {/* Direct Google Drive Button */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveVideoModal({
+                          folderId: folder.id,
+                          folderName: folder.name,
+                          initialMode: "gdrive",
+                        })
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      title="استيراد فيديو من Google Drive لهذه المحاضرة"
+                    >
+                      <HardDrive className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Google Drive</span>
+                    </button>
+
+                    {/* The Full Hero Button: "Add Video" */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveVideoModal({
+                          folderId: folder.id,
+                          folderName: folder.name,
+                          initialMode: "upload",
+                        })
+                      }
+                      className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                       title="إضافة فيديو مشفر جديد في هذه المحاضرة"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -564,22 +602,53 @@ export function TeacherCurriculumStudio({
                 {isExpanded && (
                   <div className="p-4 sm:p-5 space-y-3 bg-slate-50/40 dark:bg-slate-950/20">
                     {videoCount === 0 ? (
-                      <div className="p-6 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl">
+                      <div className="p-6 text-center border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl space-y-3">
                         <p className="text-xs text-slate-500 dark:text-slate-400">
                           لا توجد دروس فيديو في هذه المحاضرة بعد.
                         </p>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setActiveVideoModal({
-                              folderId: folder.id,
-                              folderName: folder.name,
-                            })
-                          }
-                          className="mt-2 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
-                        >
-                          + أضف أول درس الآن
-                        </button>
+                        <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveVideoModal({
+                                folderId: folder.id,
+                                folderName: folder.name,
+                                initialMode: "upload",
+                              })
+                            }
+                            className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <UploadCloud className="w-3.5 h-3.5" />
+                            <span>رفع فيديو من الجهاز</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveVideoModal({
+                                folderId: folder.id,
+                                folderName: folder.name,
+                                initialMode: "gdrive",
+                              })
+                            }
+                            className="px-3.5 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <HardDrive className="w-3.5 h-3.5" />
+                            <span>استيراد من Google Drive</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveVideoModal({
+                                folderId: folder.id,
+                                folderName: folder.name,
+                                initialMode: "youtube",
+                              })
+                            }
+                            className="px-3.5 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-all cursor-pointer"
+                          >
+                            <span>يوتيوب / خيارات أخرى</span>
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -682,6 +751,7 @@ export function TeacherCurriculumStudio({
         <VideoEncryptionStudioModal
           folderId={activeVideoModal.folderId}
           folderName={activeVideoModal.folderName}
+          initialMode={activeVideoModal.initialMode}
           isOpen={Boolean(activeVideoModal)}
           onClose={() => setActiveVideoModal(null)}
           onVideoCreated={async () => {

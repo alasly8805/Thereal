@@ -37,16 +37,19 @@ function findPackagerBinary(): string | null {
   return null;
 }
 
+import { isDrmAuthorized, isDrmRequestAuthorized } from "@/lib/drm-auth";
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "admin" && session.role !== "superadmin")) {
-      return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+    if (!session || (session.role !== "teacher" && session.role !== "superadmin" && session.role !== "admin")) {
+      return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 401 });
     }
 
     const body = await req.json().catch(() => ({}));
-    const drmPassword = String(body.drmPassword || body.password || "").trim();
-    if (!verifyDrmPassword(drmPassword)) {
+    const drmPassword = String(req.headers.get("x-drm-password") || body.drmPassword || body.password || "").trim();
+    const authorized = await isDrmRequestAuthorized(session, drmPassword);
+    if (!authorized) {
       return NextResponse.json({ error: "كلمة مرور حماية DRM غير صحيحة أو مطلوبة للتشفير" }, { status: 403 });
     }
 

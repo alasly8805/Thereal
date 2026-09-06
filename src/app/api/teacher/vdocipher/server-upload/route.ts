@@ -15,6 +15,8 @@ function s3ErrorMessage(body: string): string {
   return message || code || body.slice(0, 300);
 }
 
+import { isDrmAuthorized, isDrmRequestAuthorized } from "@/lib/drm-auth";
+
 export const maxDuration = 300; // 5 minutes for large video uploads
 export const dynamic = "force-dynamic";
 
@@ -29,14 +31,23 @@ export async function POST(req: NextRequest) {
 
     if (!isAuthorizedStaffUpload(session)) {
       return NextResponse.json(
-        { error: "غير مصرح لك بالوصول. يتطلب رفع الفيديوهات تسجيل الدخول كمعلم أو مسؤول." },
-        { status: 403 }
+        { error: "تسجيل الدخول كمعلم أو مشرف مطلوب لرفع الفيديو" },
+        { status: 401 }
       );
     }
 
     const formData = await req.formData().catch(() => null);
     if (!formData) {
       return NextResponse.json({ error: "البيانات المرسلة غير صالحة" }, { status: 400 });
+    }
+
+    const drmPass = req.headers.get("x-drm-password") || (formData.get("drmPassword") as string | null) || "";
+    const isAuthorized = await isDrmRequestAuthorized(session, drmPass);
+    if (!isAuthorized) {
+      return NextResponse.json(
+        { error: "كلمة مرور حماية DRM غير صحيحة أو مطلوبة للتشفير" },
+        { status: 403 }
+      );
     }
 
     const file = formData.get("file") as File | null;

@@ -277,6 +277,18 @@ async function main() {
     }
   }
 
+  // Storage optimization: sync encrypted segments to AWS S3 and clean up
+  const s3Bucket = process.env.AWS_S3_STORAGE_BUCKET || 'codeup-storage-687374520011';
+  try {
+    console.log(`Syncing encrypted video segments to S3 (s3://${s3Bucket}/videos/drm/${assetId}/)...`);
+    const s3Sync = spawnSync('aws', ['s3', 'sync', outputDir, `s3://${s3Bucket}/videos/drm/${assetId}/`, '--region', 'eu-north-1'], { stdio: 'inherit' });
+    if (s3Sync.status === 0) {
+      console.log(`Successfully synced encrypted video to S3.`);
+    }
+  } catch (s3Err) {
+    console.warn(`Could not sync to S3: ${s3Err.message}`);
+  }
+
   // Storage optimization: delete original raw MP4 only if requested and verified
   if (deleteRaw) {
     try {

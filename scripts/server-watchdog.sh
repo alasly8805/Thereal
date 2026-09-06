@@ -617,6 +617,21 @@ remedy_pm2() {
     || timeout 60 pm2 restart Thefake --update-env >> "$LOG_FILE" 2>&1 || true
   timeout 20 pm2 save >/dev/null 2>&1 || true
 }
+# True while a legitimate deploy is rewriting .next. update.sh and `npm run build`
+# build IN PLACE, so BUILD_ID and the manifests are transiently absent for
+# minutes. Without this guard the watchdog reads that as a corrupt build, stops
+# the cluster and starts a SECOND build on top of the first -- which corrupts
+# both and takes the site down. Keyed on a live process (not just .next/lock) so
+# a stale lock left by a dead build can never wedge repairs off permanently.
+build_in_progress() {
+  pgrep -f 'next build|npm run build' >/dev/null 2>&1 && return 0
+  if [ -f .next/lock ]; then
+    local age; age=$(( $(now) - $(stat -c %Y .next/lock 2>/dev/null || echo 0) ))
+    [ "$age" -lt 120 ] && return 0
+  fi
+  return 1
+}
+
 # --- build-artifact helpers --------------------------------------------------
 # A Next.js build is only usable if EVERY boot-critical manifest is present AND
 # parseable. The 2026-09-03 outage slipped past the old check because it looked
@@ -753,6 +768,7 @@ remedy_build() {
   if timeout "$BUILD_TIMEOUT" env NODE_OPTIONS="--max-old-space-size=$BUILD_HEAP" npx next build --webpack >> "$LOG_FILE" 2>&1 \
        && build_artifacts_ok .next; then
     rm -f "$STATE_DIR/build_failed"
+    [ -f .next/server/proxy.js ] && (cd .next/server && ln -sf proxy.js middleware.js 2>/dev/null || true)
     log INFO "build OK -> (re)creating cluster from ecosystem.config.js"
     start_cluster
     if wait_healthy 30; then
@@ -815,6 +831,15 @@ done
 
 log INFO "probes: $PASS ok / ${#FAILED_IDS[@]} actionable / ${#WARN_IDS[@]} advisory / ${#SKIP_IDS[@]} n/a"
 
+# A deploy in flight owns .next. Every disruptive remedy is suspended until it
+# finishes -- the guard clears itself as soon as the build process exits.
+if build_in_progress; then
+  for t in build pm2 pm2reload prisma killport lock; do
+    [ -n "${TAGS_HIT[$t]:-}" ] && log WARN "remedy $t SKIPPED: a build/deploy is in progress"
+    unset "TAGS_HIT[$t]"
+  done
+fi
+
 # A full rebuild is expensive and takes the cluster down. Only do it when the app
 # is genuinely broken -- i.e. a build artifact is actually missing/corrupt, or
 # core HTTP is failing right now. Soft signals (a stray ECONNREFUSED in the logs,
@@ -873,6 +898,10 @@ if [ "$HEALTHY" -eq 1 ]; then
   # so this costs nothing on a steady-state tick -- but it is what lets the next
   # corrupt build be undone in seconds instead of minutes.
   snapshot_build || true
+elif build_in_progress; then
+  # The site being down mid-deploy is expected, not a fault. Counting these ticks
+  # would burn the 3-strike budget and fire a bogus CRITICAL page every deploy.
+  log WARN "core health down while a build/deploy is in progress -- holding escalation until it finishes"
 else
   prev=$(cat "$FAILC_FILE" 2>/dev/null || echo 0); cur=$((prev+1)); echo "$cur" > "$FAILC_FILE"
   log ERROR "core health STILL DOWN after remedies (consecutive failure $cur/3)"

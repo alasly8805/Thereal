@@ -70,3 +70,12 @@ bin/
 .env.save.2
 .eslintcache
 scratch/
+
+# watchdog build-recovery working dirs (see scripts/server-watchdog.sh).
+# .next.last-good is the verified snapshot the self-heal restores from; the
+# others are transient staging dirs used during a snapshot/restore swap.
+/.next.last-good/
+/.next.last-good.tmp/
+/.next.last-good.old/
+/.next.restoring/
+/.next.broken/

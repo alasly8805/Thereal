@@ -86,13 +86,23 @@ export async function POST(
 
   const safeFileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
   const filePath = path.join(dir, safeFileName);
-
   const buffer = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(filePath, buffer);
 
-  // Return a reference path (NOT a public URL — accessed via /api/homework/[id]/file)
+  // Storage optimization: Upload to S3
   const fileRef = `homework/${homeworkId}/${session.id}/${safeFileName}`;
+  try {
+    const { uploadToS3 } = await import("@/lib/s3");
+    await uploadToS3({
+      key: fileRef,
+      body: buffer,
+      contentType: file.type || "application/octet-stream",
+    });
+  } catch (s3Err) {
+    console.warn("[S3 Homework Upload Notice]:", s3Err);
+  }
 
+  // Return a reference path (NOT a public URL — accessed via /api/homework/[id]/file)
   return NextResponse.json({
     fileUrl: fileRef,
     fileName: file.name,

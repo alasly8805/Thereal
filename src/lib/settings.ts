@@ -11,9 +11,9 @@ export const MAX_GRACE_DAYS = 365;
 const settingsCache = new Map<string, { value: string; fetchedAt: number }>();
 const CACHE_TTL_MS = 60_000;
 
-async function getCachedSetting(key: string): Promise<string | null> {
+async function getCachedSetting(key: string, ttlMs = CACHE_TTL_MS): Promise<string | null> {
   const cached = settingsCache.get(key);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.fetchedAt < ttlMs) {
     return cached.value;
   }
   try {
@@ -128,3 +128,33 @@ export async function setMaintenanceMessage(msg: string): Promise<string> {
   invalidateSettingsCache(MAINTENANCE_MSG_KEY);
   return value;
 }
+
+// ── Maintenance warning banner (displayed below navbar instead of locking users out) ──
+const MAINTENANCE_WARNING_KEY = "maintenance_warning_banner";
+export const DEFAULT_MAINTENANCE_WARNING_MESSAGE =
+  "تنبيه مجدول: سيتم إجراء تحديث دوري لموارد السيرفر بعد دقيقة واحدة (قد يستمر التوقف 30-60 ثانية). يرجى حفظ أي إجابات أو أعمال مفتوحة.";
+
+export async function getMaintenanceWarning(): Promise<{ active: boolean; message: string }> {
+  try {
+    const val = await getCachedSetting(MAINTENANCE_WARNING_KEY, 5000);
+    const active = val === "on" || (val !== null && val !== "off" && val.trim() !== "");
+    const message = await getMaintenanceMessage();
+    return { active, message: message || DEFAULT_MAINTENANCE_WARNING_MESSAGE };
+  } catch {
+    return { active: false, message: DEFAULT_MAINTENANCE_WARNING_MESSAGE };
+  }
+}
+
+export async function setMaintenanceWarning(on: boolean, msg?: string): Promise<boolean> {
+  await prisma.appSetting.upsert({
+    where: { key: MAINTENANCE_WARNING_KEY },
+    update: { value: on ? "on" : "off" },
+    create: { key: MAINTENANCE_WARNING_KEY, value: on ? "on" : "off" },
+  });
+  if (msg) {
+    await setMaintenanceMessage(msg);
+  }
+  invalidateSettingsCache(MAINTENANCE_WARNING_KEY);
+  return on;
+}
+

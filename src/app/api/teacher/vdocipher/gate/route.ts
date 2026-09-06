@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { verifyVdoCipherSecurityPassword, logAdminAction } from "@/lib/admin-auth";
 
+import { isDrmAuthorized } from "@/lib/drm-auth";
+
 /**
  * Verifies the VdoCipher access password (vdocipher_security_password / VDOCIPHER_SECURITY_PASSWORD)
  * required before a teacher can upload or use VdoCipher DRM protection.
@@ -16,12 +18,10 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as { password?: string };
     const password = (body.password || "").trim();
 
-    if (!password) {
-      return NextResponse.json({ ok: false, error: "يرجى إدخال كلمة مرور حماية VdoCipher" }, { status: 400 });
-    }
+    const isValid = password ? await verifyVdoCipherSecurityPassword(password) : false;
+    const authorized = isDrmAuthorized(session) || isValid;
 
-    const isValid = await verifyVdoCipherSecurityPassword(password);
-    if (!isValid) {
+    if (!authorized) {
       return NextResponse.json({ ok: false, error: "كلمة مرور حماية VdoCipher غير صحيحة" }, { status: 401 });
     }
 

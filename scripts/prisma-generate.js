@@ -29,7 +29,8 @@ if (!dbUrl && fs.existsSync(envPath)) {
   }
 }
 
-console.log('  Final dbUrl to check:', dbUrl);
+const maskedDbUrl = dbUrl ? dbUrl.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:***@') : '(none)';
+console.log('  Final dbUrl to check:', maskedDbUrl);
 
 const schemaPath = path.join(__dirname, '..', 'prisma', 'schema.prisma');
 let schema = fs.readFileSync(schemaPath, 'utf8');

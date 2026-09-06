@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useSyncExternalStore, useCallback, useMemo
 import { getResolvedTheme, setThemePreference, type Theme } from "@/lib/theme";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { useToast } from "@/components/ui/Toast";
+import { MaintenanceWarningBanner } from "@/components/ui/MaintenanceWarningBanner";
 
 interface NavbarProps {
   user?: { id?: string; name: string; role: string } | null;
@@ -609,6 +610,7 @@ export function Navbar({ user: propUser }: NavbarProps) {
         </div>
       </div>
     </header>
+    <MaintenanceWarningBanner />
     </>
   );
 }
