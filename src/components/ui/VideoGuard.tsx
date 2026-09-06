@@ -202,9 +202,29 @@ export function VideoGuard({
     }
   };
 
-  // 4. Tab Visibility Monitoring (Pause and protect when tab is genuinely backgrounded)
+  // 4. Tab Visibility & Window Focus Monitoring (Pause and protect when tab is backgrounded or when snipping tools steal focus)
   useEffect(() => {
     if (disabled) return;
+
+    const isTouch =
+      typeof navigator !== "undefined" &&
+      (navigator.maxTouchPoints > 0 ||
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+
+    const handleWindowBlur = () => {
+      if (isTouch) return;
+      setIsTabHidden(true);
+      pauseAllVideos();
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText("").catch(() => {});
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (document.hasFocus()) {
+        setIsTabHidden(false);
+      }
+    };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
@@ -212,13 +232,17 @@ export function VideoGuard({
         pauseAllVideos();
         void reportViolation("TAB_SWITCH", "User switched away from tab");
       } else {
-        setIsTabHidden(false);
+        handleWindowFocus();
       }
     };
 
+    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
+      window.removeEventListener("blur", handleWindowBlur);
+      window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [reportViolation, pauseAllVideos, disabled]);

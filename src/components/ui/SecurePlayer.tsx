@@ -365,6 +365,20 @@ export function SecurePlayer({
   useEffect(() => {
     if (noNativeSecurity || useDriveDirect) return;
 
+    let blackoutTimer: NodeJS.Timeout | null = null;
+    const triggerBlackout = (durationMs = 5000) => {
+      setIsBlackoutActive(true);
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        navigator.clipboard.writeText("").catch(() => {});
+      }
+      if (blackoutTimer) clearTimeout(blackoutTimer);
+      blackoutTimer = setTimeout(() => {
+        if (document.hasFocus()) {
+          setIsBlackoutActive(false);
+        }
+      }, durationMs);
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const k = e.key;
       const lowerK = k.toLowerCase();
@@ -375,18 +389,18 @@ export function SecurePlayer({
           (e.getModifierState("Meta") || e.getModifierState("OS")));
 
       const isWinSnipping = isMeta && e.shiftKey && lowerK === "s";
-      const isWinGameBar = isMeta && lowerK === "g";
+      const isWinGameBar = isMeta && (lowerK === "g" || (e.altKey && lowerK === "r"));
       const isMacScreenshot = isMeta && e.shiftKey && ["3", "4", "5", "#", "$", "%"].includes(k);
-      const isBrowserScreenshot = e.ctrlKey && e.shiftKey && lowerK === "s";
+      const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && lowerK === "s";
       const isDevTools =
         k === "F12" ||
-        (e.ctrlKey && e.shiftKey && (lowerK === "i" || lowerK === "j" || lowerK === "c")) ||
-        (e.ctrlKey && lowerK === "u");
+        ((e.ctrlKey || isMeta) && e.shiftKey && (lowerK === "i" || lowerK === "j" || lowerK === "c")) ||
+        ((e.ctrlKey || isMeta) && lowerK === "u");
 
       if (isPrtScn || isWinSnipping || isWinGameBar || isMacScreenshot || isBrowserScreenshot || isDevTools) {
-        if (isPrtScn || isWinSnipping || isMacScreenshot) {
+        if (isPrtScn || isWinSnipping || isMacScreenshot || isBrowserScreenshot) {
           e.preventDefault();
-          e.stopPropagation();
+          triggerBlackout(5000);
         }
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
           navigator.clipboard.writeText("").catch(() => {});
@@ -396,23 +410,51 @@ export function SecurePlayer({
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === "PrintScreen" || e.code === "PrintScreen") {
+        triggerBlackout(5000);
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
           navigator.clipboard.writeText("").catch(() => {});
         }
       }
     };
 
+    const isTouch =
+      typeof navigator !== "undefined" &&
+      (navigator.maxTouchPoints > 0 || /Android|iPhone|iPad/i.test(navigator.userAgent));
+
+    const handleBlur = () => {
+      if (isTouch) return;
+      triggerBlackout(5000);
+    };
+
+    const handleFocus = () => {
+      if (blackoutTimer) clearTimeout(blackoutTimer);
+      setTimeout(() => {
+        if (document.hasFocus()) {
+          setIsBlackoutActive(false);
+        }
+      }, 350);
+    };
+
     const handleVisibilityChange = () => {
-      setIsBlackoutActive(document.hidden);
+      if (document.hidden) {
+        setIsBlackoutActive(true);
+      } else {
+        handleFocus();
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
+      if (blackoutTimer) clearTimeout(blackoutTimer);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [noNativeSecurity, useDriveDirect]);

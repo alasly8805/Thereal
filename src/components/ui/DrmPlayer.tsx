@@ -253,7 +253,9 @@ export function DrmPlayer({
       typeof window.matchMedia === "function" &&
       window.matchMedia("(pointer: coarse)").matches;
 
-    const triggerBlackout = (durationMs = 2500) => {
+
+
+    const triggerBlackout = (durationMs = 5000) => {
       setIsBlackoutActive(true);
       try {
         if (videoRef.current && !videoRef.current.paused) {
@@ -267,7 +269,7 @@ export function DrmPlayer({
       }
       if (blackoutTimer) clearTimeout(blackoutTimer);
       blackoutTimer = setTimeout(() => {
-        if (isVisible()) {
+        if (isVisible() && document.hasFocus()) {
           setIsBlackoutActive(false);
         }
       }, durationMs);
@@ -284,7 +286,7 @@ export function DrmPlayer({
           (e.getModifierState("Meta") || e.getModifierState("OS")));
 
       const isWinSnipping = isMeta && e.shiftKey && lowerK === "s";
-      const isWinGameBar = isMeta && lowerK === "g";
+      const isWinGameBar = isMeta && (lowerK === "g" || (e.altKey && lowerK === "r"));
       const isMacScreenshot = isMeta && e.shiftKey && ["3", "4", "5", "#", "$", "%"].includes(k);
       const isBrowserScreenshot = (e.ctrlKey || isMeta) && e.shiftKey && lowerK === "s";
       const isDevTools =
@@ -294,22 +296,19 @@ export function DrmPlayer({
 
       if (isPrtScn || isWinSnipping || isWinGameBar || isMacScreenshot || isBrowserScreenshot) {
         e.preventDefault();
-        e.stopPropagation();
-        triggerBlackout(2500);
+        triggerBlackout(5000);
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
           navigator.clipboard.writeText("").catch(() => {});
         }
       } else if (isDevTools) {
         e.preventDefault();
-        e.stopPropagation();
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === "PrintScreen" || e.code === "PrintScreen" || e.keyCode === 44) {
         e.preventDefault();
-        e.stopPropagation();
-        triggerBlackout(2500);
+        triggerBlackout(5000);
         if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
           navigator.clipboard.writeText("").catch(() => {});
         }
@@ -317,43 +316,37 @@ export function DrmPlayer({
     };
 
     const handleBlur = () => {
-      // When an external screen capture or snipping tool steals focus while playing,
-      // black out the video instantly to prevent capturing frames.
-      if (videoRef.current && !videoRef.current.paused) {
-        triggerBlackout(2500);
-      }
+      // Whenever an external screen capture or snipping tool steals focus,
+      // blackout the video immediately, even if the video was paused.
+      triggerBlackout(5000);
     };
 
     const handleFocus = () => {
       if (blackoutTimer) clearTimeout(blackoutTimer);
-      setIsBlackoutActive(false);
-    };
-
-    const handlePointerActivity = () => {
-      if (document.hasFocus()) {
-        setIsBlackoutActive(false);
-      }
+      setTimeout(() => {
+        if (document.hasFocus() && isVisible()) {
+          setIsBlackoutActive(false);
+        }
+      }, 350);
     };
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        triggerBlackout(2000);
+        triggerBlackout(5000);
       } else {
         handleFocus();
       }
     };
 
-    // Safety net: if anything above latched the blackout while the page is
-    // visible, release it rather than leaving a permanently black player.
+    // Safety net: if blackout latched while the user is actively focused on the page, release it.
     const stuckGuard = setInterval(() => {
       if (isVisible() && document.hasFocus()) {
         setIsBlackoutActive(false);
       }
-    }, 3000);
+    }, 4000);
 
     window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("keyup", handleKeyUp, true);
-    window.addEventListener("mousemove", handlePointerActivity, { passive: true });
     if (!isTouchDevice) window.addEventListener("blur", handleBlur);
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -362,7 +355,6 @@ export function DrmPlayer({
       if (blackoutTimer) clearTimeout(blackoutTimer);
       window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("keyup", handleKeyUp, true);
-      window.removeEventListener("mousemove", handlePointerActivity);
       window.removeEventListener("blur", handleBlur);
       clearInterval(stuckGuard);
       window.removeEventListener("focus", handleFocus);

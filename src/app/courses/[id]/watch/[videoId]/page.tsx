@@ -626,8 +626,7 @@ export default function VideoWatchPage() {
             <div
               className="relative overflow-hidden rounded-[1.5rem] border border-white/10 bg-[#0a0f1e] shadow-2xl"
             >
-              {/* Top gradient + overlays */}
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent z-10 pointer-events-none" />
+
 
             {/* Live badge */}
             {!isSessionExpired && (

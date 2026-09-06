@@ -77,6 +77,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       drm: embedResult.drm || null,
       resumeSeconds: 0,
       watermark: session.phone || session.name || "",
+      studentName: session.name || "",
+      studentPhone: session.phone || "",
       video: {
         id: video.id,
         title: video.title,
@@ -347,6 +349,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       drm: embedResult.drm || null,
       resumeSeconds: 0,
       watermark: session.phone || session.name || "",
+      studentName: session.name || "",
+      studentPhone: session.phone || "",
       video: {
         id: video.id,
         title: video.title,
@@ -533,6 +537,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       drm: embedResult.drm || null,
       resumeSeconds: progress?.lastPositionSeconds ?? 0,
       watermark: session.phone || session.name || "",
+      studentName: session.name || "",
+      studentPhone: session.phone || "",
       video: {
         id: video.id,
         title: video.title,
