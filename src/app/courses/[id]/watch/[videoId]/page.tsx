@@ -29,6 +29,8 @@ interface WatchSessionData {
   usedWatches: number;
   teacherSlug?: string;
   studentPlan?: string;
+  studentName?: string;
+  studentPhone?: string;
 }
 
 function formatCountdown(expiresAt: string) {
@@ -82,6 +84,8 @@ export default function VideoWatchPage() {
   const [countdown, setCountdown] = useState("");
   const [iframeSrc, setIframeSrc] = useState("");
   const [wmLabel, setWmLabel] = useState("");
+  const [studentName, setStudentName] = useState("");
+  const [studentPhone, setStudentPhone] = useState("");
   const [resumeSeconds, setResumeSeconds] = useState(0);
   const [resumeLoaded, setResumeLoaded] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
@@ -276,8 +280,12 @@ export default function VideoWatchPage() {
         usedWatches: data.usedWatches,
         teacherSlug: data.teacherSlug,
         studentPlan: data.studentPlan,
+        studentName: data.studentName,
+        studentPhone: data.studentPhone,
       });
 
+      if (data.studentName) setStudentName(data.studentName);
+      if (data.studentPhone) setStudentPhone(data.studentPhone);
       if (data.watermark) {
         setWmLabel(data.watermark);
       }
@@ -669,8 +677,8 @@ export default function VideoWatchPage() {
             {/* The player — provider-aware, watermark-safe in fullscreen, protected by VideoGuard */}
             {iframeSrc && resumeLoaded ? (
               <VideoGuard
-                studentName={wmLabel}
-                studentPhone={wmLabel}
+                studentName={studentName || session?.studentName || wmLabel}
+                studentPhone={studentPhone || session?.studentPhone || wmLabel}
                 videoId={videoId}
                 onExit={handleReturn}
                 disabled={directDriveMode}

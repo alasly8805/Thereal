@@ -65,6 +65,7 @@ export interface DrmPlayerProps {
   onPause?: () => void;
   onPlay?: () => void;
   paused?: boolean;
+  children?: React.ReactNode;
 }
 
 // Module-level singleton loader for Shaka Player
@@ -157,6 +158,7 @@ export function DrmPlayer({
   onPause,
   onPlay,
   paused,
+  children,
 }: DrmPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -467,14 +469,9 @@ export function DrmPlayer({
             : PLAYREADY_SW;
 
         if (licenseServers?.widevine) servers["com.widevine.alpha"] = toAbsolute(licenseServers.widevine)!;
-        if (licenseServers?.playready) servers[playreadyKeySystem] = toAbsolute(licenseServers.playready)!;
+        if (licenseServers?.playready && playreadyHardware) servers[playreadyKeySystem] = toAbsolute(licenseServers.playready)!;
         if (licenseServers?.fairplay) servers["com.apple.fps.1_0"] = toAbsolute(licenseServers.fairplay)!;
 
-        // Robustness here is the *minimum* the client asks for, so it must stay
-        // permissive: demanding HW_SECURE_ALL makes an L3 device fail to create
-        // a session at all, which would defeat the tiered setup. The device
-        // reports its real security level in the license challenge, and Axinom
-        // decides per key which tiers to issue — so an L1 device still gets HD.
         // Strict mode is the opt-out: hardware or nothing, no SD fallback.
         const requireHardware = process.env.NEXT_PUBLIC_DRM_REQUIRE_HARDWARE === "true";
         if (requireHardware && !widevineHardware && !playreadyHardware) {
@@ -483,35 +480,39 @@ export function DrmPlayer({
           return;
         }
 
-        const useWidevineHardware = widevineHardware;
-        const advanced: Record<string, Record<string, unknown>> = {
-          "com.widevine.alpha": {
-            videoRobustness: useWidevineHardware ? "HW_SECURE_ALL" : "SW_SECURE_CRYPTO",
-            audioRobustness: useWidevineHardware ? "HW_SECURE_CRYPTO" : "SW_SECURE_CRYPTO",
-          },
-          [playreadyKeySystem]: {
-            videoRobustness: playreadyHardware ? "3000" : "2000",
-          },
-        };
+        // Configure advanced robustness ONLY if hardware DRM is available.
+        // On desktop browsers (Chrome/Firefox L3), setting SW_SECURE_CRYPTO or other strings
+        // causes requestMediaKeySystemAccess to reject with NotSupportedError.
+        const advanced: Record<string, Record<string, unknown>> = {};
+        if (widevineHardware) {
+          advanced["com.widevine.alpha"] = {
+            videoRobustness: "HW_SECURE_ALL",
+            audioRobustness: "HW_SECURE_CRYPTO",
+          };
+        }
+        if (playreadyHardware) {
+          advanced[playreadyKeySystem] = {
+            videoRobustness: "3000",
+          };
+        }
         if (licenseServers?.fairplayCertUrl) {
           advanced["com.apple.fps.1_0"] = {
             serverCertificateUri: toAbsolute(licenseServers.fairplayCertUrl)!,
           };
         }
 
+        // Only prefer PlayReady if hardware PlayReady is genuinely present (e.g. Edge Windows)
+        // Otherwise do not force preferredKeySystems so Shaka cleanly negotiates Widevine on Chrome/Edge/Firefox/Android.
+        const preferredKeySystems = playreadyHardware
+          ? [playreadyKeySystem, "com.widevine.alpha"]
+          : undefined;
+
         localPlayer.configure({
           drm: {
             servers: Object.keys(servers).length > 0 ? servers : undefined,
-            preferredKeySystems: [
-              playreadyKeySystem,
-              PLAYREADY_HW,
-              PLAYREADY_HW_ALT,
-              PLAYREADY_SW,
-              "com.apple.fps.1_0",
-              "com.widevine.alpha",
-            ],
+            preferredKeySystems,
             clearKeys: clearKeys || undefined,
-            advanced,
+            advanced: Object.keys(advanced).length > 0 ? advanced : undefined,
           },
           streaming: {
             bufferingGoal: 30,
@@ -537,34 +538,30 @@ export function DrmPlayer({
 
         // Error handler
         localPlayer.addEventListener("error", (event: unknown) => {
-          const err = (event as { detail?: { category?: number; code?: number } })?.detail || {};
+          const err = (event as { detail?: { category?: number; code?: number; message?: string } })?.detail || {};
           console.error("[Shaka Player DRM Error]", err);
           setIsLoading(false);
           const isBrave =
             typeof (navigator as unknown as { brave?: unknown }).brave !== "undefined" ||
             Boolean((window as unknown as { navigator?: { brave?: unknown } }).navigator?.brave);
 
-          if (err.category === shaka.util.Error.Category.DRM) {
-            if (isBrave) {
-              setErrorMsg(
-                "متصفح Brave يحظر نظام Widevine DRM افتراضياً. يرجى تفعيل Widevine من إعدادات المتصفح، أو استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم."
-              );
-            } else {
-              setErrorMsg("استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم");
-            }
-          } else if (
-            err.code === 6001 ||
-            err.code === 6002 ||
-            err.code === 6003 ||
-            err.code === 6006 ||
-            err.code === 6007 ||
-            err.code === 6012
-          ) {
+          if (isBrave) {
+            setErrorMsg(
+              "متصفح Brave يحظر نظام Widevine DRM افتراضياً. يرجى تفعيل Widevine من إعدادات المتصفح."
+            );
+            return;
+          }
+
+          if (err.category === shaka.util.Error.Category.NETWORK) {
+            setErrorMsg(`خطأ في شبكة البث المشفر (رمز ${err.code || "1002"}). يرجى التحقق من اتصال الإنترنت.`);
+          } else if (err.code === 6007 || err.code === 6008) {
+            setErrorMsg(`انتهت صلاحية مفتاح الحماية أو تعذر تجديده (رمز ${err.code}). يرجى تحديث الصفحة.`);
+          } else if (err.code === 6001 || err.code === 6003 || err.code === 6006) {
             setErrorMsg("استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم");
-          } else if (err.category === shaka.util.Error.Category.NETWORK) {
-            setErrorMsg(`خطأ في شبكة البث المشفر (رمز ${err.code || "1002"})`);
+          } else if (err.category === shaka.util.Error.Category.DRM) {
+            setErrorMsg("استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم");
           } else {
-            setErrorMsg("استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم");
+            setErrorMsg(err.message || "تعذر تشغيل الفيديو المشفر. يرجى المحاولة مرة أخرى.");
           }
         });
 
@@ -591,17 +588,12 @@ export function DrmPlayer({
         console.error("[DrmPlayer] Init failed:", err);
         const errObj = err as { message?: string; name?: string; code?: number };
         const errMsgLower = (errObj?.message || "").toLowerCase();
-        const isDrmOrMobile =
+        const isDrmUnsupported =
           errObj?.name === "NotSupportedError" ||
-          errMsgLower.includes("drm") ||
-          errMsgLower.includes("widevine") ||
-          errMsgLower.includes("supported") ||
-          errMsgLower.includes("key") ||
-          (typeof window !== "undefined" &&
-            (/Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-             window.innerWidth <= 768));
+          errMsgLower.includes("notsupported") ||
+          errMsgLower.includes("unsupported keysystem");
 
-        if (isDrmOrMobile) {
+        if (isDrmUnsupported) {
           setErrorMsg("استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم");
         } else {
           setErrorMsg(errObj?.message || "تعذر فتح البث المشفر. يرجى المحاولة مرة أخرى.");
@@ -944,6 +936,7 @@ export function DrmPlayer({
           </div>
         </div>
       </div>
+      {children}
     </div>
   );
 }

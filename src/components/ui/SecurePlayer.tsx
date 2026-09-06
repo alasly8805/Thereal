@@ -433,7 +433,9 @@ export function SecurePlayer({
         onPause={onPause}
         onPlay={onPlay}
         paused={paused}
-      />
+      >
+        {children}
+      </DrmPlayer>
     );
   }
 
