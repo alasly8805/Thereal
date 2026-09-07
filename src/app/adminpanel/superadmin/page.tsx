@@ -47,6 +47,7 @@ async function readJson<T>(res: Response): Promise<T | null> {
 
 import { SuperadminReferredStudentsSection } from "@/components/admin/superadmin/SuperadminReferredStudentsSection";
 import { MoneyControlModal } from "@/components/admin/superadmin/MoneyControlModal";
+import { CourseStudentsModal } from "@/components/admin/superadmin/CourseStudentsModal";
 
 interface TeacherCourse {
   id: string;
@@ -109,6 +110,36 @@ interface OverviewTeacher {
   courses: TeacherCourse[];
 }
 
+interface CoursePricingRow {
+  id: string;
+  title: string;
+  subject: string;
+  teacherName: string;
+  isPaid: boolean;
+  price: number;
+  discountPercent: number | null;
+  enrolledStudents: number;
+  paidStudents: number;
+  coursePaidStudentsCount: number;
+  courseCoveredBySubCount: number;
+  freeStudents: number;
+  revenue: number;
+  usedCodes: number;
+  createdAt: string;
+}
+
+interface AccessMonitorEvent {
+  kind: "subscription" | "enrollment" | "debit";
+  id: string;
+  studentName: string;
+  target: string;
+  amount: number;
+  source: string;
+  createdAt: string;
+  severity: "ok" | "warn" | "alert";
+  reason: string;
+}
+
 interface OverviewData {
   totalStudents: number;
   totalTeachers: number;
@@ -116,11 +147,22 @@ interface OverviewData {
   totalRealReservations?: number;
   totalRealPaidReservations?: number;
   totalPaidStudentsAcrossPlatform?: number;
+  totalCourseEnrollmentsCount?: number;
+  totalActiveContentConsumers?: number;
   totalCodesBooked?: number;
   totalCodesUsed?: number;
   teachersEarnedRevenue?: number;
   totalGatewayDeposits?: number;
   totalRevenue: number;
+  bookings?: {
+    activeNow: number;
+    addedToday: number;
+    revenueActive: number;
+    generatedAt: string;
+  };
+  coursesPricing?: CoursePricingRow[];
+  accessMonitor?: AccessMonitorEvent[];
+  accessMonitorAlertCount?: number;
   moneyControl?: {
     defaultPercentage: number;
     teacherPercentages: Record<string, number>;
@@ -162,6 +204,39 @@ export default function SuperadminPage() {
   const [isBrutalRefreshing, setIsBrutalRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [enteringTeacherId, setEnteringTeacherId] = useState<string | null>(null);
+  const [courseStudentsModal, setCourseStudentsModal] = useState<{
+    isOpen: boolean;
+    courseId: string;
+    courseTitle: string;
+    teacherName: string;
+  }>({
+    isOpen: false,
+    courseId: "",
+    courseTitle: "",
+    teacherName: "",
+  });
+
+  const handleOpenCourseStudents = (course: { id: string; title: string }, teacher: { name: string }) => {
+    setCourseStudentsModal({
+      isOpen: true,
+      courseId: course.id,
+      courseTitle: course.title,
+      teacherName: teacher.name,
+    });
+  };
+
+  const handleCourseStudentCountChanged = (courseId: string, newActiveCount: number) => {
+    setOverview((prev) => {
+      if (!prev) return prev;
+      const updatedTeachers = prev.teachers.map((teacher) => ({
+        ...teacher,
+        courses: teacher.courses.map((course) =>
+          course.id === courseId ? { ...course, enrolledStudents: newActiveCount } : course
+        ),
+      }));
+      return { ...prev, teachers: updatedTeachers };
+    });
+  };
 
   const handleEnterTeacherPanel = async (teacherId: string, teacherName: string) => {
     if (!window.confirm(`هل تريد الدخول إلى لوحة تحكم المعلم "${teacherName}" الآن؟`)) {
@@ -207,8 +282,8 @@ export default function SuperadminPage() {
     setLoading(false);
   };
 
-  const fetchOverview = async () => {
-    setOverviewLoading(true);
+  const fetchOverview = async (silent = false) => {
+    if (!silent) setOverviewLoading(true);
     try {
       const res = await fetch(`/api/admin/superadmin/overview?_t=${Date.now()}`, { credentials: "include" });
       const data = await readJson<OverviewData>(res);
@@ -216,9 +291,17 @@ export default function SuperadminPage() {
     } catch {
       /* non-critical */
     } finally {
-      setOverviewLoading(false);
+      if (!silent) setOverviewLoading(false);
     }
   };
+
+  // Live "right now" bookings: silently re-poll the overview every 60s while visible
+  useEffect(() => {
+    if (activeSection !== "overview") return;
+    const timer = setInterval(() => { void fetchOverview(true); }, 60000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection]);
 
   const handleBrutalRefresh = async () => {
     setIsBrutalRefreshing(true);
@@ -346,14 +429,14 @@ export default function SuperadminPage() {
                     accent: "var(--brand)",
                   },
                   {
-                    label: "المشتركون المسددون",
+                    label: "الحجوزات النشطة الآن",
                     value: overviewLoading
                       ? "…"
-                      : `${(overview?.totalPaidStudentsAcrossPlatform ?? 0).toLocaleString("ar-EG")} مشترك`,
+                      : `${(overview?.bookings?.activeNow ?? 0).toLocaleString("ar-EG")} حجز`,
                     sublabel: overviewLoading
                       ? ""
-                      : `من أصل ${(overview?.totalRealReservations ?? 0).toLocaleString("ar-EG")} حجز باقات`,
-                    icon: "💳",
+                      : `+${(overview?.bookings?.addedToday ?? 0).toLocaleString("ar-EG")} اليوم · ${(overview?.bookings?.revenueActive ?? 0).toLocaleString("ar-EG")} ج.م نشط`,
+                    icon: "🎟️",
                     accent: "var(--brand)",
                   },
                   {
@@ -768,12 +851,20 @@ export default function SuperadminPage() {
                                               )}
                                             </td>
                                             <td className="px-3 py-2.5 text-center">
-                                              <span
-                                                className="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold min-w-[2rem]"
-                                                style={{ background: "var(--brand-soft)", color: "var(--brand)" }}
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleOpenCourseStudents(c, t);
+                                                }}
+                                                className="inline-flex items-center justify-center gap-1.5 rounded-full px-3 py-1 text-xs font-black transition-all hover:scale-105 cursor-pointer shadow-sm border border-indigo-500/30 hover:border-indigo-500/60"
+                                                style={{ background: "linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(168, 85, 247, 0.18))", color: "#c7d2fe" }}
+                                                title="عرض جميع طلاب هذا الكورس وإمكانية إخراج الطالب صامتاً دون إشعار المعلم"
                                               >
-                                                {c.enrolledStudents} طالب
-                                              </span>
+                                                <span>👥</span>
+                                                <span>{c.enrolledStudents} طالب</span>
+                                                <span className="text-[10px] text-indigo-300 underline font-normal mr-0.5">عرض وإدارة</span>
+                                              </button>
                                             </td>
                                             <td className="px-3 py-2.5 text-center">
                                               {c.isPaid ? (
@@ -807,6 +898,138 @@ export default function SuperadminPage() {
                     })}
                   </div>
                 )}
+              </div>
+
+              {/* ── Courses Pricing & Collected Amounts (all courses) ── */}
+              <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <div className="p-4 flex flex-wrap items-center justify-between gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
+                  <div>
+                    <h2 className="font-black text-base" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
+                      💵 أسعار الكورسات والمبالغ المحصلة
+                    </h2>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--ink-3)" }}>
+                      كل الكورسات — السعر، الخصم، عدد الطلاب، والإيراد المحسوب (الحجوزات المشمولة بالاشتراك لا تُحسب مرتين)
+                    </p>
+                  </div>
+                  <span className="text-xs font-bold" style={{ color: "var(--gold-2)" }}>
+                    {overview?.coursesPricing?.length ?? 0} كورس · إجمالي الإيراد:{" "}
+                    {(overview?.coursesPricing ?? []).reduce((s, c) => s + (c.revenue || 0), 0).toLocaleString("ar-EG")} ج.م
+                  </span>
+                </div>
+                <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0" style={{ background: "var(--surface-2)" }}>
+                      <tr className="text-[11px]" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
+                        <th className="px-3 py-2 text-right font-medium">الكورس</th>
+                        <th className="px-3 py-2 text-right font-medium">المعلم</th>
+                        <th className="px-3 py-2 text-center font-medium">النوع</th>
+                        <th className="px-3 py-2 text-center font-medium">السعر</th>
+                        <th className="px-3 py-2 text-center font-medium">الخصم</th>
+                        <th className="px-3 py-2 text-center font-medium">الطلاب</th>
+                        <th className="px-3 py-2 text-center font-medium">دفع مباشر</th>
+                        <th className="px-3 py-2 text-center font-medium">مشمول بحجز</th>
+                        <th className="px-3 py-2 text-center font-medium">الإيراد المحسوب</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {(overview?.coursesPricing ?? []).map((c) => (
+                        <tr key={c.id} className="hover:bg-[var(--surface-2)]/50 transition-colors">
+                          <td className="px-3 py-2.5 font-bold max-w-[220px] truncate" style={{ color: "var(--ink)" }} title={c.title}>
+                            {c.title}
+                          </td>
+                          <td className="px-3 py-2.5 text-[11px]" style={{ color: "var(--ink-2)" }}>{c.teacherName}</td>
+                          <td className="px-3 py-2.5 text-center">
+                            {c.isPaid ? (
+                              <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400">مدفوع</span>
+                            ) : (
+                              <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-medium bg-slate-500/10 text-slate-400">مجاني</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-semibold" style={{ color: "var(--gold-2)" }}>
+                            {c.isPaid ? `${c.price.toLocaleString("ar-EG")} ج.م` : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-[11px]" style={{ color: c.discountPercent ? "#f59e0b" : "var(--ink-3)" }}>
+                            {c.discountPercent ? `${c.discountPercent.toLocaleString("ar-EG")}%` : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-bold" style={{ color: "var(--ink)" }}>
+                            {c.enrolledStudents.toLocaleString("ar-EG")}
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-emerald-400 font-bold">
+                            {c.isPaid ? c.coursePaidStudentsCount.toLocaleString("ar-EG") : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-center text-sky-400 font-bold">
+                            {c.isPaid ? c.courseCoveredBySubCount.toLocaleString("ar-EG") : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {c.revenue > 0 ? (
+                              <span className="font-bold text-emerald-400">{c.revenue.toLocaleString("ar-EG")} ج.م</span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* ── Access & Payment Monitor (anomaly detection log) ── */}
+              <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <div className="p-4 flex flex-wrap items-center justify-between gap-2" style={{ borderBottom: "1px solid var(--border)" }}>
+                  <div>
+                    <h2 className="font-black text-base" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
+                      🛡️ سجل مراقبة الوصول والمدفوعات
+                    </h2>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--ink-3)" }}>
+                      أحدث الحجوزات والتسجيلات والحركات المالية — يُعلَّم تلقائياً أي وصول بدون دفع أو سجل لوحة موثّق
+                    </p>
+                  </div>
+                  {(overview?.accessMonitorAlertCount ?? 0) > 0 ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black bg-red-500/15 text-red-400 border border-red-500/30">
+                      ⚠️ {(overview?.accessMonitorAlertCount ?? 0).toLocaleString("ar-EG")} عنصر يحتاج مراجعة
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      ✓ لا توجد أنومالي
+                    </span>
+                  )}
+                </div>
+                <div className="max-h-[28rem] overflow-y-auto divide-y divide-[var(--border)]">
+                  {(overview?.accessMonitor ?? []).map((ev) => (
+                    <div key={`${ev.kind}-${ev.id}`} className="px-4 py-2.5 flex items-center gap-3 hover:bg-[var(--surface-2)]/40 transition-colors">
+                      <span className="text-base shrink-0" title={ev.severity === "ok" ? "موثّق" : "يحتاج مراجعة"}>
+                        {ev.severity === "ok" ? "🟢" : ev.severity === "warn" ? "🟡" : "🔴"}
+                      </span>
+                      <span className="text-base shrink-0" title={ev.kind === "subscription" ? "حجز باقة" : ev.kind === "enrollment" ? "تسجيل كورس" : "حركة مالية"}>
+                        {ev.kind === "subscription" ? "🎟️" : ev.kind === "enrollment" ? "📗" : "💳"}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-xs" style={{ color: "var(--ink)" }}>{ev.studentName}</span>
+                          <span className="text-[11px] truncate" style={{ color: "var(--ink-2)" }}>{ev.target}</span>
+                        </div>
+                        <div className="text-[10px] mt-0.5" style={{ color: ev.severity === "ok" ? "var(--ink-3)" : ev.severity === "warn" ? "#f59e0b" : "#f87171" }}>
+                          {ev.reason}
+                        </div>
+                      </div>
+                      <span className="shrink-0 inline-flex px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/10 text-slate-400" title="مصدر الوصول">
+                        {ev.source}
+                      </span>
+                      <span className={`shrink-0 text-xs font-black ${ev.amount > 0 ? "text-emerald-400" : "text-slate-400"}`}>
+                        {ev.amount !== 0 ? `${Math.abs(ev.amount).toLocaleString("ar-EG")} ج.م` : "0 ج.م"}
+                      </span>
+                      <span className="shrink-0 text-[10px] font-mono text-left" style={{ color: "var(--ink-3)" }}>
+                        {new Date(ev.createdAt).toLocaleDateString("ar-EG", { month: "2-digit", day: "2-digit" })}
+                        {" "}
+                        {new Date(ev.createdAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                      </span>
+                    </div>
+                  ))}
+                  {(overview?.accessMonitor ?? []).length === 0 && !overviewLoading && (
+                    <p className="p-6 text-center text-xs" style={{ color: "var(--ink-3)" }}>لا توجد أحداث بعد</p>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -935,6 +1158,16 @@ export default function SuperadminPage() {
           isOpen={isMoneyControlOpen}
           onClose={() => setIsMoneyControlOpen(false)}
           onUpdated={fetchOverview}
+        />
+
+        {/* Course Enrolled Students Manager & Silent Sign Out Modal */}
+        <CourseStudentsModal
+          isOpen={courseStudentsModal.isOpen}
+          courseId={courseStudentsModal.courseId}
+          courseTitle={courseStudentsModal.courseTitle}
+          teacherName={courseStudentsModal.teacherName}
+          onClose={() => setCourseStudentsModal((prev) => ({ ...prev, isOpen: false }))}
+          onStudentCountChanged={handleCourseStudentCountChanged}
         />
       </div>
     </ClassicAdminShell>
