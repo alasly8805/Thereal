@@ -1758,7 +1758,9 @@ model CourseEnrollment {
   id                String   @id @default(cuid())
   courseId          String
   studentId         String
-  fulfillmentSource String   @default("PURCHASE") // "PURCHASE" | "TESTER_BYPASS" | "ADMIN"
+  /// Required — no default, so every code path must declare the source explicitly.
+  /// "PURCHASE" = paid via wallet/gateway | "TESTER_BYPASS" = QA tester | "ADMIN" = trusted manual grant from superadmin panel (offline payment)
+  fulfillmentSource String // "PURCHASE" | "TESTER_BYPASS" | "ADMIN"
   amountPaid        Float    @default(0)
   createdAt         DateTime @default(now())
 

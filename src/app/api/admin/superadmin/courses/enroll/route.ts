@@ -47,6 +47,10 @@ export async function POST(req: NextRequest) {
       create: {
         studentId,
         courseId,
+        // Trusted manual grant via the superadmin panel (offline payment) —
+        // never leave this to the schema default; mislabeled grants show up as fake purchases.
+        fulfillmentSource: "ADMIN",
+        amountPaid: 0,
       },
       update: {},
     });
