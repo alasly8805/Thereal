@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession, getStudentSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { analyzeQuizAnswer } from "@/lib/ai-assistant";
+import { actingTeacherId, hasAssistantPermission, isTeacherLike, maskPhone } from "@/lib/teacher-scope";
 
 // POST — student requests grade adjustment (with AI analysis)
 export async function POST(req: NextRequest) {
@@ -129,10 +130,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ requests });
     }
 
-    if (session.role === "teacher") {
-      // Get courses owned by this teacher
+    if (isTeacherLike(session.role)) {
+      if (!hasAssistantPermission(session, "manageRequests")) {
+        return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الطلبات" }, { status: 403 });
+      }
+      const canSeePhones = hasAssistantPermission(session, "viewStudentPhones");
       const courses = await prisma.course.findMany({
-        where: { teacherId: session.id },
+        where: { teacherId: actingTeacherId(session) },
         select: { id: true },
       });
       const courseIds = courses.map((c) => c.id);
@@ -149,7 +153,14 @@ export async function GET(req: NextRequest) {
           student: { select: { name: true, email: true, phone: true } },
         },
       });
-      return NextResponse.json({ requests });
+      return NextResponse.json({
+        requests: requests.map((r) => ({
+          ...r,
+          student: r.student
+            ? { ...r.student, phone: canSeePhones ? r.student.phone : maskPhone(r.student.phone) }
+            : r.student,
+        })),
+      });
     }
 
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });

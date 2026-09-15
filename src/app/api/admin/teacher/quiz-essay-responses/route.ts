@@ -1,19 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma";
 import { logAdminAction } from "@/lib/admin-auth";
+import { recomputeQuizResult, setEssayVerdict } from "@/lib/quiz-grading";
 
 /**
- * Teacher API for reviewing and grading Quiz/Test essay questions.
+ * Teacher / assistant API for reviewing and grading Quiz/Test essay questions.
  *
  * GET   — List student quiz essay answers for teacher's courses.
  * PATCH — Approve / Disapprove an essay answer, update quiz score, and send feedback note.
+ *
+ * Assistants act on behalf of their teacher (actingTeacherId) and need either
+ * the "viewQuizResults" or "gradeHomework" permission.
  */
+
+function canGradeEssays(session: NonNullable<Awaited<ReturnType<typeof getSession>>>): boolean {
+  if (session.role === "superadmin" || session.role === "teacher") return true;
+  if (session.role !== "assistant") return false;
+  return (
+    hasAssistantPermission(session, "viewQuizResults") ||
+    hasAssistantPermission(session, "gradeHomework")
+  );
+}
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (!canGradeEssays(session)) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تصحيح الاختبارات" }, { status: 403 });
   }
 
   const { searchParams } = req.nextUrl;
@@ -21,22 +39,28 @@ export async function GET(req: NextRequest) {
   const quizId = searchParams.get("quizId");
   const courseId = searchParams.get("courseId");
 
-  const whereClause: any = {
+  // Teacher scope and the optional course filter both live under
+  // result.quiz.folder — build them together so one never overwrites the other.
+  const folderFilter: Prisma.FolderWhereInput = {};
+  if (session.role !== "superadmin") {
+    folderFilter.course = { teacherId: actingTeacherId(session) };
+  }
+  if (courseId && !quizId) {
+    folderFilter.courseId = courseId;
+  }
+
+  const whereClause: Prisma.QuizAnswerWhereInput = {
     OR: [
       { questionType: "essay" },
       { essayAnswer: { not: null } },
     ],
-    ...(session.role !== "superadmin"
-      ? {
-          result: {
-            quiz: {
-              folder: {
-                course: { teacherId: session.id },
-              },
-            },
-          },
-        }
-      : {}),
+    // Only submitted attempts — an in-progress row has no answers anyway, but
+    // be explicit so a half-saved retake can never show up for grading.
+    result: {
+      completedAt: { not: null },
+      ...(Object.keys(folderFilter).length > 0 ? { quiz: { folder: folderFilter } } : {}),
+      ...(isTeacherLike(session.role) ? { student: { accountMode: { not: "TESTER" } } } : {}),
+    },
   };
 
   if (statusParam && statusParam !== "all") {
@@ -44,11 +68,6 @@ export async function GET(req: NextRequest) {
   }
   if (quizId) {
     whereClause.quizId = quizId;
-  } else if (courseId) {
-    whereClause.result = {
-      ...whereClause.result,
-      quiz: { folder: { courseId } },
-    };
   }
 
   const answers = await prisma.quizAnswer.findMany({
@@ -61,6 +80,7 @@ export async function GET(req: NextRequest) {
           id: true,
           score: true,
           totalQ: true,
+          completedAt: true,
           quiz: {
             select: {
               id: true,
@@ -99,8 +119,11 @@ export async function PATCH(req: NextRequest) {
       });
     } catch {}
   }
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (!canGradeEssays(session)) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تصحيح الاختبارات" }, { status: 403 });
   }
 
   const body = (await req.json().catch(() => ({}))) as {
@@ -126,7 +149,7 @@ export async function PATCH(req: NextRequest) {
         ? {
             result: {
               quiz: {
-                folder: { course: { teacherId: session.id } },
+                folder: { course: { teacherId: actingTeacherId(session) } },
               },
             },
           }
@@ -142,7 +165,6 @@ export async function PATCH(req: NextRequest) {
               folder: { select: { courseId: true } },
             },
           },
-          answers: true,
           student: { select: { id: true, name: true } },
         },
       },
@@ -152,53 +174,60 @@ export async function PATCH(req: NextRequest) {
   if (!answer) {
     return NextResponse.json({ error: "الإجابة غير موجودة" }, { status: 404 });
   }
+  if (answer.questionType !== "essay" && answer.essayAnswer === null) {
+    return NextResponse.json({ error: "هذا السؤال اختياري ويُصحَّح تلقائياً" }, { status: 400 });
+  }
 
   const isApproved = status === "APPROVED";
 
-  // Update the quiz answer record
-  const updatedAnswer = await prisma.quizAnswer.update({
-    where: { id: answerId },
-    data: {
-      status,
-      isCorrect: isApproved,
-      teacherReply: teacherReply?.trim() || null,
-      reviewedAt: new Date(),
-    },
+  // Recorded under the per-result lock shared with the AI grader, so only the
+  // write that actually finalises the result triggers the deferred points.
+  // A teacher decision always wins: it overrides any AI verdict (and the new
+  // reviewedAt marks the official grade as the teacher's).
+  const { becameFinal } = await setEssayVerdict({
+    answerId,
+    resultId: answer.resultId,
+    status,
+    teacherReply: teacherReply?.trim() || null,
+    reviewedAt: new Date(),
+    onlyIfPending: false,
   });
+  const updatedAnswer = await prisma.quizAnswer.findUnique({ where: { id: answerId } });
 
-  // Recalculate student overall quiz score
-  const allAnswers = await prisma.quizAnswer.findMany({
-    where: { resultId: answer.resultId },
-  });
-
-  const correctCount = allAnswers.filter((a) => a.isCorrect).length;
-  const totalQ = answer.result.totalQ || allAnswers.length || 1;
-  const newScore = Number(((correctCount / totalQ) * 100).toFixed(2));
-
-  await prisma.quizResult.update({
-    where: { id: answer.resultId },
-    data: { score: newScore },
-  });
+  // Recalculate the overall score; when this was the last pending essay the
+  // grade becomes final and progress/points are applied.
+  const recomputed = await recomputeQuizResult(answer.resultId, { wasPendingBefore: becameFinal });
+  const summary = recomputed?.summary;
+  const newScore = summary?.score ?? answer.result.score;
+  const remainingPending = summary?.pendingCount ?? 0;
 
   // Notify student
   try {
     const quizTitle = answer.result.quiz.title;
-    const courseId = answer.result.quiz.folder?.courseId;
+    const note = teacherReply?.trim() ? ` ملاحظات المعلم: "${teacherReply.trim()}"` : "";
+    const scoreLine =
+      remainingPending > 0
+        ? `ما زال هناك ${remainingPending} سؤال مقالي قيد التصحيح، وستظهر درجتك النهائية بعد الانتهاء.`
+        : `الدرجة النهائية: ${newScore}%.`;
 
     await prisma.notification.create({
       data: {
         userId: answer.studentId,
         type: "grade_resolved",
         title: isApproved ? "✅ تم تصحيح وقبول إجابتك المقالية" : "❌ تم تصحيح إجابتك المقالية",
-        body: `قام المعلم بمراجعة وتصحيح إجابتك المقالية في اختبار (${quizTitle}). الدرجة النهائية الجديدة: ${newScore}%. ${
-          teacherReply?.trim() ? `ملاحظات المعلم: "${teacherReply.trim()}"` : ""
-        }`,
-        link: courseId ? `/courses/${courseId}` : `/quizzes/${answer.quizId}`,
+        body: `قام المعلم بمراجعة وتصحيح إجابتك المقالية في اختبار (${quizTitle}). ${scoreLine}${note}`,
+        link: `/quizzes/${answer.quizId}`,
       },
     });
   } catch (err) {
     console.error("Failed to notify student for quiz essay grade:", err);
   }
 
-  return NextResponse.json({ updatedAnswer, newScore });
+  return NextResponse.json({
+    updatedAnswer,
+    newScore,
+    pendingCount: remainingPending,
+    gradingStatus: summary?.gradingStatus ?? "GRADED",
+    passed: summary?.passed ?? null,
+  });
 }

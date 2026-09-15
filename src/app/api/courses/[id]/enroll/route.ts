@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
+import { isCenterRequest, isCourseOnSite } from "@/lib/center-mode";
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getSession();
     if (!session) {
@@ -20,9 +21,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     const course = await prisma.course.findUnique({
       where: { id: courseId },
-      select: { id: true, isPaid: true, price: true, discountPercent: true, discountExpiresAt: true },
+      select: { id: true, isPaid: true, price: true, discountPercent: true, discountExpiresAt: true, deliveryMode: true },
     });
     if (!course) return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
+
+    // Don't let an online visitor enrol in a centre-only course (or vice versa).
+    if (!isCourseOnSite(course.deliveryMode, isCenterRequest(req))) {
+      return NextResponse.json({ error: "هذا الكورس غير متاح على هذه المنصة" }, { status: 404 });
+    }
 
     const now = new Date();
     const discountActive =

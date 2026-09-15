@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
-  if (!session || (session.role !== "superadmin" && session.role !== "teacher")) {
+  if (!session || (session.role !== "superadmin" && !isTeacherLike(session.role))) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -19,9 +20,9 @@ export async function GET(req: NextRequest) {
       where.status = status;
     }
 
-    if (session.role === "teacher") {
+    if (isTeacherLike(session.role)) {
       const teacherLessons = await prisma.planLessonSource.findMany({
-        where: { teacherId: session.id },
+        where: { teacherId: actingTeacherId(session) },
         select: { planLessonId: true }
       });
       where.planLessonId = { in: teacherLessons.map(t => t.planLessonId) };
@@ -75,11 +76,11 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    if (session.role === "teacher") {
+    if (isTeacherLike(session.role)) {
       filteredSubmissions = filteredSubmissions.filter(sub => {
         if (!sub.planLesson) return false;
         const progress = sub.enrollment.progress.find((p: any) => p.planLessonId === sub.planLessonId);
-        const teacherSources = sub.planLesson.sources.filter((s: any) => s.teacherId === session.id);
+        const teacherSources = sub.planLesson.sources.filter((s: any) => s.teacherId === actingTeacherId(session));
         const teacherSourceIds = new Set(teacherSources.map((s: any) => s.id));
         
         if (progress?.chosenSourceId) {

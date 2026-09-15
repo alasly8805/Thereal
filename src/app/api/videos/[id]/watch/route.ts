@@ -7,6 +7,7 @@ import { getWatchAllowance } from "@/lib/watch-allowance";
 import { canAccessContent, ContentType } from "@/lib/content-access-engine";
 import { checkVideoAccess } from "@/lib/authorization";
 import { isVpnOrProxy, logVpnViolation } from "@/lib/vpn-guard";
+import { getConfigNumberClamped } from "@/lib/config";
 
 // Verify an existing watch session (used when loading the watch page on refresh)
 
@@ -26,8 +27,6 @@ function withWatchToken(embedUrl: string, token: string): string {
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
-
   const { id: videoId } = await params;
   const { searchParams } = new URL(req.url);
   const sessionToken = searchParams.get("token");
@@ -49,8 +48,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     });
     if (!video) return NextResponse.json({ error: "الفيديو غير موجود" }, { status: 404 });
-    const isOwner = session.role === "teacher" && video.folder.course.teacherId === session.id;
-    if (!video.isFree && session.role !== "admin" && session.role !== "superadmin" && !isOwner) {
+    const isOwner = session?.role === "teacher" && video.folder.course.teacherId === session.id;
+    if (!video.isFree && !session) {
+      return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+    }
+    if (!video.isFree && session?.role !== "admin" && session?.role !== "superadmin" && !isOwner) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
     }
     const profile = await prisma.teacherProfile.findUnique({
@@ -58,7 +60,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       select: { slug: true },
     });
     const domain = req.headers.get("x-forwarded-host") || req.headers.get("host") || undefined;
-    const studentIdentifier = session.phone || session.name || session.id;
+    const studentIdentifier = session ? (session.phone || session.name || session.id) : undefined;
     const embedResult = await resolveEmbedUrl(video, { userId: studentIdentifier, domain });
     return NextResponse.json({
       videoId,
@@ -71,14 +73,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       totalWatches: 999,
       usedWatches: 0,
       teacherSlug: profile?.slug ?? "",
-      studentPlan: "course",
+      studentPlan: "free",
       embedUrl: embedResult.embedUrl,
       provider: embedResult.provider,
       drm: embedResult.drm || null,
       resumeSeconds: 0,
-      watermark: session.phone || session.name || "",
-      studentName: session.name || "",
-      studentPhone: session.phone || "",
+      watermark: session ? (session.phone || session.name || "01012345678") : "01012345678",
+      studentName: session ? (session.name || "طالب المنصة") : "طالب المنصة",
+      studentPhone: session ? (session.phone || "01012345678") : "01012345678",
       video: {
         id: video.id,
         title: video.title,
@@ -88,6 +90,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     });
   }
+
+  if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
 
   const watchSession = await prisma.videoWatchSession.findUnique({
     where: { sessionToken },
@@ -178,7 +182,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
   }
 
-  const isTesterUser = session?.accountMode === "TESTER";
+  // A support agent viewing the account sees the student's real numbers but is
+  // never counted against them.
+  const isTesterUser = session?.accountMode === "TESTER" || session?.supportView === true;
   const domain = req.headers.get("x-forwarded-host") || req.headers.get("host") || undefined;
   const studentIdentifier = session.phone || session.name || session.id;
   const embedResult = await resolveEmbedUrl(video, { userId: studentIdentifier, domain });
@@ -224,14 +230,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Watch-session length is superadmin-configurable (was 4h); ≥0.25h so a bad
   // value can't create instantly-expired sessions.
-  const WATCH_DURATION_HOURS = 90 / 3600;
+  const WATCH_DURATION_HOURS = await getConfigNumberClamped("watch_session_hours", 0.25, 720);
 
   const { id: videoId } = await params;
   const heartbeatBody = (await req.json().catch(() => ({}))) as { token?: string; heartbeat?: boolean };
   if (heartbeatBody.heartbeat && heartbeatBody.token) {
     if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
     const now = new Date();
-    const renewedUntil = new Date(now.getTime() + 90_000);
+    const renewedUntil = new Date(now.getTime() + WATCH_DURATION_HOURS * 60 * 60 * 1000);
     const renewed = await prisma.$transaction(async (tx: any) => {
       const claim = await tx.videoWatchSession.updateMany({
         where: { sessionToken: heartbeatBody.token, studentId: session.id, videoId, endedAt: null, expiresAt: { gt: now } },
@@ -297,11 +303,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // ── FREE / DEMO video: bypass enrollment + quota, no session row consumed ──
+  // "تجريبي" is a public preview. It used to expire in 90s (a leftover from the
+  // old heartbeat interval), which also cut off *enrolled* students on the same
+  // lesson — the countdown hit 00:00:00 on a 38-minute lecture. Use the normal
+  // watch-session length so a marked-free intro lesson is actually watchable.
   if (video.isFree) {
     const domain = req.headers.get("x-forwarded-host") || req.headers.get("host") || undefined;
     const studentIdentifier = session ? (session.phone || session.name || session.id) : undefined;
     const embedResult = await resolveEmbedUrl(video, { userId: studentIdentifier, domain });
-    const expiresAt = new Date(now.getTime() + 90_000);
+    const expiresAt = new Date(now.getTime() + WATCH_DURATION_HOURS * 60 * 60 * 1000);
+    const freeProgress = session
+      ? await prisma.progress.findUnique({
+          where: { studentId_videoId: { studentId: session.id, videoId } },
+          select: { lastPositionSeconds: true },
+        })
+      : null;
     return NextResponse.json({
       sessionToken: "free",
       expiresAt: expiresAt.toISOString(),
@@ -312,8 +328,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       embedUrl: embedResult.embedUrl,
       provider: embedResult.provider,
       drm: embedResult.drm || null,
-      resumeSeconds: 0,
-      watermark: session ? (session.phone || session.name || "") : "",
+      resumeSeconds: freeProgress?.lastPositionSeconds ?? 0,
+      watermark: session ? (session.phone || session.name || "01012345678") : "01012345678",
+      studentName: session ? (session.name || "طالب المنصة") : "طالب المنصة",
+      studentPhone: session ? (session.phone || "01012345678") : "01012345678",
       video: {
         id: video.id,
         title: video.title,
@@ -336,7 +354,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const domain = req.headers.get("x-forwarded-host") || req.headers.get("host") || undefined;
     const studentIdentifier = session.phone || session.name || session.id;
     const embedResult = await resolveEmbedUrl(video, { userId: studentIdentifier, domain });
-    const expiresAt = new Date(now.getTime() + 90_000);
+    const expiresAt = new Date(now.getTime() + WATCH_DURATION_HOURS * 60 * 60 * 1000);
     return NextResponse.json({
       sessionToken: "preview",
       expiresAt: expiresAt.toISOString(),
@@ -583,10 +601,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // isolation (Postgres/prod) aborts the conflicting tx; SQLite (local) serializes
   // writers, so the race can't occur there either.
   const isTesterUser = session.accountMode === "TESTER";
+  // Support agents reproduce a student's problem by opening the same lesson.
+  // Spending one of the student's paid watches to do that would mean support
+  // bills the student for its own debugging, so the session is created with
+  // usedWatchSlot=false and skips the quota check entirely.
+  const isSupportView = session.supportView === true;
+  const bypassQuota = isTesterUser || isSupportView;
   const QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
   const isPg = (process.env.DATABASE_URL ?? "").startsWith("postgres");
   try {
-    const { used, ws, vdoAccountSelection } = await prisma.$transaction(
+    const { used, ws, vdoAccountSelection, allowance } = await prisma.$transaction(
       async (tx: any) => {
         const usedCount = await tx.videoWatchSession.count({
           where: { studentId: session.id, videoId, usedWatchSlot: true },
@@ -594,13 +618,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Read grants inside the transaction too: outside it, a request approved
         // between the read and the insert would not be honoured.
         const allowance = await getWatchAllowance(tx, session.id, videoId, video.maxWatchesPerUser);
-        if (!isTesterUser && usedCount >= allowance) throw new Error(QUOTA_EXCEEDED);
+        if (!bypassQuota && usedCount >= allowance) throw new Error(QUOTA_EXCEEDED);
         await tx.videoWatchSession.updateMany({
           where: { studentId: session.id, videoId, endedAt: null, expiresAt: { lt: now } },
           data: { endedAt: now },
         });
         const created = await tx.videoWatchSession.create({
-          data: { sessionToken, videoId, studentId: session.id, expiresAt, usedWatchSlot: true, ipAddress, userAgent },
+          data: { sessionToken, videoId, studentId: session.id, expiresAt, usedWatchSlot: !isSupportView, ipAddress, userAgent },
         });
         const isVdo = (video.videoProvider || "vdocipher") === "vdocipher";
         let vdoAccountSelection: any = null;
@@ -614,7 +638,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             rawVdoCipherId: video.providerVideoId || video.vdoCipherId,
           });
         }
-        return { used: usedCount, ws: created, vdoAccountSelection };
+        return { used: usedCount, ws: created, vdoAccountSelection, allowance };
       },
       isPg ? { isolationLevel: "Serializable" } : undefined
     );
@@ -681,9 +705,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       sessionId: ws.id,
       expiresAt: expiresAt.toISOString(),
       watchDurationHours: WATCH_DURATION_HOURS,
-      unlimited: isTesterUser,
-      remainingWatches: isTesterUser ? null : video.maxWatchesPerUser - used - 1,
-      totalWatches: isTesterUser ? null : video.maxWatchesPerUser,
+      unlimited: bypassQuota,
+      remainingWatches: bypassQuota ? null : Math.max(0, allowance - used - 1),
+      totalWatches: bypassQuota ? null : allowance,
       usedWatches: used + 1,
       embedUrl: withWatchToken(embedResult.embedUrl, sessionToken),
       provider: embedResult.provider,

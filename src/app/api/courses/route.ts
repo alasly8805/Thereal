@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { canBypassPayment } from "@/lib/demo";
+import { isCenterRequest, deliveryModeFilter } from "@/lib/center-mode";
 
 export async function GET(req: NextRequest) {
   try {
@@ -16,18 +17,11 @@ export async function GET(req: NextRequest) {
     const isTesterUser = session?.accountMode === "TESTER";
     const canSeeDemo = isSuperadmin || isTesterUser;
 
-    const host = req.headers.get("host") || "";
-    const isCenterMode =
-      req.headers.get("x-center-mode") === "1" ||
-      host.startsWith("center.") ||
-      searchParams.get("mode") === "center" ||
-      req.cookies.get("center_mode")?.value === "1";
+    const isCenterMode = isCenterRequest(req);
 
     const where: Record<string, unknown> = {
       teacher: teacherId ? (canSeeDemo ? { isDeleted: false } : { isDeleted: false, isDemo: false }) : { isDeleted: false, isDemo: false },
-      deliveryMode: isCenterMode
-        ? { in: ["CENTER", "BOTH"] }
-        : { in: ["ONLINE", "BOTH"] },
+      deliveryMode: deliveryModeFilter(isCenterMode),
     };
     if (stage) where.educationalStage = stage;
     if (subject) where.subject = subject;
@@ -103,31 +97,100 @@ export async function GET(req: NextRequest) {
 
     if (!session) {
       const response = NextResponse.json({
-        courses: courses.map((course) => ({ ...withLessons(course), hasAccess: false })),
+        courses: courses.map((course) => ({ ...withLessons(course), hasAccess: false, inLibrary: false })),
         teachers: formattedTeachers,
       });
       response.headers.set("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
       return response;
     }
 
-    const accessCodes = await prisma.accessCode.findMany({
-      where: {
-        studentId: session.id,
-        courseId: { in: courses.map((course) => course.id) },
-      },
-      select: { courseId: true },
-    });
+    const courseIds = courses.map((course) => course.id);
+    const teacherIds = Array.from(new Set(courses.map((course) => course.teacherId).filter(Boolean)));
 
-    const accessMap = new Set(accessCodes.map((code) => code.courseId));
+    // Batch-query all forms of course ownership / library access in parallel
+    const [accessCodes, directEnrollments, teacherSubs, activePlanLinks] = await Promise.all([
+      prisma.accessCode.findMany({
+        where: {
+          studentId: session.id,
+          isActive: true,
+          courseId: { in: courseIds },
+          OR: [{ accessType: "TERM" }, { accessType: "COURSE" }, { folderId: null, videoId: null }],
+        },
+        select: { courseId: true },
+      }),
+      prisma.courseEnrollment.findMany({
+        where: {
+          studentId: session.id,
+          courseId: { in: courseIds },
+        },
+        select: { courseId: true },
+      }),
+      prisma.teacherSubscription.findMany({
+        where: {
+          studentId: session.id,
+          status: "active",
+          expiresAt: { gt: new Date() },
+          teacherId: { in: teacherIds },
+        },
+        select: { teacherId: true, languageTrack: true },
+      }),
+      prisma.planCourseLink.findMany({
+        where: {
+          courseId: { in: courseIds },
+          plan: {
+            enrollments: {
+              some: {
+                studentId: session.id,
+                expiresAt: { gt: new Date() },
+              },
+            },
+          },
+        },
+        select: { courseId: true },
+      }),
+    ]);
+
+    const { getCourseLanguageTrack, isSubscriptionTrackMatching } = await import("@/lib/course-track");
+
+    const accessCodeSet = new Set(accessCodes.map((code) => code.courseId));
+    const directEnrollSet = new Set(directEnrollments.map((e) => e.courseId));
+    const planCourseSet = new Set(activePlanLinks.map((l) => l.courseId));
+
     const coursesWithAccess = await Promise.all(
       courses.map(async (course) => {
         const isOwnerTeacher = session.role === "teacher" && course.teacherId === session.id;
-        const isAdminPreview = session.role === "admin";
+        const isAdminPreview = session.role === "admin" || session.role === "superadmin";
         const isDemoBypass = await canBypassPayment(session.role, course.teacherId, session.accountMode);
-        const hasAccess = accessMap.has(course.id) || isOwnerTeacher || isAdminPreview || isDemoBypass || isTesterUser;
+
+        const isStandaloneLesson =
+          course.id === "cmtqbw41d005qqwobfcrfg07c" ||
+          course.id === "cmtr54unr00wfqwwvtbvaxy8q" ||
+          course.id === "cmta9me5r0007qxmwnnsq1cez" ||
+          course.id === "cmt45qxsf001oqx3e9jtlwny8" ||
+          (course.title || "").toLowerCase().includes("شرح الدرس الأول") ||
+          (course.title || "").toLowerCase().includes("اول حصة في الشهر") ||
+          (course.title || "").toLowerCase().includes("first section");
+
+        const matchesTeacherSub = !isStandaloneLesson && course.teacherId
+          ? teacherSubs.some(
+              (s) =>
+                s.teacherId === course.teacherId &&
+                isSubscriptionTrackMatching(s.languageTrack, getCourseLanguageTrack(course))
+            )
+          : false;
+
+        const inLibrary =
+          accessCodeSet.has(course.id) ||
+          directEnrollSet.has(course.id) ||
+          planCourseSet.has(course.id) ||
+          matchesTeacherSub;
+
+        const hasAccess = inLibrary || isOwnerTeacher || isAdminPreview || isDemoBypass || isTesterUser;
+
         return {
           ...withLessons(course),
           hasAccess,
+          inLibrary,
           isOwnerTeacher,
         };
       })

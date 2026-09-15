@@ -77,7 +77,7 @@ export async function GET(
       return NextResponse.json({ error: "المتعلم غير موجود" }, { status: 404 });
     }
 
-    const [quizResults, watchedCount, devices, maxDevices] = await Promise.all([
+    const [rawQuizResults, watchedCount, devices, maxDevices] = await Promise.all([
       prisma.quizResult.findMany({
         where: { studentId: id },
         select: {
@@ -85,6 +85,9 @@ export async function GET(
           score: true,
           totalQ: true,
           completedAt: true,
+          // Essay answers stay PENDING until a teacher grades them; while any
+          // are pending the stored score is partial, not a final grade.
+          answers: { where: { status: "PENDING" }, select: { id: true } },
           quiz: {
             select: {
               id: true,
@@ -107,6 +110,12 @@ export async function GET(
       }),
       getStudentMaxDevices(),
     ]);
+
+    const quizResults = rawQuizResults.map(({ answers, ...r }) => ({
+      ...r,
+      pendingEssays: answers.length,
+      gradingStatus: answers.length > 0 ? ("PENDING" as const) : ("GRADED" as const),
+    }));
 
     return NextResponse.json({ student, quizResults, watchedCount, devices, maxDevices });
   } catch (error) {

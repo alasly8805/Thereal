@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { logAdminAction } from "@/lib/admin-auth";
 
@@ -13,7 +14,7 @@ import { logAdminAction } from "@/lib/admin-auth";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
   const courseId = searchParams.get("courseId");
 
   const whereClause: any = session.role !== "superadmin"
-    ? { folder: { course: { teacherId: session.id } } }
+    ? { folder: { course: { teacherId: actingTeacherId(session) } } }
     : {};
 
   if (courseId) {
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
         },
       },
       results: {
-        where: session.role === "teacher" ? { student: { accountMode: { not: "TESTER" } } } : undefined,
+        where: isTeacherLike(session.role) ? { student: { accountMode: { not: "TESTER" } } } : undefined,
         select: {
           id: true,
           score: true,
@@ -70,12 +71,17 @@ export async function GET(req: NextRequest) {
 
     const completedResults = q.results.filter((r) => r.completedAt !== null);
     const totalAttempts = completedResults.length;
-    const totalScoreSum = completedResults.reduce((acc, r) => acc + r.score, 0);
-    const avgScore = totalAttempts > 0 ? Number((totalScoreSum / totalAttempts).toFixed(1)) : 0;
-    const passedCount = completedResults.filter((r) => r.score >= 50).length;
-    
+
+    // A result with pending essay answers has no final grade yet, so it must
+    // not drag the average down to 0% or be counted as failed.
+    const gradedResults = completedResults.filter((r) => !r.answers || r.answers.length === 0);
+    const pendingResultsCount = totalAttempts - gradedResults.length;
+    const totalScoreSum = gradedResults.reduce((acc, r) => acc + r.score, 0);
+    const avgScore = gradedResults.length > 0 ? Number((totalScoreSum / gradedResults.length).toFixed(1)) : 0;
+    const passedCount = gradedResults.filter((r) => r.score >= 50).length;
+
     // Count pending essay answers in this quiz
-    const pendingEssayCount = q.results.reduce(
+    const pendingEssayCount = completedResults.reduce(
       (acc, r) => acc + (r.answers ? r.answers.length : 0),
       0
     );
@@ -93,6 +99,8 @@ export async function GET(req: NextRequest) {
       essayCount,
       imagesCount,
       totalAttempts,
+      gradedAttempts: gradedResults.length,
+      pendingResultsCount,
       avgScore,
       passedCount,
       pendingEssayCount,
@@ -101,13 +109,14 @@ export async function GET(req: NextRequest) {
 
   const totalExams = formattedExams.length;
   const totalAttempts = formattedExams.reduce((acc, e) => acc + e.totalAttempts, 0);
+  const totalGraded = formattedExams.reduce((acc, e) => acc + e.gradedAttempts, 0);
   const totalPendingEssays = formattedExams.reduce((acc, e) => acc + e.pendingEssayCount, 0);
   const overallAvgScore =
-    totalAttempts > 0
+    totalGraded > 0
       ? Number(
           (
-            formattedExams.reduce((acc, e) => acc + e.avgScore * e.totalAttempts, 0) /
-            totalAttempts
+            formattedExams.reduce((acc, e) => acc + e.avgScore * e.gradedAttempts, 0) /
+            totalGraded
           ).toFixed(1)
         )
       : 0;
@@ -138,7 +147,7 @@ export async function DELETE(req: NextRequest) {
     } catch {}
   }
 
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -153,7 +162,7 @@ export async function DELETE(req: NextRequest) {
     where: {
       id: quizId,
       ...(session.role !== "superadmin"
-        ? { folder: { course: { teacherId: session.id } } }
+        ? { folder: { course: { teacherId: actingTeacherId(session) } } }
         : {}),
     },
   });
@@ -168,7 +177,7 @@ export async function DELETE(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   const session = await getSession();
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -182,7 +191,7 @@ export async function PATCH(req: NextRequest) {
     where: {
       id: quizId,
       ...(session.role !== "superadmin"
-        ? { folder: { course: { teacherId: session.id } } }
+        ? { folder: { course: { teacherId: actingTeacherId(session) } } }
         : {}),
     },
   });

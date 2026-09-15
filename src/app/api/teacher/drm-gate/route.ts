@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { verifyDrmPassword, logAdminAction } from "@/lib/admin-auth";
 
 import { isDrmAuthorized } from "@/lib/drm-auth";

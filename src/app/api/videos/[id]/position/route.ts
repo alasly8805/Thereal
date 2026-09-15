@@ -20,8 +20,16 @@ const MAX_POSITION = 24 * 60 * 60; // 24h cap — guards against bogus values
 const lastPingMap = new Map<string, number>();
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getStudentSession();
-  if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+  const studentSession = await getStudentSession();
+  if (!studentSession) {
+    const { getSession } = await import("@/lib/auth");
+    const generalSession = await getSession();
+    if (generalSession && (generalSession.role === "teacher" || generalSession.role === "admin" || generalSession.role === "superadmin")) {
+      return NextResponse.json({ seconds: 0, watched: false, preview: true });
+    }
+    return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+  }
+  const session = studentSession;
 
   const { id: videoId } = await params;
   const hasAccess = await checkVideoAccess(session.id, session.role, videoId);
@@ -41,8 +49,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getStudentSession();
-  if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+  const studentSession = await getStudentSession();
+  if (!studentSession) {
+    const { getSession } = await import("@/lib/auth");
+    const generalSession = await getSession();
+    if (generalSession && (generalSession.role === "teacher" || generalSession.role === "admin" || generalSession.role === "superadmin")) {
+      return NextResponse.json({ ok: true, preview: true });
+    }
+    return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+  }
+  const session = studentSession;
 
   const { id: videoId } = await params;
   const hasAccess = await checkVideoAccess(session.id, session.role, videoId);
@@ -62,8 +78,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const seconds = Math.min(Math.round(raw), MAX_POSITION);
 
   // Only persist for a video that actually exists (avoids orphan rows).
-  const exists = await prisma.video.findUnique({ where: { id: videoId }, select: { id: true } });
-  if (!exists) return NextResponse.json({ error: "الفيديو غير موجود" }, { status: 404 });
+  const video = await prisma.video.findUnique({
+    where: { id: videoId },
+    select: { id: true, title: true, durationMinutes: true },
+  });
+  if (!video) return NextResponse.json({ error: "الفيديو غير موجود" }, { status: 404 });
 
   // ── Anti-cheat clamp for deltaWatchedSeconds ─────────────────────────────
   // The client sends how many seconds of video it claims to have played since
@@ -109,7 +128,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // ── Upsert ───────────────────────────────────────────────────────────────
-  await prisma.progress.upsert({
+  const progressRecord = await prisma.progress.upsert({
     where: { studentId_videoId: { studentId: session.id, videoId } },
     update: {
       lastPositionSeconds: seconds,
@@ -125,7 +144,74 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       lastWatchedAt: new Date(),
       watchedSecondsTotal: safeDelta,
     },
+    select: {
+      id: true,
+      watched: true,
+      watchedSecondsTotal: true,
+      lastPositionSeconds: true,
+    },
   });
 
-  return NextResponse.json({ ok: true, seconds });
+  let isNowWatched = progressRecord.watched;
+  let justCompleted = false;
+
+  // If not yet marked watched, check if student crossed the completion threshold
+  if (!progressRecord.watched) {
+    const { getConfigNumberClamped } = await import("@/lib/config");
+    const thresholdPercent = await getConfigNumberClamped("mark_complete_threshold", 1, 100);
+    const durationSeconds = (video.durationMinutes || 0) * 60;
+    const requiredSeconds = durationSeconds > 0 ? (durationSeconds * thresholdPercent) / 100 : 0;
+
+    const reachedThreshold =
+      durationSeconds > 0
+        ? seconds >= requiredSeconds || (progressRecord.watchedSecondsTotal || 0) >= requiredSeconds
+        : seconds >= 30;
+
+    if (reachedThreshold) {
+      const completedAt = new Date();
+      await prisma.progress.update({
+        where: { id: progressRecord.id },
+        data: { watched: true, watchedAt: completedAt },
+      });
+      isNowWatched = true;
+      justCompleted = true;
+
+      // Log in content prerequisite graph
+      try {
+        const { ContentType, recordContentCompleted } = await import("@/lib/content-access-engine");
+        await recordContentCompleted(
+          session.id,
+          { type: ContentType.VIDEO, sourceId: videoId, title: video.title },
+          { completedAt }
+        );
+      } catch (err) {
+        console.error("[position route] recordContentCompleted error:", err);
+      }
+
+      // Sync watched state to duplicate/equivalent videos in other courses
+      try {
+        const { syncVideoWatchToRelatedCourses } = await import("@/lib/video-sync");
+        await syncVideoWatchToRelatedCourses(session.id, videoId, {
+          completedAt,
+          lastPositionSeconds: seconds,
+          watchedSecondsTotal: progressRecord.watchedSecondsTotal,
+        });
+      } catch (syncErr) {
+        console.error("[position route] syncVideoWatchToRelatedCourses error:", syncErr);
+      }
+
+      // Track plan lesson progress (parity with the manual complete route)
+      try {
+        const { markPlanLessonsWatched } = await import("@/lib/plan-progress");
+        await markPlanLessonsWatched(session.id, videoId);
+      } catch (planErr) {
+        console.error("[position route] markPlanLessonsWatched error:", planErr);
+      }
+    }
+  }
+
+  // justCompleted tells the client THIS ping flipped the video to watched, so
+  // it can unlock the next chained content immediately (re-watches of an
+  // already-watched video return watched:true without it).
+  return NextResponse.json({ ok: true, seconds, watched: isNowWatched, justCompleted });
 }

@@ -20,8 +20,13 @@ type VideoItem = {
   durationMinutes?: number;
   maxWatchesPerUser?: number;
   usedWatches?: number;
+  grantedViews?: number;
   progress?: Array<{ watched: boolean; watchedAt?: string | null; lastPositionSeconds?: number }>;
   publishAt?: string | null;
+  // Teacher-panel chain (مسار وفتح المحتوى) evaluation — present when the
+  // course has prerequisite edges; chainLockedBy is the blocking item's title.
+  chainLocked?: boolean;
+  chainLockedBy?: string | null;
 };
 
 type MaterialItem = { id: string; title: string; url: string; type: string };
@@ -34,7 +39,7 @@ type HomeworkItem = {
   type: string;
   isPublished?: boolean;
   timeLimitMinutes?: number;
-  mySubmission?: { id: string; status: string; score?: number; totalQ?: number } | null;
+  mySubmission?: { id: string; status: string; score?: number; totalQ?: number; allowRetake?: boolean } | null;
 };
 
 type FolderItem = {
@@ -228,24 +233,30 @@ function formatTime(totalSeconds: number) {
 
 export default function CourseLearningPage() {
   const router = useRouter();
-  const { error: toastError } = useToast();
+  const { error: toastError, success: toastSuccess } = useToast();
   const params = useParams<{ id: string }>();
   const courseId = params.id;
   const searchParams = useSearchParams();
   const paramVideoId = searchParams.get("videoId");
 
   const [course, setCourse] = useState<CourseData | null>(null);
+  const [chainActive, setChainActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState("");
   const [accessBlock, setAccessBlock] = useState<{ message: string; teacher: boolean } | null>(null);
   const [isTeacherPreview, setIsTeacherPreview] = useState(false);
+  const [inIframe, setInIframe] = useState(true);
   const [user, setUser] = useState<{ name: string; role: string; phone?: string | null } | null>(null);
+
+  useEffect(() => {
+    setInIframe(window.self !== window.top);
+  }, []);
 
   // Sidebar
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [navOpen, setNavOpen] = useState(false); // mobile lesson drawer
-  const [markThreshold, setMarkThreshold] = useState(80); // % watched; superadmin-configurable
+  const [markThreshold, setMarkThreshold] = useState(60); // % watched; superadmin-configurable
 
   // Player
   const [player, setPlayer] = useState<PlayerState | null>(null);
@@ -283,17 +294,24 @@ export default function CourseLearningPage() {
 
   const isWatched = (v: VideoItem) => v.progress?.some((p) => p.watched) ?? false;
 
-  // Sequential lock: video[i] is locked if video[i-1] is not watched
+  // Sequential lock. When the teacher set up a content chain (مسار وفتح
+  // المحتوى), the server-evaluated chain decides — the next content to unlock
+  // is exactly what the chain declares, not the previous row in display order.
+  // Courses without any chain edges keep the legacy previous-video rule.
   const isLocked = useCallback(
     (videoId: string) => {
       if (isTeacherPreview) return false;
+      if (chainActive) {
+        const video = flatVideos.find((v) => v.id === videoId);
+        return !!video?.chainLocked;
+      }
       // Teacher can allow free navigation — then nothing is locked.
       if (course?.sequentialAccess === false) return false;
       const idx = flatVideos.findIndex((v) => v.id === videoId);
       if (idx <= 0) return false;
       return !flatVideos[idx - 1].progress?.some((p) => p.watched);
     },
-    [flatVideos, course?.sequentialAccess, isTeacherPreview]
+    [flatVideos, course?.sequentialAccess, isTeacherPreview, chainActive]
   );
 
   const activeVideo = flatVideos.find((v) => v.id === activeVideoId) ?? null;
@@ -316,15 +334,20 @@ export default function CourseLearningPage() {
     [flatVideos, course, now]
   );
 
-  // Per-video watch counts
+  // Per-video watch counts. grantedViews is what support/teacher added on top
+  // of the lesson's base limit — without it, extra watches never unlock play.
+  const videoAllowance = (v: VideoItem) =>
+    (v.maxWatchesPerUser ?? 3) + (v.grantedViews ?? 0);
   const videoRemainingWatches = (v: VideoItem) =>
-    isTeacherPreview ? 999 : Math.max(0, (v.maxWatchesPerUser ?? 3) - (v.usedWatches ?? 0));
+    isTeacherPreview ? 999 : Math.max(0, videoAllowance(v) - (v.usedWatches ?? 0));
   const hasNoWatches = activeVideo ? videoRemainingWatches(activeVideo) <= 0 : false;
 
   // ── Data loading ─────────────────────────────────────────────────────────
 
-  const loadCourse = useCallback(async () => {
-    setLoading(true);
+  const loadCourse = useCallback(async (opts?: { silent?: boolean }) => {
+    // Silent mode refreshes progress/locks in the background (used when a
+    // video auto-completes mid-playback) without unmounting the player.
+    if (!opts?.silent) setLoading(true);
     setPageError("");
     setAccessBlock(null);
     try {
@@ -356,6 +379,7 @@ export default function CourseLearningPage() {
       if (typeof courseJson.markCompleteThreshold === "number") {
         setMarkThreshold(courseJson.markCompleteThreshold);
       }
+      setChainActive(courseJson.chainActive === true);
       setCourse(c);
       
       const allVideos = c.folders.flatMap((f) => f.videos);
@@ -373,9 +397,11 @@ export default function CourseLearningPage() {
       });
       setCollapsed((prev) => Object.keys(prev).length > 0 ? prev : init);
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : "حدث خطأ أثناء تحميل الكورس");
+      // A failed silent refresh must not blank the page while the student is
+      // watching — keep the last good course data and try again next time.
+      if (!opts?.silent) setPageError(err instanceof Error ? err.message : "حدث خطأ أثناء تحميل الكورس");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [courseId, router, paramVideoId]);
 
@@ -438,8 +464,14 @@ export default function CourseLearningPage() {
 
   useEffect(() => {
     if (!player) return;
-    const tick = () => setCountdown(fmtCountdown(player.expiresAt, now));
-    tick();
+    const next = fmtCountdown(player.expiresAt, now);
+    setCountdown(next);
+    // An expired session used to keep the player mounted with a dead 00:00:00
+    // timer and no way to start again without a full refresh.
+    if (next === "00:00:00") {
+      setPlayer(null);
+      setElapsedSeconds(0);
+    }
   }, [player, now]);
 
   // ── DevTools deterrents (active while player is open) ────────────────────
@@ -489,8 +521,20 @@ export default function CourseLearningPage() {
 
   // ── Watch flow ───────────────────────────────────────────────────────────
 
+  // Fires when a position ping crosses the completion threshold server-side
+  // and the video flips to watched on its own. Refresh progress/locks in the
+  // background so the next content in the teacher's chain unlocks right away,
+  // without interrupting playback.
+  const handleAutoWatched = useCallback(
+    (_videoId: string) => {
+      toastSuccess("أحسنت! تم تسجيل إنجاز هذه المحاضرة تلقائياً 🎉");
+      void loadCourse({ silent: true });
+    },
+    [loadCourse, toastSuccess]
+  );
+
   // Position saving hook (resume playback + cumulative watched time).
-  const { reportProgress } = usePositionSaver(player?.videoId ?? null);
+  const { reportProgress } = usePositionSaver(player?.videoId ?? null, { onWatched: handleAutoWatched });
 
   // Drives both position-save and timed-question triggering off the player's
   // reported currentTime. A question fires only when the playhead PASSES its
@@ -556,7 +600,7 @@ export default function CourseLearningPage() {
 
   const openModal = (video: VideoItem) => {
     if (isLocked(video.id)) return;
-    if (hasNoWatches) { toastError("استنفذت جميع محاولات المشاهدة — تواصل مع المعلم"); return; }
+    if (videoRemainingWatches(video) <= 0) { toastError("استنفذت جميع محاولات المشاهدة — تواصل مع المعلم"); return; }
     setModalVideo({ id: video.id, title: video.title });
   };
 
@@ -657,7 +701,7 @@ export default function CourseLearningPage() {
       {!loading && !pageError && !accessBlock && course && (
         <div className="flex flex-col flex-1 overflow-hidden relative">
           {/* Teacher Preview Banner */}
-          {isTeacherPreview && (
+          {isTeacherPreview && !inIframe && (
             <div className="bg-sky-500/15 border-b border-sky-500/30 px-4 py-2 flex items-center justify-between gap-3 text-xs font-bold text-sky-500 shrink-0 z-20" dir="rtl">
               <div className="flex items-center gap-2">
                 <span>👁️ وضع معاينة المعلم:</span>
@@ -717,7 +761,7 @@ export default function CourseLearningPage() {
                 <div className="space-y-1.5">
                   <WatchSlots
                     used={activeVideo.usedWatches ?? 0}
-                    total={activeVideo.maxWatchesPerUser ?? 3}
+                    total={videoAllowance(activeVideo)}
                   />
                   <p className="text-[11px] text-[var(--ink-muted)]">
                     {videoRemainingWatches(activeVideo) > 0
@@ -857,20 +901,26 @@ export default function CourseLearningPage() {
 
                         {/* Homeworks */}
                         {(folder.homeworks || []).map((hw) => {
-                          const isPassed = hw.mySubmission?.status === "passed";
+                          const isPassed = hw.mySubmission?.status === "passed" && !hw.mySubmission?.allowRetake;
                           const isPending = hw.mySubmission?.status === "pending" || hw.mySubmission?.status === "review_requested";
+                          const isFailed = hw.mySubmission?.status === "failed" && !hw.mySubmission?.allowRetake;
+                          const canRetry = !!hw.mySubmission?.allowRetake;
                           return (
                             <button
                               key={hw.id}
                               onClick={() => router.push(`/homeworks/${hw.id}`)}
                               className="w-full flex items-center gap-2.5 px-4 py-2 text-right hover:bg-[var(--border)] transition-colors group"
                             >
-                              <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${isPassed ? "bg-emerald-500/20 text-emerald-400" : isPending ? "bg-amber-500/20 text-amber-400" : "bg-amber-500/10 text-amber-400"}`}>
+                              <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${isPassed ? "bg-emerald-500/20 text-emerald-400" : isFailed ? "bg-rose-500/20 text-rose-400" : isPending || canRetry ? "bg-amber-500/20 text-amber-400" : "bg-amber-500/10 text-amber-400"}`}>
                                 <span className="text-[11px]">📝</span>
                               </span>
                               <span className="text-xs text-[var(--ink-muted)] group-hover:text-[var(--ink)] flex-1 truncate">{hw.title}</span>
                               {isPassed ? (
                                 <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-bold">تم الحل ✅</span>
+                              ) : canRetry ? (
+                                <span className="text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded font-bold">إعادة المحاولة</span>
+                              ) : isFailed ? (
+                                <span className="text-[10px] text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded font-bold">مرفوض</span>
                               ) : isPending ? (
                                 <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded font-bold">قيد المراجعة</span>
                               ) : (
@@ -976,6 +1026,7 @@ export default function CourseLearningPage() {
                           studentName={user?.name || ""}
                           studentPhone={user?.phone || user?.name || ""}
                           videoId={player!.videoId}
+                          disabled={player!.provider === "axinom" || player!.provider === "youtube"}
                         >
                           <SecurePlayer
                             embedUrl={player!.embedUrl}
@@ -1019,6 +1070,7 @@ export default function CourseLearningPage() {
                         const dur = player!.durationMinutes * 60;
                         const watchPct = dur > 0 ? Math.min(100, Math.round((elapsedSeconds / dur) * 100)) : null;
                         const canComplete = dur === 0 || elapsedSeconds >= dur * (markThreshold / 100);
+                        const alreadyWatched = activeVideo ? isWatched(activeVideo) : false;
                         return (
                           <div className="px-5 py-3 border-t border-[var(--border)] flex items-center gap-4 shrink-0">
                             {/* Time progress bar */}
@@ -1053,23 +1105,30 @@ export default function CourseLearningPage() {
                               <span>اسأل المساعد الذكي</span>
                             </button>
 
-                            {/* Mark-complete button */}
-                            <button
-                              onClick={() => void markCompleteFor(player!.videoId)}
-                              disabled={!canComplete || completing}
-                              className={`shrink-0 flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                                canComplete
-                                  ? "bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_14px_rgba(52,211,153,0.30)]"
-                                  : "bg-[var(--border)] text-[var(--ink-muted)] cursor-not-allowed"
-                              } disabled:opacity-60`}
-                            >
-                              {completing ? (
-                                <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              ) : (
+                            {/* Mark-complete button (or done state once auto/manual completion landed) */}
+                            {alreadyWatched ? (
+                              <span className="shrink-0 flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                                 <IconCheck className="w-3 h-3" />
-                              )}
-                              {canComplete ? "أنهيت المحاضرة" : `${watchPct !== null ? watchPct : 0}% — انتظر`}
-                            </button>
+                                تم تسجيل الإنجاز
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => void markCompleteFor(player!.videoId)}
+                                disabled={!canComplete || completing}
+                                className={`shrink-0 flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                  canComplete
+                                    ? "bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_14px_rgba(52,211,153,0.30)]"
+                                    : "bg-[var(--border)] text-[var(--ink-muted)] cursor-not-allowed"
+                                } disabled:opacity-60`}
+                              >
+                                {completing ? (
+                                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                ) : (
+                                  <IconCheck className="w-3 h-3" />
+                                )}
+                                {canComplete ? "أنهيت المحاضرة" : `${watchPct !== null ? watchPct : 0}% — انتظر`}
+                              </button>
+                            )}
                           </div>
                         );
                       })()}
@@ -1110,7 +1169,11 @@ export default function CourseLearningPage() {
                                   </div>
                                   <div className="text-center">
                                     <p className="text-sm font-bold text-[var(--ink)]">هذه المحاضرة مقفلة</p>
-                                    <p className="text-xs text-[var(--ink-muted)] mt-1">أكمل المحاضرة السابقة أولاً لفتح هذه</p>
+                                    <p className="text-xs text-[var(--ink-muted)] mt-1">
+                                      {activeVideo.chainLockedBy
+                                        ? `أكمل «${activeVideo.chainLockedBy}» أولاً لفتح هذه`
+                                        : "أكمل المحاضرة السابقة أولاً لفتح هذه"}
+                                    </p>
                                   </div>
                                 </>
                               );
@@ -1185,10 +1248,10 @@ export default function CourseLearningPage() {
                             <div className="flex items-center gap-2">
                               <WatchSlots
                                 used={activeVideo.usedWatches ?? 0}
-                                total={activeVideo.maxWatchesPerUser ?? 3}
+                                total={videoAllowance(activeVideo)}
                               />
                               <span className="text-xs text-[var(--ink-muted)]" dir="rtl">
-                                {videoRemainingWatches(activeVideo)} من {activeVideo.maxWatchesPerUser ?? 3} متبقية
+                                {videoRemainingWatches(activeVideo)} من {videoAllowance(activeVideo)} متبقية
                               </span>
                             </div>
                           )}
@@ -1251,7 +1314,7 @@ export default function CourseLearningPage() {
                 const vid = flatVideos.find((v) => v.id === modalVideo.id);
                 if (!vid) return null;
                 const used = vid.usedWatches ?? 0;
-                const total = vid.maxWatchesPerUser ?? 3;
+                const total = videoAllowance(vid);
                 return (
                   <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 mb-5 space-y-2.5">
                     <div className="flex items-center justify-between">

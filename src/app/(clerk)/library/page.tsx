@@ -351,11 +351,17 @@ export default function LibraryPage() {
                                 <h4 className="font-bold text-lg" style={{ color: "var(--ink)" }}>{course.title}</h4>
                                 <p className="text-sm" style={{ color: "var(--ink-2)" }}>{course.subject}</p>
                               </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                              <Link href={`/courses/${course.id}/progress`} className="shrink-0 px-4 py-2 rounded-xl font-bold text-sm no-underline transition-colors"
+                                style={{ color: "var(--ink-2)", border: "1px solid var(--border)" }}>
+                                📊 تقدمي
+                              </Link>
                               <Link href={`/courses/${course.id}/learn`} className="shrink-0 px-5 py-2 rounded-xl font-bold text-sm flex items-center gap-2 no-underline transition-colors"
                                 style={{ background: "var(--brand-soft)", color: "var(--brand)", border: "1px solid var(--brand)" }}>
                                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                                 متابعة
                               </Link>
+                              </div>
                             </div>
                             <div className="flex items-center gap-4 text-sm font-medium mb-1">
                               <span className="w-12" style={{ color: "var(--ink)" }}>{progress}%</span>

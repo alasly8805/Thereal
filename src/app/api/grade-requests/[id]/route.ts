@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 // PATCH — teacher approves/rejects grade adjustment
@@ -9,8 +10,11 @@ export async function PATCH(
 ) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+    }
+    if (!hasAssistantPermission(session, "manageRequests")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الطلبات" }, { status: 403 });
     }
 
     const { id } = await params;
@@ -34,7 +38,7 @@ export async function PATCH(
 
     // Verify the teacher owns the course or teaches the plan lesson
     if (request_.courseId) {
-      if (!request_.course || request_.course.teacherId !== session.id) {
+      if (!request_.course || request_.course.teacherId !== actingTeacherId(session)) {
         return NextResponse.json(
           { error: "لا تملك صلاحية مراجعة طلبات هذا الكورس" },
           { status: 403 }
@@ -53,7 +57,7 @@ export async function PATCH(
         );
       }
       const source = await prisma.planLessonSource.findFirst({
-        where: { planLessonId: quiz.planLessonId, teacherId: session.id }
+        where: { planLessonId: quiz.planLessonId, teacherId: actingTeacherId(session) }
       });
       if (!source) {
         return NextResponse.json(
@@ -95,7 +99,7 @@ export async function PATCH(
       where: { id },
       data: {
         status: action === "approve" ? "approved" : "rejected",
-        teacherId: session.id,
+        teacherId: actingTeacherId(session),
         teacherNotes: teacherNotes ?? null,
         reviewedAt: new Date(),
       },

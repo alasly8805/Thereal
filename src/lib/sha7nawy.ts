@@ -85,6 +85,24 @@ export function sha7nawyRefNote(reference: string): string {
 }
 
 /**
+ * The gateway's own transaction id, tagged into the pending row's note.
+ *
+ * Verification lookups only work with this id — our SH-... reference is not
+ * something the gateway's info endpoint recognises — so it has to be captured
+ * when the payment is created and carried on the ledger row.
+ */
+export function sha7nawyGatewayIdNote(gatewayId: string | number): string {
+  return `gwid:${gatewayId}`;
+}
+
+/** Reads the gateway transaction id back out of a pending row's note. */
+export function readSha7nawyGatewayId(note: string | null | undefined): string | null {
+  if (!note) return null;
+  const m = note.match(/\|gwid:([A-Za-z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+/**
  * Calculates tax/fee on base payment amount based on the selected method config
  */
 export function calculateAmountWithTax(
@@ -302,12 +320,19 @@ export async function getSha7nawyPaymentInfo(transaction_id: string | number): P
   }
 
   try {
-    const res = await fetch(`${baseUrl}/api/payment/info/${transaction_id}`, {
+    // The gateway exposes this as a query parameter. The path form
+    // (/api/payment/info/{id}) is not a route on their side and answers with an
+    // HTML 404 from their nginx, which made every verification fail — and since
+    // verification is mandatory in the webhook, no Sha7nawy payment could ever
+    // be fulfilled. Pass the gateway's own numeric transaction id here (the `id`
+    // field of the create response), not our own SH-... reference.
+    const res = await fetch(`${baseUrl}/api/payment/info?transaction_id=${encodeURIComponent(String(transaction_id))}`, {
       method: "GET",
       headers: {
         "Accept": "application/json",
         "Authorization": secretKey,
       },
+      signal: AbortSignal.timeout(12000),
     });
 
     const data = await res.json().catch(() => ({}));

@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth";
 import { getConfigNumberClamped } from "@/lib/config";
 import { canBypassPayment } from "@/lib/demo";
 import { checkCourseEnrollment } from "@/lib/authorization";
+import { getCourseContentLocks } from "@/lib/content-access-engine";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -175,6 +176,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                     score: true,
                     totalQ: true,
                     completedAt: true,
+                    allowRetake: true,
                   },
                   take: 1,
                 },
@@ -186,6 +188,26 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
 
     if (!course) return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
+
+    // Extra views granted by a teacher or the support panel must appear in the
+    // student UI. Without this, the learn page only subtracts used watches from
+    // Video.maxWatchesPerUser and treats a support grant as if it never happened.
+    const videoIdsForGrants = course.folders.flatMap((folder) => folder.videos.map((v) => v.id));
+    const grants =
+      role === "student" && videoIdsForGrants.length
+        ? await prisma.videoViewRequest.groupBy({
+            by: ["videoId"],
+            where: {
+              studentId: session.id,
+              videoId: { in: videoIdsForGrants },
+              status: "approved",
+            },
+            _sum: { grantedViews: true },
+          })
+        : [];
+    const grantedByVideo = new Map(
+      grants.map((g) => [g.videoId, Math.max(0, g._sum.grantedViews ?? 0)] as const)
+    );
 
     const foldersToMap = (role === "student" && hasPlanAccess)
       ? course.folders
@@ -200,6 +222,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           .filter(Boolean) as any[]
       : course.folders;
 
+    // Teacher-panel content chain (مسار وفتح المحتوى): when the course has
+    // prerequisite edges, evaluate them against the student's progress so the
+    // client locks exactly what the chain locks — not whatever happens to be
+    // the previous row in display order. chainActive=false means no edges
+    // exist and the client keeps its legacy previous-video behaviour.
+    let chainActive = false;
+    let chainLocks = new Map<string, { id: string; title: string; type: string }>();
+    if (role === "student") {
+      try {
+        const allSourceIds: string[] = [];
+        for (const folder of course.folders) {
+          folder.videos.forEach((v) => allSourceIds.push(v.id));
+          folder.quizzes.forEach((q) => allSourceIds.push(q.id));
+          folder.homeworks.forEach((h) => allSourceIds.push(h.id));
+          folder.materials.forEach((m) => allSourceIds.push(m.id));
+        }
+        const result = await getCourseContentLocks(session.id, allSourceIds);
+        chainActive = result.active;
+        chainLocks = result.locks as typeof chainLocks;
+      } catch (chainErr) {
+        console.error("[courses/[id]] chain lock evaluation error:", chainErr);
+      }
+    }
+
     const safeCourse = {
       ...course,
       homeworkUrl: course.homeworkUrl,
@@ -211,7 +257,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           vdoCipherId: undefined,
           providerVideoId: undefined,
           usedWatches: video.watchSessions?.length || 0,
+          grantedViews: grantedByVideo.get(video.id) ?? 0,
           watchSessions: undefined,
+          chainLocked: chainActive ? chainLocks.has(video.id) : false,
+          chainLockedBy: chainActive ? (chainLocks.get(video.id)?.title ?? null) : null,
         })),
         quizzes: (folder.quizzes || []).map((quiz: any) => {
           const q = quiz as unknown as {
@@ -245,7 +294,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     // Mark-complete gate (% watched) is superadmin-configurable (was 80).
     const markCompleteThreshold = await getConfigNumberClamped("mark_complete_threshold", 1, 100);
-    return NextResponse.json({ course: safeCourse, markCompleteThreshold, isTeacherPreview });
+    return NextResponse.json({ course: safeCourse, markCompleteThreshold, isTeacherPreview, chainActive });
   } catch (error) {
     console.error("[courses/[id]] error:", error);
     return NextResponse.json({ error: "حدث خطأ داخلي" }, { status: 500 });

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * Locks a section behind the access password (BULK_DELETE_PASSWORD). Children —
@@ -15,6 +15,21 @@ export function AccessGate({ id, title, type, children }: { id: string; title: s
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/auth/me", { credentials: "include" })
+      .then((r) => r.json())
+      .then((data: { user?: { demoTour?: boolean } }) => {
+        if (cancelled || !data?.user?.demoTour) return;
+        sessionStorage.setItem(storeKey, "1");
+        setUnlocked(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [storeKey]);
 
   if (unlocked) return <>{children}</>;
 

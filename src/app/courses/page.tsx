@@ -30,6 +30,8 @@ interface Course {
   discountPercent?: number | null;
   discountExpiresAt?: string | null;
   hasAccess?: boolean;
+  inLibrary?: boolean;
+  isOwnerTeacher?: boolean;
 }
 
 const EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];

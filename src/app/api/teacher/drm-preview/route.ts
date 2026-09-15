@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { createAxinomDrmToken } from "@/lib/axinom";
 import { prisma } from "@/lib/prisma";
 import { decryptVdoCipherSecret, generateAccountOtp, selectBestAccountForUpload } from "@/lib/vdocipher-accounts";
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest) {
     if (targetTeacherId) {
       const isSuperadminOrAdmin = session?.role === "superadmin" || session?.role === "admin";
       const isOwnerTeacher =
-        session?.role === "teacher" && targetTeacherId === session?.id;
+        session?.role === "teacher" && targetTeacherId === actingTeacherId(session);
 
       if (!isSuperadminOrAdmin && !isOwnerTeacher) {
         return NextResponse.json(

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { triggerPlanSyncForCourse } from "@/lib/plan-lesson-matcher";
 
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 403 });
     }
 
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
       where:
         session.role === "superadmin"
           ? { id: videoId }
-          : { id: videoId, folder: { course: { teacherId: session.id } } },
+          : { id: videoId, folder: { course: { teacherId: actingTeacherId(session) } } },
       include: { folder: { include: { course: { select: { id: true } } } } },
     });
 

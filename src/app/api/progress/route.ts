@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getStudentSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkVideoAccess } from "@/lib/authorization";
+import { blockSupportView } from "@/lib/support-auth";
 
 export async function GET() {
 
@@ -61,6 +62,10 @@ export async function POST(req: NextRequest) {
 
       try {
       const session = await getStudentSession();
+      // Defence in depth behind the proxy guard: never let a support agent act as
+      // the student on grades, progress or money.
+      const supportBlocked = blockSupportView(session);
+      if (supportBlocked) return supportBlocked;
       if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
 
       const { videoId, watched = true } = await req.json();
@@ -69,11 +74,21 @@ export async function POST(req: NextRequest) {
       const hasAccess = await checkVideoAccess(session.id, session.role, videoId);
       if (!hasAccess) return NextResponse.json({ error: "لا يوجد صلاحية للوصول" }, { status: 403 });
 
+      const completedAt = watched ? new Date() : null;
       const progress = await prisma.progress.upsert({
         where: { studentId_videoId: { studentId: session.id, videoId } },
-        update: { watched, watchedAt: watched ? new Date() : null },
-        create: { studentId: session.id, videoId, watched, watchedAt: watched ? new Date() : null },
+        update: { watched, watchedAt: completedAt },
+        create: { studentId: session.id, videoId, watched, watchedAt: completedAt },
       });
+
+      if (watched) {
+        try {
+          const { syncVideoWatchToRelatedCourses } = await import("@/lib/video-sync");
+          await syncVideoWatchToRelatedCourses(session.id, videoId, { completedAt: completedAt || new Date() });
+        } catch (syncErr) {
+          console.error("[progress POST] video sync error:", syncErr);
+        }
+      }
 
       return NextResponse.json({ progress });
     } catch (error) {

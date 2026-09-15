@@ -204,6 +204,7 @@ export default async function TeacherHomeworkHubPage({ params }: Props) {
               submittedOutput:sub.submittedOutput,
               fileUrl:        sub.fileUrl,
               fileName:       sub.fileName,
+              allowRetake:    sub.allowRetake,
               review:         sub.review ?? null,
             }
           : null,

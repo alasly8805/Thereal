@@ -1,15 +1,20 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import { summarizeAnswers } from "@/lib/quiz-grading";
 
 // GET — teacher gets quiz results for their quizzes
 export async function GET(req: NextRequest) {
 
       try {
       const session = await getSession();
-      if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+      if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
         return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+      }
+      if (isTeacherLike(session.role) && !hasAssistantPermission(session, "viewQuizResults")) {
+        return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية نتائج الاختبارات" }, { status: 403 });
       }
 
       const quizId = req.nextUrl.searchParams.get("quizId");
@@ -17,7 +22,7 @@ export async function GET(req: NextRequest) {
 
       // Get teacher's courses
       const teacherCourses = await prisma.course.findMany({
-        where: { teacherId: session.id },
+        where: { teacherId: actingTeacherId(session) },
         select: { id: true },
       });
       const courseIds = teacherCourses.map((c) => c.id);
@@ -28,13 +33,17 @@ export async function GET(req: NextRequest) {
 
       // Build filter (excluding testers for teacher queries)
       const where: Record<string, unknown> = {
+        // Only submitted attempts. An opened-but-unsubmitted quiz has a
+        // placeholder row (score 0, completedAt NULL) that must not be listed
+        // as a 0% result.
+        completedAt: { not: null },
         quiz: {
           folder: {
             courseId: courseId ? { equals: courseId, in: courseIds } : { in: courseIds },
           },
         },
       };
-      if (session.role === "teacher") {
+      if (isTeacherLike(session.role)) {
         where.student = { accountMode: { not: "TESTER" } };
       }
       if (quizId) where.quizId = quizId;
@@ -44,6 +53,7 @@ export async function GET(req: NextRequest) {
         orderBy: { completedAt: "desc" },
         include: {
           student: { select: { id: true, name: true, email: true, phone: true } },
+          answers: { select: { questionType: true, isCorrect: true, status: true } },
           quiz: {
             select: {
               id: true,
@@ -61,23 +71,34 @@ export async function GET(req: NextRequest) {
       });
 
       return NextResponse.json({
-        results: results.map((r) => ({
-          id: r.id,
-          studentId: r.studentId,
-          student: r.student,
-          quizId: r.quizId,
-          quiz: {
-            id: r.quiz.id,
-            title: r.quiz.title,
-            folderName: r.quiz.folder?.name ?? "اختبار خطة",
-            courseId: r.quiz.folder?.courseId ?? "",
-            courseTitle: r.quiz.folder?.course?.title ?? "خطة دراسية",
-          },
-          score: r.score,
-          totalQ: r.totalQ,
-          allowRetake: r.allowRetake,
-          completedAt: r.completedAt,
-        })),
+        results: results.map((r) => {
+          const summary = summarizeAnswers(r.answers, r.totalQ);
+          return {
+            id: r.id,
+            studentId: r.studentId,
+            student: r.student,
+            quizId: r.quizId,
+            quiz: {
+              id: r.quiz.id,
+              title: r.quiz.title,
+              folderName: r.quiz.folder?.name ?? "اختبار خطة",
+              courseId: r.quiz.folder?.courseId ?? "",
+              courseTitle: r.quiz.folder?.course?.title ?? "خطة دراسية",
+            },
+            score: r.score,
+            totalQ: r.totalQ,
+            allowRetake: r.allowRetake,
+            completedAt: r.completedAt,
+            // Grading state so the UI never labels a pending essay exam as 0% / راسب.
+            pendingCount: summary.pendingCount,
+            essayCount: summary.essayCount,
+            mcqCount: summary.mcqCount,
+            mcqCorrect: summary.mcqCorrect,
+            essayApproved: summary.essayApproved,
+            gradingStatus: summary.gradingStatus,
+            passed: summary.passed,
+          };
+        }),
       });
     } catch (error) {
         console.error("[admin/quiz-results] error:", error);
@@ -106,8 +127,11 @@ export async function PATCH(req: NextRequest) {
         });
       } catch (e) {}
     }
-      if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+      if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
         return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+      }
+      if (isTeacherLike(session.role) && !hasAssistantPermission(session, "viewQuizResults")) {
+        return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية نتائج الاختبارات" }, { status: 403 });
       }
 
       const { resultId, allowRetake } = await req.json();
@@ -130,11 +154,11 @@ export async function PATCH(req: NextRequest) {
         },
       });
 
-      if (!result || (session.role === "teacher" && result.student.accountMode === "TESTER")) {
+      if (!result || (isTeacherLike(session.role) && result.student.accountMode === "TESTER")) {
         return NextResponse.json({ error: "النتيجة غير موجودة" }, { status: 404 });
       }
 
-      if (result.quiz.folder && session.role === "teacher" && result.quiz.folder.course.teacherId !== session.id) {
+      if (result.quiz.folder && isTeacherLike(session.role) && result.quiz.folder.course.teacherId !== actingTeacherId(session)) {
         return NextResponse.json({ error: "ليست لديك صلاحية" }, { status: 403 });
       }
 

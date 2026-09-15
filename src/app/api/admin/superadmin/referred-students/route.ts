@@ -9,9 +9,15 @@ export async function GET() {
       return NextResponse.json({ error: "غير مصرح — للمشرفين فقط" }, { status: 403 });
     }
 
+    const demoTour = session.demoTour === true;
+
     // Fetch all teachers who have promoProgramEnabled === true
     const teachers = await prisma.user.findMany({
-      where: { role: "teacher", promoProgramEnabled: true },
+      where: {
+        role: "teacher",
+        promoProgramEnabled: true,
+        ...(demoTour ? { isDemo: true } : {}),
+      },
       select: {
         id: true,
         name: true,
@@ -22,11 +28,12 @@ export async function GET() {
         createdAt: true,
         _count: {
           select: {
-            referredStudents: true,
-            teacherAttributions: true,
+            referredStudents: demoTour ? { where: { isDemo: true } } : true,
+            teacherAttributions: demoTour ? { where: { student: { isDemo: true } } } : true,
           },
         },
         teacherAttributions: {
+          ...(demoTour ? { where: { student: { isDemo: true } } } : {}),
           select: {
             amount: true,
           },

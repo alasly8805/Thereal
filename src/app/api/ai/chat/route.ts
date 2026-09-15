@@ -172,6 +172,158 @@ export async function POST(req: NextRequest) {
           source: "superadmin_model_switch",
         });
       }
+
+      // 3. Superadmin Course Management & Fast Overrides (كورس كذا خليه كذا)
+      const isCourseCommand =
+        (cleanMsg.includes("كورس") || cleanMsg.includes("الكورس") || cleanMsg.includes("حصة") || cleanMsg.includes("حصه") || cleanMsg.includes("شهر")) &&
+        (cleanMsg.includes("خليه") ||
+          cleanMsg.includes("خلي") ||
+          cleanMsg.includes("خلّي") ||
+          cleanMsg.includes("غير") ||
+          cleanMsg.includes("غيّر") ||
+          cleanMsg.includes("حول") ||
+          cleanMsg.includes("حوّل") ||
+          cleanMsg.includes("سعره") ||
+          cleanMsg.includes("سعر") ||
+          cleanMsg.includes("مجاني") ||
+          cleanMsg.includes("مدفوع") ||
+          cleanMsg.includes("تأسيسي") ||
+          cleanMsg.includes("تاسيسي"));
+
+      if (isCourseCommand) {
+        const allCourses = await prisma.course.findMany({
+          select: { id: true, title: true, price: true, isPaid: true, teacher: { select: { name: true } } },
+        });
+
+        // Find best matching course
+        let bestCourse: (typeof allCourses)[0] | null = null;
+        let highestScore = 0;
+
+        const normalizedMsg = cleanMsg
+          .replace(/[^\u0600-\u06FFa-zA-Z0-9\s]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        for (const c of allCourses) {
+          const courseTitleNorm = c.title
+            .toLowerCase()
+            .replace(/[^\u0600-\u06FFa-zA-Z0-9\s]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          // Direct containment of full course title
+          if (normalizedMsg.includes(courseTitleNorm)) {
+            bestCourse = c;
+            highestScore = 1000 + courseTitleNorm.length;
+            break;
+          }
+
+          // Word-by-word token matching
+          const tokens = courseTitleNorm.split(" ").filter((t) => t.length > 1);
+          let matchCount = 0;
+          for (const t of tokens) {
+            if (normalizedMsg.includes(t)) {
+              matchCount++;
+            }
+          }
+
+          if (matchCount > 0 && matchCount >= tokens.length * 0.5) {
+            const score = matchCount * 10 - tokens.length;
+            if (score > highestScore) {
+              highestScore = score;
+              bestCourse = c;
+            }
+          }
+        }
+
+        if (bestCourse) {
+          const updates: Record<string, unknown> = {};
+          const changesText: string[] = [];
+
+          // 1. Paid / Free
+          if (cleanMsg.includes("مجاني") || cleanMsg.includes("ببلاش") || cleanMsg.includes("free")) {
+            updates.isPaid = false;
+            updates.price = 0;
+            changesText.push("تحويل الكورس إلى **مجاني (0 ج.م)**");
+          } else if (cleanMsg.includes("مدفوع") || cleanMsg.includes("paid")) {
+            updates.isPaid = true;
+            changesText.push("تحويل الكورس إلى **مدفوع**");
+          }
+
+          // 2. Price
+          const priceMatch = cleanMsg.match(/(?:سعر(?:ه)?|بـ|خليه|خلّي|خلي)\s*(\d+)/) || cleanMsg.match(/(\d+)\s*(?:جنيه|ج\.م|ج|egp|le)/);
+          if (priceMatch && priceMatch[1]) {
+            const newPrice = parseFloat(priceMatch[1]);
+            if (!isNaN(newPrice)) {
+              updates.price = newPrice;
+              if (newPrice > 0) updates.isPaid = true;
+              changesText.push(`تحديد السعر: **${newPrice} ج.م**`);
+            }
+          }
+
+          // 3. Category classification override
+          let targetCategory: string | null = null;
+          if (cleanMsg.includes("تأسيس") || cleanMsg.includes("تاسيس")) {
+            targetCategory = "foundation";
+            changesText.push("تصنيف الكورس: **كورس تأسيسي**");
+          } else if (cleanMsg.includes("حصة") || cleanMsg.includes("حصه") || cleanMsg.includes("ورشة") || cleanMsg.includes("ورشه")) {
+            targetCategory = "lesson";
+            changesText.push("تصنيف الكورس: **حصة / ورشة أولى**");
+          } else if (cleanMsg.includes("شهر") || cleanMsg.includes("الشهور")) {
+            targetCategory = "month";
+            changesText.push("تصنيف الكورس: **كورس شهري**");
+          } else if (cleanMsg.includes("تلقائي") || cleanMsg.includes("افتراضي") || cleanMsg.includes("عادي")) {
+            targetCategory = "auto";
+            changesText.push("إعادة التصنيف إلى: **الوضع التلقائي الافتراضي**");
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await prisma.course.update({
+              where: { id: bestCourse.id },
+              data: updates,
+            });
+          }
+
+          if (targetCategory) {
+            if (targetCategory === "auto") {
+              await prisma.appSetting.delete({
+                where: { key: `course_cat_${bestCourse.id}` },
+              }).catch(() => {});
+            } else {
+              await prisma.appSetting.upsert({
+                where: { key: `course_cat_${bestCourse.id}` },
+                update: { value: targetCategory },
+                create: { key: `course_cat_${bestCourse.id}`, value: targetCategory },
+              });
+            }
+          }
+
+          if (changesText.length > 0) {
+            const { invalidateStudentContextCache } = await import("@/lib/ai-context");
+            invalidateStudentContextCache(session.id);
+
+            const reply =
+              `👑 **تم تنفيذ أمر المشرف العام بنجاح فوري! (Superadmin Course Updated)**\n\n` +
+              `📚 **الكورس:** "${bestCourse.title}"\n` +
+              `👨‍🏫 **المدرس:** ${bestCourse.teacher.name}\n\n` +
+              `⚙️ **التعديلات المنفذة:**\n` +
+              changesText.map((c) => `• ${c}`).join("\n") +
+              `\n\n✨ تم تطبيق التغييرات فوراً على المنصة وصفحة المدرس وفلاتر الترتيب!`;
+
+            return NextResponse.json({
+              message: reply,
+              actions: [
+                {
+                  type: "update_course",
+                  status: "updated",
+                  id: bestCourse.id,
+                },
+              ],
+              source: "superadmin_course_control",
+            });
+          }
+        }
+      }
     }
 
     // ── STRICT ADMIN-ONLY CHEAT CODES & DEVELOPER TOOLS ──────────────────────
@@ -363,6 +515,7 @@ export async function POST(req: NextRequest) {
             age: null,
             educationalStage: null,
             phone: null,
+            role: session.role,
           },
           courses: [],
           overallStats: { totalCourses: 0, averageScore: 0, totalQuizzesTaken: 0, totalVideosWatched: 0 },
@@ -581,6 +734,71 @@ async function executeAction(
 ): Promise<{ type: string; status: string; id?: string; error?: string; path?: string; reason?: string; payload?: unknown }> {
   try {
     switch (action.type) {
+      case "update_course": {
+        const p = action.payload as {
+          courseId?: string;
+          category?: string;
+          isPaid?: boolean;
+          price?: number;
+          title?: string;
+        };
+        if (!p?.courseId) {
+          return { type: action.type, status: "failed", error: "معرف الكورس مطلوب" };
+        }
+
+        const course = await prisma.course.findUnique({
+          where: { id: p.courseId },
+          select: { id: true, title: true },
+        });
+        if (!course) {
+          return { type: action.type, status: "failed", error: "الكورس غير موجود" };
+        }
+
+        const dataToUpdate: Record<string, unknown> = {};
+        if (typeof p.isPaid === "boolean") {
+          dataToUpdate.isPaid = p.isPaid;
+          if (!p.isPaid) {
+            dataToUpdate.price = 0;
+          }
+        }
+        if (typeof p.price === "number") {
+          dataToUpdate.price = p.price;
+          if (p.price > 0) {
+            dataToUpdate.isPaid = true;
+          }
+        }
+        if (typeof p.title === "string" && p.title.trim()) {
+          dataToUpdate.title = p.title.trim();
+        }
+
+        if (Object.keys(dataToUpdate).length > 0) {
+          await prisma.course.update({
+            where: { id: p.courseId },
+            data: dataToUpdate,
+          });
+        }
+
+        if (p.category) {
+          const cat = p.category.toLowerCase().trim();
+          if (cat === "auto" || cat === "none" || cat === "reset") {
+            await prisma.appSetting.delete({
+              where: { key: `course_cat_${p.courseId}` },
+            }).catch(() => {});
+          } else {
+            await prisma.appSetting.upsert({
+              where: { key: `course_cat_${p.courseId}` },
+              update: { value: cat },
+              create: { key: `course_cat_${p.courseId}`, value: cat },
+            });
+          }
+        }
+
+        const { invalidateStudentContextCache } = await import("@/lib/ai-context");
+        invalidateStudentContextCache(studentId);
+
+        return { type: action.type, status: "updated", id: p.courseId };
+      }
+
       case "create_grade_request": {
         const p = action.payload as {
           quizId: string;

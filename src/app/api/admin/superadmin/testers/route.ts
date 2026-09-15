@@ -15,7 +15,7 @@ export async function GET() {
     }
 
     const testers = await prisma.user.findMany({
-      where: { accountMode: "TESTER", isDeleted: false },
+      where: { accountMode: "TESTER", isDeleted: false, ...(session.demoTour ? { isDemo: true } : {}) },
       select: {
         id: true,
         name: true,

@@ -32,10 +32,20 @@ export const CONFIG_DEFINITIONS: ConfigDef[] = [
   // ── Video & Content ──
   { key: "default_max_watches", type: "number", category: "video", label: "عدد المشاهدات الافتراضي للفيديو الجديد", default: "3" },
   { key: "watch_session_hours", type: "number", category: "video", label: "مدة جلسة المشاهدة (ساعات)", default: "4" },
-  { key: "mark_complete_threshold", type: "number", category: "video", label: "نسبة إنهاء المحاضرة (%)", default: "80" },
+  { key: "mark_complete_threshold", type: "number", category: "video", label: "نسبة إنهاء المحاضرة (%)", default: "60" },
   { key: "max_videos_per_folder", type: "number", category: "video", label: "الحد الأقصى للفيديوهات في المجلد", default: "100" },
   { key: "vdocipher_security_password", type: "string", category: "video", label: "كلمة مرور حماية VdoCipher للمعلمين (Security Passkey)", default: "" },
   { key: "sequential_access_enforced", type: "boolean", category: "video", label: "تفعيل إجبار مشاهدة الدروس بالترتيب (يطبّق إعداد الكورس)", default: "false" },
+
+  // ── Assessment timing ──
+  // Both default to ON: the platform's decision is that an assessment stays
+  // open indefinitely. A student who loses connection mid-quiz, or comes back
+  // to a homework a week later, is not punished for it. Teachers still set
+  // timeLimitMinutes/dueAt on their content; these switches decide whether the
+  // server actually enforces them, so turning either off restores the old
+  // behaviour without re-editing every quiz.
+  { key: "quiz_time_limit_disabled", type: "boolean", category: "assessment", label: "الاختبار مفتوح دائماً (إلغاء وقت الاختبار)", default: "true" },
+  { key: "homework_deadline_disabled", type: "boolean", category: "assessment", label: "الواجب مفتوح دائماً (إلغاء موعد التسليم)", default: "true" },
 
   // ── Access Codes ──
   { key: "code_expiry_days", type: "number", category: "codes", label: "مدة صلاحية كود الوصول (أيام)", default: "365" },
@@ -45,6 +55,12 @@ export const CONFIG_DEFINITIONS: ConfigDef[] = [
   // ── AI Study Plans ──
   { key: "ai_max_tokens", type: "number", category: "ai", label: "الحد الأقصى للـ tokens لكل طلب", default: "1000" },
   { key: "ai_plan_days_ahead", type: "number", category: "ai", label: "عدد الأيام المُولّدة مسبقاً للخطة", default: "1" },
+  // AI essay grading. The platform switch only ALLOWS teachers to opt in — every
+  // course still starts at aiEssayGradingMode = "off". Turning it off stops all
+  // new essay grading/explanations platform-wide immediately (cost kill switch).
+  { key: "ai_essay_grading_enabled", type: "boolean", category: "ai", label: "السماح بتصحيح الأسئلة المقالية بالذكاء الاصطناعي (مفتاح إيقاف عام)", default: "true" },
+  { key: "ai_essay_max_chars", type: "number", category: "ai", label: "أقصى طول لإجابة مقالية تُرسل للذكاء الاصطناعي (حرف)", default: "6000" },
+  { key: "ai_essay_explain_daily_limit", type: "number", category: "ai", label: "أقصى عدد شروحات «لماذا حصلت على هذه الدرجة» لكل طالب يومياً", default: "20" },
 
   // ── Rate Limiting ──
   { key: "rate_max_requests_per_minute", type: "number", category: "rate", label: "أقصى عدد طلبات في الدقيقة لكل مستخدم", default: "120" },
@@ -59,6 +75,7 @@ export const CONFIG_DEFINITIONS: ConfigDef[] = [
 export const CATEGORY_LABELS: Record<string, string> = {
   auth: "المصادقة والأمان",
   video: "الفيديو والمحتوى",
+  assessment: "توقيت الاختبارات والواجبات",
   codes: "أكواد الوصول",
   ai: "خطط الذكاء الاصطناعي",
   rate: "حدود المعدّل",
@@ -77,8 +94,13 @@ const ENFORCED_KEYS = new Set([
   "default_max_watches",
   "watch_session_hours",
   "mark_complete_threshold",
+  "quiz_time_limit_disabled",
+  "homework_deadline_disabled",
   "max_videos_per_folder",
   "ai_max_tokens",
+  "ai_essay_grading_enabled",
+  "ai_essay_max_chars",
+  "ai_essay_explain_daily_limit",
   "trash_purge_days",
 ]);
 

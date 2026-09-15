@@ -2,6 +2,7 @@ import { logAdminAction, verifyDrmPassword } from "@/lib/admin-auth";
 import { isDrmAuthorized, isDrmRequestAuthorized } from "@/lib/drm-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { cleanProviderVideoId, validateProviderId, type VideoProvider } from "@/lib/video-provider";
 import { parsePublishAt } from "@/lib/publish";
@@ -27,8 +28,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
       } catch (e) {}
     }
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (!hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
     const { id: folderId } = await params;
@@ -40,6 +44,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       maxWatchesPerUser?: number;
       publishAt?: string | null;
       drmPassword?: string;
+      isFree?: boolean;
       // Legacy field — accepted for backwards compat, treated as vdocipher
       vdoCipherId?: string;
     };
@@ -94,7 +99,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Verify folder exists and belongs to teacher's course
     const folder = await prisma.folder.findFirst({
-      where: { id: folderId, course: { teacherId: session.id } },
+      where: { id: folderId, course: { teacherId: actingTeacherId(session) } },
       include: { course: { select: { id: true } } }
     });
     if (!folder) {
@@ -129,6 +134,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         durationMinutes,
         maxWatchesPerUser,
         publishAt,
+        isFree: body.isFree === true,
         folderId,
         order: count,
       },
@@ -162,6 +168,71 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 }
 
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const session = await getSession();
+
+    if (session && session.role === "superadmin") {
+      try {
+        await logAdminAction({
+          adminId: session.id,
+          adminName: session.name,
+          action: "SUPERADMIN_ACTION",
+          targetType: "API_ROUTE",
+          targetId: req.nextUrl ? req.nextUrl.pathname : req.url,
+          targetName: req.method,
+        });
+      } catch {
+        /* ignore audit failures */
+      }
+    }
+
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
+      return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (isTeacherLike(session.role) && !hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
+    }
+
+    const { id: folderId } = await params;
+    const body = (await req.json()) as { videoId?: string; isFree?: boolean };
+    const { videoId, isFree } = body;
+
+    if (!videoId) {
+      return NextResponse.json({ error: "معرف الفيديو مطلوب" }, { status: 400 });
+    }
+    if (typeof isFree !== "boolean") {
+      return NextResponse.json({ error: "لا توجد بيانات للتحديث" }, { status: 400 });
+    }
+
+    const isSuperAdmin = session.role === "superadmin";
+    const folder = await prisma.folder.findFirst({
+      where: isSuperAdmin
+        ? { id: folderId }
+        : { id: folderId, course: { teacherId: actingTeacherId(session) } },
+    });
+    if (!folder) {
+      return NextResponse.json({ error: "المحاضرة غير موجودة" }, { status: 404 });
+    }
+
+    const video = await prisma.video.findFirst({ where: { id: videoId, folderId } });
+    if (!video) {
+      return NextResponse.json({ error: "الفيديو غير موجود" }, { status: 404 });
+    }
+
+    const updated = await prisma.video.update({
+      where: { id: videoId },
+      data: { isFree },
+      select: { id: true, title: true, isFree: true },
+    });
+
+    return NextResponse.json({ success: true, video: updated });
+  } catch (error) {
+    console.error("Failed to update video trial status:", error);
+    return NextResponse.json({ error: "تعذر تعديل حالة الفيديو" }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getSession();
@@ -178,8 +249,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         });
       } catch (e) {}
     }
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (!hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
     const { id: folderId } = await params;
@@ -191,7 +265,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
     // Verify folder exists and belongs to teacher
     const folder = await prisma.folder.findFirst({
-      where: { id: folderId, course: { teacherId: session.id } },
+      where: { id: folderId, course: { teacherId: actingTeacherId(session) } },
       include: { course: { select: { id: true } } }
     });
     if (!folder) {

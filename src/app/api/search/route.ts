@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { isCenterRequest, deliveryModeFilter } from "@/lib/center-mode";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
@@ -26,6 +27,8 @@ export async function GET(req: NextRequest) {
           { description: { contains: q } },
         ],
         teacher: teacherFilter,
+        // Keep centre-only courses out of online search results (and vice versa).
+        deliveryMode: deliveryModeFilter(isCenterRequest(req)),
         ...(isStudent ? {
           accessCodes: { some: { studentId: session.id, isActive: true } },
         } : {}),

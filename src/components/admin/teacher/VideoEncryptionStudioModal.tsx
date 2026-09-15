@@ -120,6 +120,109 @@ export function VideoEncryptionStudioModal({
 
   const [submitting, setSubmitting] = useState(false);
 
+  // ── Axinom background packaging job (polled) ──
+  type DrmJob = {
+    assetId: string;
+    status: "queued" | "downloading" | "transcoding" | "packaging" | "finalizing" | "ready" | "failed";
+    progress: number;
+    downloadedBytes?: number;
+    totalBytes?: number;
+    error?: string | null;
+  };
+  const [drmJob, setDrmJob] = useState<DrmJob | null>(null);
+  const drmPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (drmPollRef.current) clearInterval(drmPollRef.current);
+    };
+  }, []);
+
+  /**
+   * Starts server-side CENC packaging and returns the asset id right away.
+   * Progress is polled every few seconds (short requests → no Cloudflare 100s
+   * timeout, and the site keeps serving while Shaka Packager runs).
+   * Resolves `done` with the final job state (ready / failed).
+   */
+  const startAxinomPackaging = async (
+    videoId: string,
+    opts?: { dbVideoId?: string }
+  ): Promise<{ assetId: string; status: DrmJob["status"]; done: Promise<DrmJob> }> => {
+    const packRes = await fetch("/api/teacher/drm-package", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(drmPasscode ? { "x-drm-password": drmPasscode } : {}),
+      },
+      body: JSON.stringify({ videoId, drmPassword: drmPasscode, dbVideoId: opts?.dbVideoId }),
+    });
+    const packData = await packRes.json().catch(() => ({}));
+    if (!packRes.ok || !packData.success || !packData.assetId) {
+      throw new Error(packData.error || "تعذر بدء التشفير العتادي Shaka Packager");
+    }
+
+    const initial: DrmJob = { assetId: packData.assetId, status: packData.status || "queued", progress: 0 };
+    setDrmJob(initial);
+
+    if (initial.status === "ready") {
+      return { assetId: initial.assetId, status: "ready", done: Promise.resolve({ ...initial, progress: 100 }) };
+    }
+
+    if (drmPollRef.current) clearInterval(drmPollRef.current);
+
+    const done = new Promise<DrmJob>((resolve) => {
+      const poll = async () => {
+        try {
+          const r = await fetch(`/api/teacher/drm-package?assetId=${encodeURIComponent(initial.assetId)}`, {
+            credentials: "include",
+          });
+          const s = (await r.json().catch(() => ({}))) as Partial<DrmJob> & { error?: string };
+          if (!r.ok) {
+            const failed: DrmJob = { ...initial, status: "failed", error: s.error || "تعذر متابعة حالة التشفير" };
+            setDrmJob(failed);
+            if (drmPollRef.current) clearInterval(drmPollRef.current);
+            resolve(failed);
+            return;
+          }
+          const next: DrmJob = {
+            assetId: initial.assetId,
+            status: (s.status as DrmJob["status"]) || "queued",
+            progress: s.progress ?? 0,
+            downloadedBytes: s.downloadedBytes,
+            totalBytes: s.totalBytes,
+            error: s.error ?? null,
+          };
+          setDrmJob(next);
+          if (next.status === "ready" || next.status === "failed") {
+            if (drmPollRef.current) clearInterval(drmPollRef.current);
+            if (next.status === "ready") toastSuccess("اكتمل تشفير الفيديو بنظام Axinom Multi-DRM وتم تفعيل الحماية ✅");
+            else toastError(next.error || "فشل تشفير الفيديو بنظام Axinom DRM");
+            resolve(next);
+          }
+        } catch {
+          // transient network error — keep polling
+        }
+      };
+      drmPollRef.current = setInterval(poll, 4000);
+      void poll();
+    });
+
+    return { assetId: initial.assetId, status: initial.status, done };
+  };
+
+  const drmStageLabel = (job: DrmJob) => {
+    switch (job.status) {
+      case "queued": return "في قائمة الانتظار…";
+      case "downloading": return "جاري تنزيل الفيديو من Google Drive";
+      case "transcoding": return "جاري إنشاء نسخة SD للأجهزة غير المدعومة عتادياً (الحماية المتدرجة)";
+      case "packaging": return "جاري التشفير العتادي CENC — HD بمفتاح عتادي فقط + SD بمفتاح برمجي";
+      case "finalizing": return "جاري إنهاء التشفير وحفظ المفاتيح";
+      case "ready": return "تم التشفير — الحماية مفعّلة";
+      case "failed": return "فشل التشفير";
+    }
+  };
+
   // Verify User Session: if superadmin/owner or authorized teacher, unlock DRM automatically
   useEffect(() => {
     fetch("/api/auth/me", { credentials: "include" })
@@ -278,20 +381,11 @@ export function VideoEncryptionStudioModal({
 
             if (provider === "axinom") {
               try {
-                const packRes = await fetch("/api/teacher/drm-package", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    ...(drmPasscode ? { "x-drm-password": drmPasscode } : {}),
-                  },
-                  body: JSON.stringify({ videoId: finalVideoId, drmPassword: drmPasscode }),
-                });
-                const packData = await packRes.json();
-                if (packRes.ok && packData.success && packData.assetId) {
-                  finalVideoId = packData.assetId;
-                }
+                const job = await startAxinomPackaging(finalVideoId);
+                finalVideoId = job.assetId;
               } catch (e) {
                 console.warn("Axinom DRM packaging error:", e);
+                toastError(e instanceof Error ? e.message : "تعذر بدء التشفير العتادي Shaka DRM");
               }
             }
 
@@ -364,23 +458,13 @@ export function VideoEncryptionStudioModal({
         if (provider === "axinom") {
           setGdriveStage("encrypting");
           try {
-            const packRes = await fetch("/api/teacher/drm-package", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(drmPasscode ? { "x-drm-password": drmPasscode } : {}),
-              },
-              body: JSON.stringify({ videoId: finalVideoId, drmPassword: drmPasscode }),
-            });
-            const packData = await packRes.json();
-            if (packRes.ok && packData.success && packData.assetId) {
-              finalVideoId = packData.assetId;
-            } else {
-              toastError(packData.error || "تعذر إتمام التشفير العتادي Shaka Packager");
-            }
+            // Returns immediately with the asset id; packaging continues on the
+            // server and is polled. The lesson can be saved right away.
+            const job = await startAxinomPackaging(finalVideoId);
+            finalVideoId = job.assetId;
           } catch (e) {
             console.warn("Axinom DRM packaging error:", e);
-            toastError("حدث خطأ أثناء التشفير العتادي Shaka DRM");
+            toastError(e instanceof Error ? e.message : "حدث خطأ أثناء بدء التشفير العتادي Shaka DRM");
           }
         }
 
@@ -426,28 +510,23 @@ export function VideoEncryptionStudioModal({
 
     let effectiveVideoId = providerVideoId.trim();
 
-    // If teacher selected Axinom DRM but the ID is still an unencrypted Google Drive reference, package it before saving
-    if (provider === "axinom" && (effectiveVideoId.startsWith("gdrive_") || effectiveVideoId.includes("drive.google.com"))) {
+    // If teacher selected Axinom DRM but the ID is still an unencrypted Google Drive / local
+    // reference, start packaging now. The lesson is saved immediately with the new asset id;
+    // students get the Native engine until the job finishes, then DRM kicks in automatically.
+    let packagingStarted = false;
+    if (
+      provider === "axinom" &&
+      (effectiveVideoId.startsWith("gdrive_") ||
+        effectiveVideoId.startsWith("local_") ||
+        effectiveVideoId.includes("drive.google.com"))
+    ) {
       try {
-        const packRes = await fetch("/api/teacher/drm-package", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(drmPasscode ? { "x-drm-password": drmPasscode } : {}),
-          },
-          body: JSON.stringify({ videoId: effectiveVideoId, drmPassword: drmPasscode }),
-        });
-        const packData = await packRes.json();
-        if (packRes.ok && packData.success && packData.assetId) {
-          effectiveVideoId = packData.assetId;
-          setProviderVideoId(effectiveVideoId);
-        } else {
-          toastError(packData.error || "تعذر تشفير الفيديو بنظام Axinom Multi-DRM عتادياً");
-          setSubmitting(false);
-          return;
-        }
+        const job = await startAxinomPackaging(effectiveVideoId);
+        effectiveVideoId = job.assetId;
+        setProviderVideoId(effectiveVideoId);
+        packagingStarted = job.status !== "ready";
       } catch (packErr) {
-        toastError("حدث خطأ أثناء تشفير الفيديو بنظام Axinom Multi-DRM");
+        toastError(packErr instanceof Error ? packErr.message : "حدث خطأ أثناء بدء تشفير الفيديو بنظام Axinom Multi-DRM");
         setSubmitting(false);
         return;
       }
@@ -481,6 +560,9 @@ export function VideoEncryptionStudioModal({
             ? `تمت إضافة الدرس "${title}" بنجاح! جاهز لإضافة الدرس التالي...`
             : `تمت إضافة الدرس بنجاح!`
         );
+        if (packagingStarted) {
+          toastSuccess("التشفير يعمل في الخلفية — ستُفعَّل حماية Axinom DRM على هذا الدرس تلقائياً عند الانتهاء (قد يستغرق عدة دقائق للفيديوهات الكبيرة).");
+        }
         onVideoCreated();
 
         if (keepOpen) {
@@ -1231,6 +1313,55 @@ export function VideoEncryptionStudioModal({
             </button>
           </div>
         </div>
+
+        {/* Axinom background packaging progress */}
+        {drmJob && provider === "axinom" && (
+          <div
+            className={`mx-4 sm:mx-5 mb-4 rounded-2xl border p-3.5 text-xs ${
+              drmJob.status === "failed"
+                ? "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+                : drmJob.status === "ready"
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+                  : "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 font-bold">
+                {drmJob.status === "ready" ? (
+                  <ShieldCheck className="w-4 h-4" />
+                ) : drmJob.status === "failed" ? (
+                  <ShieldAlert className="w-4 h-4" />
+                ) : (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                )}
+                <span>{drmStageLabel(drmJob)}</span>
+              </div>
+              <span className="font-mono text-[10.5px] opacity-70" dir="ltr">
+                {drmJob.assetId}
+              </span>
+            </div>
+            {drmJob.status !== "ready" && drmJob.status !== "failed" && (
+              <div className="mt-2">
+                <div className="h-1.5 w-full rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-sky-500 transition-all"
+                    style={{ width: `${Math.max(2, drmJob.progress || 0)}%` }}
+                  />
+                </div>
+                <p className="mt-1.5 text-[10.5px] opacity-80">
+                  {drmJob.progress || 0}%
+                  {drmJob.status === "downloading" && drmJob.totalBytes
+                    ? ` — ${((drmJob.downloadedBytes || 0) / 1024 ** 3).toFixed(2)} / ${(drmJob.totalBytes / 1024 ** 3).toFixed(2)} جيجابايت`
+                    : ""}
+                  {" · "}يمكنك حفظ الدرس الآن؛ ستُفعَّل الحماية تلقائياً عند الانتهاء.
+                </p>
+              </div>
+            )}
+            {drmJob.status === "failed" && drmJob.error && (
+              <p className="mt-1.5 text-[11px] leading-relaxed">{drmJob.error}</p>
+            )}
+          </div>
+        )}
 
         {/* Modal Footer */}
         <div className="p-4 sm:p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/60 flex items-center justify-between gap-2.5">

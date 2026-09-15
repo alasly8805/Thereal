@@ -25,12 +25,18 @@ export async function GET() {
   }
 
   try {
-    await runBulkMaintenance();
+    const demoTour = session.demoTour === true;
+    // A showroom session must never run due deletions or trash purge.
+    if (!demoTour) {
+      await runBulkMaintenance();
+    }
 
     const [requests, students, teachers, purgeDays] = await Promise.all([
-      prisma.bulkDeletionRequest.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
-      countScope("students"),
-      countScope("teachers"),
+      demoTour
+        ? Promise.resolve([])
+        : prisma.bulkDeletionRequest.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
+      countScope("students", { demoOnly: demoTour }),
+      countScope("teachers", { demoOnly: demoTour }),
       getPurgeDays(),
     ]);
 
@@ -72,6 +78,9 @@ export async function POST(req: NextRequest) {
     }
   if (!session || !hasPermission(session.role, "bulk_delete_users")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (session.demoTour) {
+    return NextResponse.json({ ok: true, success: true, affectedCount: 0 });
   }
 
   try {

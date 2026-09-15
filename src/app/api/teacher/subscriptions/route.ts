@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import { getPlanMonths } from "@/lib/subscription-terms";
 
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "admin" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "admin" && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
     }
 
@@ -19,7 +21,7 @@ export async function GET(req: NextRequest) {
 
     const where: any = {
       teacherId,
-      ...(session.role === "teacher" ? { student: { accountMode: { not: "TESTER" } } } : {}),
+      ...(isTeacherLike(session.role) ? { student: { accountMode: { not: "TESTER" } } } : {}),
     };
 
     if (stage) where.educationalStage = stage;
@@ -63,7 +65,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "admin" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "admin" && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
     }
 
@@ -90,7 +92,7 @@ export async function POST(req: NextRequest) {
     // Find student by email or phone (excluding testers from teacher discovery)
     const student = await prisma.user.findFirst({
       where: {
-        ...(session.role === "teacher" ? { accountMode: { not: "TESTER" } } : {}),
+        ...(isTeacherLike(session.role) ? { accountMode: { not: "TESTER" } } : {}),
         OR: [
           { email: String(studentEmailOrPhone).trim().toLowerCase() },
           { phone: String(studentEmailOrPhone).trim() },
@@ -103,16 +105,11 @@ export async function POST(req: NextRequest) {
     }
 
     const profile = await prisma.teacherProfile.findUnique({
-      where: { teacherId: session.id },
+      where: { teacherId: actingTeacherId(session) },
       select: { priceMonthly: true, priceTermly: true, priceYearly: true, stagePricing: true, priceLanguagesMonthly: true, priceLanguagesTermly: true, priceLanguagesYearly: true },
     });
 
-    const monthsMap: Record<string, number> = {
-      monthly: 1,
-      termly: 3,
-      yearly: 6,
-    };
-    const months = monthsMap[planType] || 1;
+    const months = getPlanMonths(planType);
 
     let subPrice = 0;
     if (planType === "monthly") subPrice = profile?.priceMonthly ?? 0;
@@ -174,7 +171,7 @@ export async function POST(req: NextRequest) {
       where: {
         studentId_teacherId_planType: {
           studentId: student.id,
-          teacherId: session.id,
+          teacherId: actingTeacherId(session),
           planType,
         },
       },
@@ -194,13 +191,13 @@ export async function POST(req: NextRequest) {
       where: {
         studentId_teacherId_planType: {
           studentId: student.id,
-          teacherId: session.id,
+          teacherId: actingTeacherId(session),
           planType,
         },
       },
       create: {
         studentId: student.id,
-        teacherId: session.id,
+        teacherId: actingTeacherId(session),
         planType,
         planLabel: planLabel || labelMap[planType] || "اشتراك معلم",
         amount: subPrice,
@@ -248,7 +245,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "admin" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "admin" && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
     }
 
@@ -269,7 +266,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Security check: teacher can only delete subscriptions for their own account unless admin/superadmin
-    if (session.role === "teacher" && sub.teacherId !== session.id) {
+    if (isTeacherLike(session.role) && sub.teacherId !== actingTeacherId(session)) {
       return NextResponse.json({ error: "غير مصرح لك بحذف هذا الاشتراك" }, { status: 403 });
     }
 

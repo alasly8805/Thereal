@@ -5,7 +5,6 @@ import { ResetPasswordModal } from "./ResetPasswordModal";
 import { ConfirmActionModal } from "./ConfirmActionModal";
 import { hasPermission } from "@/lib/rbac";
 import { BananaKeySvg, AdminActionPasswordBar } from "@/components/admin/AdminActionPasswordBar";
-import { KeyRound } from "lucide-react";
 
 interface CourseItem {
   id: string;
@@ -24,7 +23,13 @@ interface Teacher {
   courses: CourseItem[];
 }
 
-export function TeachersSection({ userRole = "superadmin" }: { userRole?: string }) {
+export function TeachersSection({
+  userRole = "superadmin",
+  onChanged,
+}: {
+  userRole?: string;
+  onChanged?: () => void;
+}) {
   const { success: toastSuccess, error: toastError } = useToast();
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,9 +39,6 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
   const [editName, setEditName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [togglingPromo, setTogglingPromo] = useState<string | null>(null);
-  const [enteringTeacherId, setEnteringTeacherId] = useState<string | null>(null);
-  const [pendingPromptTeacher, setPendingPromptTeacher] = useState<{ id: string; name: string } | null>(null);
-  const [promptPasswordInput, setPromptPasswordInput] = useState("");
 
   const refreshTeachers = async () => {
     try {
@@ -75,58 +77,6 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
       isMounted = false;
     };
   }, [toastError]);
-
-  const executeEnterTeacherPanel = async (teacherId: string, teacherName: string, passwordToUse: string) => {
-    if (!passwordToUse.trim()) {
-      toastError("أدخل كلمة مرور إجراءات المشرف للمتابعة");
-      return;
-    }
-
-    setEnteringTeacherId(teacherId);
-    try {
-      const res = await fetch("/api/admin/superadmin/impersonate", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "teacher",
-          teacherId,
-          actionPassword: passwordToUse,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        sessionStorage.setItem("admin_action_password", passwordToUse);
-        toastSuccess(`تم تسجيل الدخول كمعلم (${teacherName}) بنجاح! جاري التوجيه...`);
-        setPendingPromptTeacher(null);
-        if (typeof window !== "undefined") {
-          window.location.assign(data.redirectUrl || "/adminpanel/teacher");
-        }
-      } else {
-        toastError(data.error || "تعذر الدخول إلى لوحة المعلم");
-        if (data.error?.includes("كلمة مرور")) {
-          sessionStorage.removeItem("admin_action_password");
-        }
-        setEnteringTeacherId(null);
-      }
-    } catch {
-      toastError("حدث خطأ أثناء الاتصال بالخادم");
-      setEnteringTeacherId(null);
-    }
-  };
-
-  const handleEnterTeacherPanel = async (teacherId: string, teacherName: string) => {
-    const savedPassword = typeof window !== "undefined" ? sessionStorage.getItem("admin_action_password") || "" : "";
-    if (savedPassword) {
-      if (!window.confirm(`هل تريد الدخول إلى لوحة تحكم المعلم "${teacherName}" الآن؟`)) {
-        return;
-      }
-      await executeEnterTeacherPanel(teacherId, teacherName, savedPassword);
-    } else {
-      setPendingPromptTeacher({ id: teacherId, name: teacherName });
-      setPromptPasswordInput("");
-    }
-  };
 
   const togglePromoProgram = async (t: Teacher) => {
     setTogglingPromo(t.id);
@@ -184,6 +134,7 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
     setTeachers((prev) => prev.filter((t) => t.id !== deleteTarget.id));
     toastSuccess(`تم حذف حساب المعلم بنجاح`);
     setDeleteTarget(null);
+    onChanged?.();
   };
 
   if (loading) {
@@ -204,7 +155,7 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
           <div>
             <h3 className="text-xs font-black text-slate-900 dark:text-white">مفتاح إجراءات المشرف للأمان</h3>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              أدخل كلمة مرور المشرف مرة واحدة لدخول لوحات تحكم المعلمين وتعديل الحسابات دون تكرار.
+              أدخل كلمة مرور المشرف مرة واحدة لتعديل الحسابات والحذف دون تكرار.
             </p>
           </div>
         </div>
@@ -252,16 +203,19 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     {/* Enter Teacher Panel Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleEnterTeacherPanel(t.id, t.name)}
-                      disabled={enteringTeacherId === t.id}
-                      className="px-3.5 py-1.5 text-xs bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/40 dark:hover:bg-sky-900/50 dark:text-sky-300 dark:border-sky-800/60 rounded-xl transition-all font-bold flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
-                      title={`دخول لوحة تحكم المعلم (${t.name})`}
-                    >
-                      <span>{enteringTeacherId === t.id ? "⏳" : "🚪"}</span>
-                      <span>{enteringTeacherId === t.id ? "جارٍ الدخول..." : "لوحة المعلم"}</span>
-                    </button>
+                    {userRole === "superadmin" && (
+                    <form action="/adminpanel/enter-teacher" method="post">
+                      <input type="hidden" name="teacherId" value={t.id} />
+                      <button
+                        type="submit"
+                        className="px-3.5 py-1.5 text-xs bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/40 dark:hover:bg-sky-900/50 dark:text-sky-300 dark:border-sky-800/60 rounded-xl transition-all font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        title={`دخول لوحة تحكم المعلم (${t.name})`}
+                      >
+                        <span>🚪</span>
+                        <span>لوحة المعلم</span>
+                      </button>
+                    </form>
+                    )}
 
                     {userRole === "superadmin" && (
                       <button
@@ -347,68 +301,6 @@ export function TeachersSection({ userRole = "superadmin" }: { userRole?: string
           </div>
         )}
       </div>
-
-      {/* Direct Impersonate Password Prompt Modal with Banana Key SVG */}
-      {pendingPromptTeacher && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div
-            dir="rtl"
-            className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4"
-          >
-            <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
-              <BananaKeySvg className="w-10 h-10 shrink-0 text-amber-500" />
-              <div>
-                <h4 className="font-black text-sm text-slate-900 dark:text-white">
-                  الدخول إلى لوحة المعلم: {pendingPromptTeacher.name}
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  أدخل كلمة مرور المشرف للتحقق وتفعيل الجلسة فوراً.
-                </p>
-              </div>
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void executeEnterTeacherPanel(pendingPromptTeacher.id, pendingPromptTeacher.name, promptPasswordInput);
-              }}
-              className="space-y-4"
-            >
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  كلمة مرور إجراءات المشرف
-                </label>
-                <input
-                  type="password"
-                  value={promptPasswordInput}
-                  onChange={(e) => setPromptPasswordInput(e.target.value)}
-                  placeholder="••••••••"
-                  autoFocus
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-mono text-slate-900 outline-none focus:border-slate-400 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-white transition-all"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  type="submit"
-                  disabled={enteringTeacherId === pendingPromptTeacher.id}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-emerald-700 dark:hover:bg-emerald-600 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  <span>{enteringTeacherId === pendingPromptTeacher.id ? "جارٍ التحقق والدخول..." : "تأكيد ودخول لوحة المعلم"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPendingPromptTeacher(null)}
-                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 text-xs font-bold transition-all cursor-pointer"
-                >
-                  إلغاء
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Modals */}
       {resetTarget && (

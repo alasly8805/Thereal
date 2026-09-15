@@ -8,6 +8,7 @@ import {
   SHA7NAWY_PENDING_TYPE,
   sha7nawyRefNote,
   normalizeEgyptianPhone,
+  sha7nawyGatewayIdNote,
 } from "@/lib/sha7nawy";
 import {
   createShakeOutPayment,
@@ -17,9 +18,14 @@ import {
 import { getPaymentMethod } from "@/lib/payment-methods";
 import { paymentRateLimiter } from "@/lib/paymentRateLimiter";
 import { verifyAuthoritativePrice } from "@/lib/price-verifier";
+import { blockSupportView } from "@/lib/support-auth";
 
 export async function POST(req: NextRequest) {
   const session = await getSession();
+  // Defence in depth behind the proxy guard: never let a support agent act as
+  // the student on grades, progress or money.
+  const supportBlocked = blockSupportView(session);
+  if (supportBlocked) return supportBlocked;
   if (!session) {
     return NextResponse.json({ error: "يجب تسجيل الدخول أولاً" }, { status: 401 });
   }
@@ -387,7 +393,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const noteText = `${sha7nawyRefNote(reference)}|base:${baseAmount}|total:${totalAmount}${itemMeta}`;
+    // Capture the gateway's own transaction id alongside our reference: it is the
+    // only identifier its verification endpoint accepts, and without it a payment
+    // can never be confirmed after the fact.
+    const gatewayTxId =
+      result.data?.id ?? result.data?.transaction_id ?? result.data?.provider_transaction_id ?? null;
+    const gatewayIdTag = gatewayTxId ? `|${sha7nawyGatewayIdNote(gatewayTxId)}` : "";
+    if (!gatewayTxId) {
+      console.warn(`[Sha7nawy Create] No gateway transaction id in create response for ref ${reference} — later verification will not be possible`);
+    }
+
+    const noteText = `${sha7nawyRefNote(reference)}|base:${baseAmount}|total:${totalAmount}${itemMeta}${gatewayIdTag}`;
     await prisma.balanceTransaction.create({
       data: {
         userId: session.id,

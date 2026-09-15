@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AuthShell } from "@/components/auth/AuthShell";
+import { useRecaptcha } from "@/lib/use-recaptcha";
 
 type Step = "phone" | "reset" | "done";
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
+  const { execute: executeRecaptcha } = useRecaptcha();
   const [step, setStep] = useState<Step>("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
@@ -45,10 +47,15 @@ export default function ForgotPasswordPage() {
     setSuccess("");
     setLoading(true);
     try {
+      const recaptchaToken = await executeRecaptcha("forgot_password");
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: formatPhone(phone), forceChannel: forceSms ? "sms" : undefined }),
+        body: JSON.stringify({
+          phone: formatPhone(phone),
+          forceChannel: forceSms ? "sms" : undefined,
+          recaptchaToken,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

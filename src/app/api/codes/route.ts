@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { PurchaseService } from "@/services/purchase/PurchaseService";
 import { DiscountService, PurchaseType } from "@/services/discount/DiscountService";
+import { blockSupportView } from "@/lib/support-auth";
 
 const ROLE_MESSAGES: Record<string, string> = {
   teacher: "حساب المعلم لا يمكنه تفعيل أكواد الكورسات — هذا الإجراء مخصص للمتعلمين فقط.",
@@ -12,6 +13,10 @@ const ROLE_MESSAGES: Record<string, string> = {
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
+    // Defence in depth behind the proxy guard: never let a support agent act as
+    // the student on grades, progress or money.
+    const supportBlocked = blockSupportView(session);
+    if (supportBlocked) return supportBlocked;
 
     if (!session) {
       return NextResponse.json({ error: "يجب تسجيل الدخول أولاً" }, { status: 401 });

@@ -17,6 +17,22 @@ export async function GET(
   const homework = await prisma.homework.findUnique({
     where: { id: homeworkId },
     include: {
+      teacher: {
+        select: {
+          id: true,
+          name: true,
+          teacherProfile: { select: { slug: true } },
+        },
+      },
+      folder: {
+        select: {
+          id: true,
+          name: true,
+          courseId: true,
+          course: { select: { id: true, title: true, subject: true } },
+        },
+      },
+      video: { select: { id: true, title: true } },
       questions: {
         orderBy: { order: "asc" },
         select: {
@@ -28,7 +44,10 @@ export async function GET(
           optionC: true,
           optionD: true,
           order: true,
-          // correctAnswer is intentionally omitted for students
+          // Fetched for everyone, but stripped below for students who have
+          // not submitted yet — otherwise the review UI can never show which
+          // answers were wrong after the attempt is locked.
+          correctAnswer: true,
         },
       },
     },
@@ -64,10 +83,28 @@ export async function GET(
     }
   }
 
+  // Fetch student submission if any
+  const mySubmission = session.role === "student"
+    ? await prisma.homeworkSubmission.findUnique({
+        where: { homeworkId_studentId: { homeworkId, studentId: session.id } },
+        include: { review: { select: { verdict: true, note: true, reviewedAt: true } } },
+      })
+    : null;
+
+  // Reveal correct answers only when grading can no longer change: staff
+  // always see them; a student sees them only after their graded attempt is
+  // locked. A reopened attempt must hide answers again.
+  const revealAnswers =
+    session.role !== "student" || (!!mySubmission && !mySubmission.allowRetake);
+
   // Strip sensitive fields for students
   const safe = {
     ...homework,
+    questions: revealAnswers
+      ? homework.questions
+      : homework.questions.map(({ correctAnswer: _ca, ...q }) => q),
     expectedOutput: session.role === "student" ? null : homework.expectedOutput,
+    mySubmission,
   };
 
   return NextResponse.json({ homework: safe });

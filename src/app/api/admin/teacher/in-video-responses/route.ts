@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { logAdminAction } from "@/lib/admin-auth";
 
@@ -12,7 +13,7 @@ import { logAdminAction } from "@/lib/admin-auth";
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   const whereClause: any = {
     ...(session.role !== "superadmin"
-      ? { videoQuestion: { video: { folder: { course: { teacherId: session.id } } } } }
+      ? { videoQuestion: { video: { folder: { course: { teacherId: actingTeacherId(session) } } } } }
       : {}),
   };
 
@@ -88,7 +89,7 @@ export async function PATCH(req: NextRequest) {
       });
     } catch {}
   }
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -112,7 +113,7 @@ export async function PATCH(req: NextRequest) {
     where: {
       id: responseId,
       ...(session.role !== "superadmin"
-        ? { videoQuestion: { video: { folder: { course: { teacherId: session.id } } } } }
+        ? { videoQuestion: { video: { folder: { course: { teacherId: actingTeacherId(session) } } } } }
         : {}),
     },
     include: {

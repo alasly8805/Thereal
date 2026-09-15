@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   try {
     const session = await getSession();
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح — للمعلمين فقط" }, { status: 403 });
     }
 
@@ -29,9 +30,14 @@ export async function GET() {
       });
     }
 
+    const studentScope = session.demoTour ? { isDemo: true as const } : {};
+
     // Get all attributions for this teacher
     const attributions = await prisma.teacherReferralAttribution.findMany({
-      where: { teacherId: session.id },
+      where: {
+        teacherId: actingTeacherId(session),
+        ...(session.demoTour ? { student: { isDemo: true } } : {}),
+      },
       include: {
         student: { select: { id: true, name: true, email: true, createdAt: true } },
       },
@@ -40,7 +46,7 @@ export async function GET() {
 
     // Also get all students directly referred by signup (in case they haven't bought anything yet)
     const directReferredStudents = await prisma.user.findMany({
-      where: { referredByTeacherId: session.id },
+      where: { referredByTeacherId: session.id, ...studentScope },
       select: { id: true, name: true, email: true, createdAt: true },
       orderBy: { createdAt: "desc" },
     });

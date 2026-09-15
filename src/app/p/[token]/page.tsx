@@ -10,10 +10,13 @@ interface ChildGateInfo {
 
 interface ExamItem {
   title: string;
-  score: number;
+  score: number | null;
   maxScore: number;
-  percent: number;
+  /** null while essay answers are awaiting teacher review */
+  percent: number | null;
   status: string;
+  statusLabel?: string;
+  pendingEssays?: number;
   date: string;
 }
 
@@ -364,11 +367,17 @@ export default function ParentPortalPage({ params }: { params: Promise<{ token: 
                     <tr key={idx} className="hover:bg-[#FBF8F1]">
                       <td className="py-3 px-3 font-bold text-[#1A1A1A]">{ex.title}</td>
                       <td className="py-3 px-3 text-center font-mono font-bold text-gray-800" dir="ltr">
-                        {ex.score} / {ex.maxScore}
+                        {ex.percent == null ? "—" : `${ex.score} / ${ex.maxScore}`}
                       </td>
-                      <td className="py-3 px-3 text-center font-mono font-bold text-[#0F7B4F]">{ex.percent}٪</td>
+                      <td className="py-3 px-3 text-center font-mono font-bold text-[#0F7B4F]">
+                        {ex.percent == null ? "—" : `${ex.percent}٪`}
+                      </td>
                       <td className="py-3 px-3 text-center">
-                        {ex.percent >= 85 ? (
+                        {ex.percent == null ? (
+                          <span className="text-amber-700 font-bold" title={ex.pendingEssays ? `${ex.pendingEssays} سؤال مقالي بانتظار تصحيح المعلم` : undefined}>
+                            ⏳ يتم المراجعة
+                          </span>
+                        ) : ex.percent >= 85 ? (
                           <span className="text-[#0F7B4F] font-bold">ممتاز</span>
                         ) : ex.percent >= 65 ? (
                           <span className="text-amber-700 font-bold">مقبول</span>

@@ -14,7 +14,11 @@ export async function GET() {
     }
 
     const accounts = await prisma.user.findMany({
-      where: { role: { in: ["admin", "staff"] }, isDeleted: false },
+      where: {
+        role: { in: ["admin", "staff"] },
+        isDeleted: false,
+        ...(session.demoTour ? { isDemo: true } : {}),
+      },
       select: {
         id: true,
         name: true,

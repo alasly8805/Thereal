@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { notifyProjectGraded } from "@/lib/notifications";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session || (session.role !== "superadmin" && session.role !== "teacher")) {
+  if (!session || (session.role !== "superadmin" && !isTeacherLike(session.role))) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -39,20 +40,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     // Teacher ownership validation
-    if (session.role === "teacher") {
+    if (isTeacherLike(session.role)) {
       const progress = submission.enrollment.progress.find(p => p.planLessonId === submission.planLessonId);
       if (progress?.chosenSourceId) {
         const source = await prisma.planLessonSource.findUnique({
           where: { id: progress.chosenSourceId },
           select: { teacherId: true }
         });
-        if (source?.teacherId !== session.id) {
+        if (source?.teacherId !== actingTeacherId(session)) {
           return NextResponse.json({ error: "غير مصرح لك بتقييم هذا المشروع" }, { status: 403 });
         }
       } else {
         // Fallback: check if the teacher has any source for this lesson
         const source = await prisma.planLessonSource.findFirst({
-          where: { planLessonId: submission.planLessonId, teacherId: session.id },
+          where: { planLessonId: submission.planLessonId, teacherId: actingTeacherId(session) },
           select: { id: true }
         });
         if (!source) {

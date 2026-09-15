@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 const PROMO_EXPIRY_DAYS = 350;
@@ -8,7 +9,7 @@ const PROMO_EXPIRY_MS = PROMO_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
 export async function GET() {
   try {
     const session = await getSession();
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح — للمعلمين فقط" }, { status: 403 });
     }
 
@@ -55,7 +56,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح — للمعلمين فقط" }, { status: 403 });
     }
 

@@ -377,6 +377,150 @@ export async function importGoogleDriveVideo(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Local mirror of Drive-backed lessons
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Google enforces a per-file download quota. A 2 GB lecture watched by a class
+// (each seek = another ranged download through the API) trips it within hours
+// and Drive answers 403 "The download quota for this file has been exceeded".
+// The <video> element then errors and students see a blank player.
+//
+// So a gdrive_ lesson is streamed from Drive only until it has been mirrored
+// to uploads/videos/gdrive_<fileId>.<ext> once; from then on it is served from
+// local disk with normal Range support and Drive is never touched at play time.
+
+const MIRROR_EXTENSIONS = [".mp4", ".webm", ".mov", ".mkv", ".m4v"];
+const MIRROR_HEADROOM_BYTES = 1.5 * 1024 * 1024 * 1024; // keep ≥1.5 GB free for builds/logs
+const MIRROR_CHUNK_BYTES = 16 * 1024 * 1024; // Drive rejects ranges >32 MB on a throttled file
+const inflightMirrors = new Map<string, Promise<void>>();
+
+export function driveMirrorBasename(fileId: string): string {
+  return `gdrive_${fileId}`;
+}
+
+/** Returns the absolute path of a completed local mirror for this Drive file, if any. */
+export function findDriveMirror(fileId: string): string | null {
+  const base = path.join(UPLOAD_DIR, driveMirrorBasename(fileId));
+  for (const ext of MIRROR_EXTENSIONS) {
+    const candidate = base + ext;
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function freeDiskBytes(dir: string): number {
+  try {
+    const s = fs.statfsSync(dir);
+    return Number(s.bavail) * Number(s.bsize);
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/**
+ * Downloads the Drive file to the local mirror location once. Concurrent callers
+ * share one download; a partial file is written to `.part` and renamed on success
+ * so a crash mid-download never leaves a truncated file that looks complete.
+ * Never throws — mirroring is best-effort and the caller keeps proxying Drive.
+ */
+export function ensureDriveMirror(fileId: string): Promise<void> {
+  if (findDriveMirror(fileId)) return Promise.resolve();
+  const existing = inflightMirrors.get(fileId);
+  if (existing) return existing;
+
+  const job = (async () => {
+    try {
+      if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+      const metadata = await getGoogleDriveFileMetadata(fileId);
+      const size = Number(metadata.size) || 0;
+      const free = freeDiskBytes(UPLOAD_DIR);
+      if (size <= 0 || free - size < MIRROR_HEADROOM_BYTES) {
+        console.warn(
+          `[drive-mirror] Skipping mirror of ${fileId}: size=${size} free=${free} (need ${MIRROR_HEADROOM_BYTES} headroom)`
+        );
+        return;
+      }
+
+      const mime = (metadata.mimeType || "").toLowerCase();
+      let ext = path.extname(metadata.name || "").toLowerCase();
+      if (!MIRROR_EXTENSIONS.includes(ext)) {
+        if (mime.includes("webm")) ext = ".webm";
+        else if (mime.includes("quicktime")) ext = ".mov";
+        else if (mime.includes("matroska")) ext = ".mkv";
+        else ext = ".mp4";
+      }
+
+      const finalPath = path.join(UPLOAD_DIR, driveMirrorBasename(fileId) + ext);
+      const partPath = finalPath + ".part";
+      if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+
+      console.info(`[drive-mirror] Mirroring ${fileId} (${(size / 1e9).toFixed(2)} GB) → ${path.basename(finalPath)}`);
+
+      // Once Drive has flagged a file as over-quota it still answers small Range
+      // requests (players keep working) but refuses whole-file and large-range
+      // downloads. Pulling the mirror in ≤32 MB ranged chunks therefore works
+      // even while the file is throttled; a plain GET would 403.
+      const downloadUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+      const out = fs.createWriteStream(partPath);
+      try {
+        for (let start = 0; start < size; start += MIRROR_CHUNK_BYTES) {
+          const end = Math.min(start + MIRROR_CHUNK_BYTES, size) - 1;
+          let lastErr: unknown = null;
+          for (let attempt = 0; attempt < 4; attempt++) {
+            try {
+              const token = await getGoogleDriveAccessToken();
+              const res = await fetch(downloadUrl, {
+                headers: { Authorization: `Bearer ${token}`, Range: `bytes=${start}-${end}` },
+              });
+              if (res.status !== 206 || !res.body) {
+                const errText = await res.text().catch(() => "");
+                throw new Error(`chunk ${start}-${end} failed (${res.status}): ${errText.slice(0, 120)}`);
+              }
+              for await (const chunk of Readable.fromWeb(res.body as any)) {
+                if (!out.write(chunk)) await new Promise<void>((r) => out.once("drain", () => r()));
+              }
+              lastErr = null;
+              break;
+            } catch (err) {
+              lastErr = err;
+              await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+            }
+          }
+          if (lastErr) throw lastErr;
+        }
+      } finally {
+        await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
+      }
+
+      const written = fs.statSync(partPath).size;
+      if (written !== size) {
+        fs.unlinkSync(partPath);
+        throw new Error(`Size mismatch after download: got ${written}, expected ${size}`);
+      }
+      fs.renameSync(partPath, finalPath);
+      console.info(`[drive-mirror] Mirror complete for ${fileId}`);
+
+      // Durable copy: once in S3 the local mirror is only a cache. A mirrored
+      // Drive lecture is exactly the 1-2 GB single file students cannot stream
+      // on mobile, so it gets its low-bandwidth rendition queued immediately.
+      const { uploadVideoToS3 } = await import("./video-storage");
+      void uploadVideoToS3(finalPath).then(async () => {
+        const { enqueueRenditions } = await import("./rendition-queue");
+        enqueueRenditions(path.basename(finalPath));
+      });
+    } catch (err) {
+      console.error(`[drive-mirror] Failed to mirror ${fileId}:`, err instanceof Error ? err.message : err);
+    } finally {
+      inflightMirrors.delete(fileId);
+    }
+  })();
+
+  inflightMirrors.set(fileId, job);
+  return job;
+}
+
 /**
  * Proxies partial byte-range requests directly from Google Drive API to authorized students.
  * Supports seek/scrubbing and HTTP 206 Partial Content with zero local disk footprint.

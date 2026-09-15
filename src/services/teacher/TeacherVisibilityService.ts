@@ -17,6 +17,8 @@ export class TeacherVisibilityService {
   static getEnrolledStudentsWhere(courseId: string, extraWhere: Record<string, unknown> = {}) {
     return {
       ...extraWhere,
+      role: "student",
+      isVirtual: false,
       accountMode: { not: "TESTER" },
       OR: [
         {
@@ -40,12 +42,14 @@ export class TeacherVisibilityService {
 
   /**
    * Safe student lookup for a teacher.
-   * If the student is a TESTER, this method strictly returns `null` (404 Not Found).
+   * If the student is a TESTER or non-student, this method strictly returns `null` (404 Not Found).
    */
   static async findStudentById(teacherId: string, studentId: string) {
     const student = await prisma.user.findFirst({
       where: {
         id: studentId,
+        role: "student",
+        isVirtual: false,
         accountMode: { not: "TESTER" },
         OR: [
           {

@@ -101,7 +101,7 @@ export function isAuthorizedPreview(
   session: SessionUser | { role?: string; id?: string; name?: string } | null,
   cookieValue?: string | null
 ): boolean {
-  if (session && ["superadmin", "admin", "teacher"].includes(session.role || "")) {
+  if (session && ["superadmin", "admin", "teacher", "assistant"].includes(session.role || "")) {
     return true;
   }
 
@@ -115,6 +115,6 @@ export function isAuthorizedPreview(
 export function isAuthorizedStaffUpload(
   session: SessionUser | { role?: string; id?: string; name?: string } | null
 ): boolean {
-  return !!(session && ["superadmin", "admin", "teacher"].includes(session.role || ""));
+  return !!(session && ["superadmin", "admin", "teacher", "assistant"].includes(session.role || ""));
 }
 

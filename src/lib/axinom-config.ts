@@ -17,6 +17,18 @@ export const AXINOM_CONFIG = {
   },
 };
 
+/**
+ * Same-origin license endpoints. The browser talks only to this site; the
+ * server forwards the CDM challenge to Axinom. Widevine/PlayReady keys never
+ * leave the CDM — this only stops Brave Shields from blocking third-party
+ * license hosts.
+ */
+export const SAME_ORIGIN_LICENSE_SERVERS = {
+  widevine: "/api/drm/license/widevine",
+  playready: "/api/drm/license/playready",
+  fairplay: "/api/drm/license/fairplay",
+} as const;
+
 export interface AxinomContentKey {
   keyId: string;
   key: string;

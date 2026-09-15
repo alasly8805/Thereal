@@ -1,12 +1,13 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { parsePublishAt } from "@/lib/publish";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session || session.role !== "teacher") return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!session || !isTeacherLike(session.role)) return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   const { id } = await params;
   const folders = await prisma.folder.findMany({
     where: { courseId: id },
@@ -36,7 +37,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
       } catch (e) {}
     }
-  if (!session || session.role !== "teacher") return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!session || !isTeacherLike(session.role)) return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "editCourses")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
+  }
   const { id: courseId } = await params;
   const { name, publishAt, color } = (await req.json()) as { name?: string; publishAt?: string | null; color?: string };
   if (!name) return NextResponse.json({ error: "اسم المحاضرة مطلوب" }, { status: 400 });
@@ -49,7 +53,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session || session.role !== "teacher") return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!session || !isTeacherLike(session.role)) return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "editCourses")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
+  }
   const { id: courseId } = await params;
   const body = (await req.json()) as {
     folderId?: string;
@@ -64,7 +71,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!folderId) return NextResponse.json({ error: "معرف المحاضرة مطلوب" }, { status: 400 });
 
   const existing = await prisma.folder.findFirst({
-    where: { id: folderId, course: { id: courseId, teacherId: session.id } },
+    where: { id: folderId, course: { id: courseId, teacherId: actingTeacherId(session) } },
   });
   if (!existing) return NextResponse.json({ error: "المحاضرة غير موجودة أو غير مصرح بتعديلها" }, { status: 404 });
 
@@ -101,8 +108,11 @@ export async function DELETE(
     } catch { /* ignore */ }
   }
 
-  if (!session || session.role !== "teacher") {
+  if (!session || !isTeacherLike(session.role)) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (!hasAssistantPermission(session, "editCourses")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
   }
 
   try {
@@ -115,7 +125,7 @@ export async function DELETE(
 
     // Verify course belongs to teacher
     const course = await prisma.course.findFirst({
-      where: { id: courseId, teacherId: session.id },
+      where: { id: courseId, teacherId: actingTeacherId(session) },
     });
 
     if (!course) {

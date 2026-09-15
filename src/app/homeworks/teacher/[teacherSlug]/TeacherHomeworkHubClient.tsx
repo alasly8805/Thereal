@@ -24,6 +24,7 @@ type HWSubmission = {
   submittedOutput?: string | null;
   fileUrl?: string | null;
   fileName?: string | null;
+  allowRetake?: boolean;
   review?: { verdict?: string | null; note?: string | null } | null;
 };
 
@@ -50,6 +51,7 @@ export type HomeworkItem = {
 
 function statusBadge(sub?: HWSubmission | null) {
   if (!sub) return { label: "لم يُرسل", color: "bg-slate-500/15 text-slate-400" };
+  if (sub.allowRetake) return { label: "🔓 مسموح الإعادة", color: "bg-sky-500/15 text-sky-400" };
   switch (sub.status) {
     case "passed":          return { label: "✅ ناجح",       color: "bg-emerald-500/15 text-emerald-400" };
     case "failed":          return { label: "❌ راسب",        color: "bg-red-500/15 text-red-400" };
@@ -187,7 +189,9 @@ function ExamForm({ hw, onSuccess }: { hw: HomeworkItem; onSuccess: (sub: HWSubm
           <p className="text-sm font-semibold text-white">{qi + 1}. {q.question}</p>
           {q.imageUrl && <img src={q.imageUrl} alt="" className="rounded-lg max-h-60 object-contain" />}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {(["A","B","C","D"] as const).map(opt => (
+            {(["A","B","C","D"] as const)
+              .filter(opt => !!q[`option${opt}` as "optionA" | "optionB" | "optionC" | "optionD"]?.trim())
+              .map(opt => (
               <button
                 key={opt}
                 onClick={() => setAnswers(a => ({ ...a, [q.id]: opt }))}
@@ -220,28 +224,54 @@ function UploadForm({ hw, onSuccess }: { hw: HomeworkItem; onSuccess: (sub: HWSu
 
   const doSubmit = async () => {
     if (!file) { toastError("اختر ملفاً أولاً"); return; }
+    if (file.size > 10 * 1024 * 1024) {
+      toastError("حجم الملف يجب ألا يتجاوز 10 ميجابايت");
+      return;
+    }
     setUploading(true);
     try {
       // Step 1: upload file
       const fd = new FormData();
       fd.append("file", file);
-      const upRes = await fetch(`/api/homework/${hw.id}/upload`, { method: "POST", body: fd });
-      const upData = await upRes.json();
+      const upRes = await fetch(`/api/homework/${hw.id}/upload`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const upText = await upRes.text();
+      let upData: { error?: string; fileUrl?: string; fileName?: string } = {};
+      try { upData = upText ? JSON.parse(upText) : {}; } catch {
+        toastError("استجابة غير متوقعة من الخادم، يرجى المحاولة مرة أخرى");
+        return;
+      }
       if (!upRes.ok) { toastError(upData.error || "فشل رفع الملف"); return; }
 
       // Step 2: create submission
       const subRes = await fetch(`/api/homework/${hw.id}/submit`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileUrl: upData.fileUrl, fileName: upData.fileName }),
       });
-      const subData = await subRes.json();
+      const subText = await subRes.text();
+      let subData: { error?: string; submission?: HWSubmission } = {};
+      try { subData = subText ? JSON.parse(subText) : {}; } catch {
+        toastError("استجابة غير متوقعة من الخادم، يرجى المحاولة مرة أخرى");
+        return;
+      }
       if (subRes.ok) {
-        setSubmitted(subData.submission);
-        onSuccess(subData.submission);
+        setSubmitted(subData.submission ?? null);
+        if (subData.submission) onSuccess(subData.submission);
         toastSuccess("تم رفع الملف وإرسال الواجب بنجاح!");
       } else {
         toastError(subData.error || "تعذر إرسال الواجب");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+        toastError("تعذر الاتصال بالخادم أثناء رفع الملف. تحقق من اتصال الإنترنت وحجم الملف (حد أقصى 10 ميجابايت) ثم أعد المحاولة");
+      } else {
+        toastError(msg || "تعذر رفع الملف");
       }
     } finally { setUploading(false); }
   };
@@ -292,7 +322,9 @@ function HomeworkCard({ hw: initHw }: { hw: HomeworkItem }) {
   const [open, setOpen] = useState(false);
 
   const badge = statusBadge(hw.mySubmission);
-  const isDone = ["passed", "failed", "pending", "review_requested"].includes(hw.mySubmission?.status ?? "");
+  const isDone =
+    ["passed", "failed", "pending", "review_requested"].includes(hw.mySubmission?.status ?? "") &&
+    !hw.mySubmission?.allowRetake;
 
   const handleSuccess = (sub: HWSubmission) => {
     setHw(prev => ({ ...prev, mySubmission: sub }));
@@ -324,6 +356,14 @@ function HomeworkCard({ hw: initHw }: { hw: HomeworkItem }) {
 
       {open && (
         <div className="border-t border-slate-700/60 px-5 pb-5">
+          {hw.mySubmission?.allowRetake && !isDone && (
+            <div className="mt-4 rounded-xl p-4 border border-sky-500/40 bg-sky-950/30 space-y-1">
+              <p className="text-sm font-bold text-sky-200">🔓 المعلم فتح لك محاولة تانية — سلّم نسخة جديدة</p>
+              {hw.mySubmission.review?.note && (
+                <p className="text-xs text-slate-300">ملاحظة المعلم: {hw.mySubmission.review.note}</p>
+              )}
+            </div>
+          )}
           {isDone ? (
             <div className="mt-4 rounded-xl p-4 border border-slate-700 bg-slate-900/40 space-y-2">
               <p className="text-sm font-bold text-slate-300">تفاصيل تسليمك:</p>
@@ -388,8 +428,8 @@ export function TeacherHomeworkHubClient({
     return homeworks.filter(hw => {
       if (filterCourse !== "all" && hw.courseTitle !== filterCourse) return false;
       if (filterType !== "all" && hw.type !== filterType) return false;
-      if (filterStatus === "pending" && hw.mySubmission) return false;
-      if (filterStatus === "done" && !["passed","failed","pending"].includes(hw.mySubmission?.status ?? "")) return false;
+      if (filterStatus === "pending" && hw.mySubmission && !hw.mySubmission.allowRetake) return false;
+      if (filterStatus === "done" && (!hw.mySubmission || hw.mySubmission.allowRetake || !["passed","failed","pending"].includes(hw.mySubmission.status))) return false;
       if (filterStatus === "review_requested" && hw.mySubmission?.status !== "review_requested") return false;
       if (search && !hw.title.toLowerCase().includes(search.toLowerCase())) return false;
       return true;

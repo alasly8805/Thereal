@@ -25,6 +25,17 @@ export function VideoGuard({
   const [violationType, setViolationType] = useState<string>("");
   const [violationCount, setViolationCount] = useState(0);
   const [isTabHidden, setIsTabHidden] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const pauseAllVideos = useCallback(() => {
+    try {
+      const videos = document.querySelectorAll("video");
+      videos.forEach((v) => {
+        if (!v.paused) v.pause();
+      });
+    } catch {}
+  }, []);
+
 
   const reportedTypesRef = useRef<Set<string>>(new Set());
 
@@ -59,11 +70,12 @@ export function VideoGuard({
   const triggerViolationModal = useCallback(
     (type: string, details?: string) => {
       if (disabled) return;
+      pauseAllVideos();
       setHasViolation(true);
       setViolationType(type);
       void reportViolation(type, details);
     },
-    [reportViolation, disabled]
+    [reportViolation, pauseAllVideos, disabled]
   );
 
   // 1. DevTools Detection Mechanisms
@@ -107,15 +119,6 @@ export function VideoGuard({
   }, [triggerViolationModal, disabled]);
 
   // Helper to pause all video playback immediately upon focus loss or capture attempt
-  const pauseAllVideos = useCallback(() => {
-    try {
-      const videos = document.querySelectorAll("video");
-      videos.forEach((v) => {
-        if (!v.paused) v.pause();
-      });
-    } catch {}
-  }, []);
-
   // 2. Keyboard & PrintScreen / Screen-Recording Shortcuts Prevention
   useEffect(() => {
     if (disabled) return;
@@ -223,11 +226,18 @@ export function VideoGuard({
 
     const handleWindowBlur = () => {
       if (isTouch) return;
-      setIsTabHidden(true);
-      pauseAllVideos();
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        navigator.clipboard.writeText("").catch(() => {});
-      }
+      // YouTube/VdoCipher iframes steal window focus on load. That is not a tab
+      // switch — treating it as one paints a black overlay and the video never starts.
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLIFrameElement && wrapRef.current?.contains(active)) return;
+        if (document.visibilityState === "visible" && active instanceof HTMLIFrameElement) return;
+        setIsTabHidden(true);
+        pauseAllVideos();
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          navigator.clipboard.writeText("").catch(() => {});
+        }
+      });
     };
 
     const handleWindowFocus = () => {
@@ -257,13 +267,10 @@ export function VideoGuard({
     };
   }, [reportViolation, pauseAllVideos, disabled]);
 
-  if (disabled) {
-    return <div className="relative w-full">{children}</div>;
-  }
-
   return (
     <div
-      onContextMenu={handleContextMenu}
+      ref={wrapRef}
+      onContextMenu={disabled ? undefined : handleContextMenu}
       className="relative select-none w-full"
       style={{ userSelect: "none", WebkitUserSelect: "none" }}
     >
@@ -277,13 +284,18 @@ export function VideoGuard({
       `}</style>
 
       {/* Main Video Content */}
-      <div className={hasViolation ? "hidden pointer-events-none" : ""}>
+      <div className={!disabled && hasViolation ? "invisible pointer-events-none" : ""}>
         {children}
       </div>
 
       {/* Tab Hidden Blur Overlay — 100% solid black barrier to block all snipping tools */}
-      {isTabHidden && !hasViolation && (
-        <div className="absolute inset-0 bg-black z-50 flex flex-col items-center justify-center p-6 text-center text-white select-none">
+      {!disabled && isTabHidden && !hasViolation && (
+        <div
+          className="absolute inset-0 bg-black z-50 flex flex-col items-center justify-center p-6 text-center text-white select-none cursor-pointer"
+          onClick={() => setIsTabHidden(false)}
+          role="button"
+          tabIndex={0}
+        >
           <div className="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-2xl mb-3">
             ⏸️
           </div>
@@ -291,11 +303,12 @@ export function VideoGuard({
           <p className="text-slate-400 text-xs mt-1 max-w-sm">
             تم التوقف وتعتيم الشاشة تلقائياً عند مغادرة الصفحة لحماية المحتوى ورصيد المشاهدة.
           </p>
+          <p className="text-sky-400 text-xs mt-3 font-bold">اضغط هنا للمتابعة</p>
         </div>
       )}
 
       {/* Security Violation Modal Alert */}
-      {hasViolation && (
+      {!disabled && hasViolation && (
         <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-xl flex flex-col items-center justify-center p-6 text-center text-white dir-rtl">
           <div className="max-w-md w-full bg-slate-900 border border-rose-500/40 rounded-3xl p-8 space-y-6 shadow-2xl shadow-rose-950/50">
             <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center mx-auto text-3xl animate-bounce">

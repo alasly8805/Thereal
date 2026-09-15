@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission, maskPhone } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { logAdminAction } from "@/lib/admin-auth";
 import { notifyViewRequestResolved } from "@/lib/notifications";
@@ -15,13 +16,16 @@ const MAX_NOTES_LENGTH = 500;
  */
 function ownershipFilter(session: { id: string; role: string }) {
   if (session.role === "admin" || session.role === "superadmin") return {};
-  return { video: { folder: { course: { teacherId: session.id } } } };
+  return { video: { folder: { course: { teacherId: actingTeacherId(session) } } } };
 }
 
 export async function GET(req: NextRequest) {
   const session = await getSession();
-  if (!session || !["teacher", "admin", "superadmin"].includes(session.role)) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "admin" && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (isTeacherLike(session.role) && !hasAssistantPermission(session, "manageRequests")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الطلبات" }, { status: 403 });
   }
 
   const statusParam = req.nextUrl.searchParams.get("status") || "pending";
@@ -59,14 +63,26 @@ export async function GET(req: NextRequest) {
     where: { ...ownershipFilter(session), status: "pending" },
   });
 
-  return NextResponse.json({ requests, pendingCount });
+  const canSeePhones = hasAssistantPermission(session, "viewStudentPhones");
+  return NextResponse.json({
+    requests: requests.map((r) => ({
+      ...r,
+      student: r.student
+        ? { ...r.student, phone: canSeePhones ? r.student.phone : maskPhone(r.student.phone) }
+        : r.student,
+    })),
+    pendingCount,
+  });
 }
 
 /** Approve (granting N extra views) or reject a pending request. */
 export async function PATCH(req: NextRequest) {
   const session = await getSession();
-  if (!session || !["teacher", "admin", "superadmin"].includes(session.role)) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "admin" && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (isTeacherLike(session.role) && !hasAssistantPermission(session, "manageRequests")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الطلبات" }, { status: 403 });
   }
 
   const body = (await req.json().catch(() => ({}))) as {
@@ -138,7 +154,7 @@ export async function PATCH(req: NextRequest) {
     data: {
       status: action === "approve" ? "approved" : "rejected",
       grantedViews,
-      teacherId: session.id,
+      teacherId: actingTeacherId(session),
       teacherNotes: notes || null,
       reviewedAt: new Date(),
     },

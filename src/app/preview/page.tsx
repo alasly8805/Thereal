@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { SecurePlayer } from "@/components/ui/SecurePlayer";
 import { VideoWatermark } from "@/components/ui/VideoWatermark";
-import { AXINOM_CONFIG } from "@/lib/axinom-config";
+import { SAME_ORIGIN_LICENSE_SERVERS } from "@/lib/axinom-config";
 
 // ── EME Capability Probes ───────────────────────────────────────────────────
 interface Probe {
@@ -558,9 +558,9 @@ function PreviewDashboardContent() {
       return {
         token: AXINOM_DEMO_TOKEN,
         licenseServers: {
-          widevine: "https://drm-widevine-licensing.axtest.net/AcquireLicense",
-          playready: "https://drm-playready-licensing.axtest.net/AcquireLicense",
-          fairplay: "https://drm-fairplay-licensing.axtest.net/AcquireLicense",
+          widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+          playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+          fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
         },
       };
     }
@@ -569,9 +569,9 @@ function PreviewDashboardContent() {
     return {
       token: customToken,
       licenseServers: {
-        widevine: AXINOM_CONFIG.endpoints.widevine,
-        playready: AXINOM_CONFIG.endpoints.playready,
-        fairplay: AXINOM_CONFIG.endpoints.fairplay,
+        widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+        playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+        fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
       },
     };
   }, [activeTab, axinomMode, customToken]);

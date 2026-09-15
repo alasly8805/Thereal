@@ -4,6 +4,7 @@ import path from "node:path";
 import { prisma } from "./prisma";
 import {
   AXINOM_CONFIG,
+  SAME_ORIGIN_LICENSE_SERVERS,
   type AxinomContentKey,
   type AxinomTokenOptions,
   type AxinomDrmPayload,
@@ -433,30 +434,60 @@ export interface SavedVideoDrmKey {
  * Saves a video's Content Key securely in PostgreSQL (AES-256-GCM encrypted).
  * Ensures that even across server moves or account failovers, the key is permanently accessible.
  */
+/** Marker stored in `keyId` when `keyEnc` holds an encrypted JSON array of tiered keys. */
+const TIERED_KEY_MARKER = "tiered:v1";
+
 export async function saveVideoDrmKey(params: {
   videoId: string;
   assetId: string;
   keyId: string;
   keyHex: string;
+  /** Tiered (HD hardware-only / SD software) keys — stored as one encrypted JSON blob. */
+  keys?: AxinomContentKey[];
   manifestUrl?: string;
 }): Promise<void> {
-  const keyEnc = encryptAxinomSecret(params.keyHex);
+  const tiered = Array.isArray(params.keys) && params.keys.length > 1;
+  const keyEnc = encryptAxinomSecret(tiered ? JSON.stringify(params.keys) : params.keyHex);
+  const keyId = tiered ? TIERED_KEY_MARKER : params.keyId;
   await prisma.axinomVideoKey.upsert({
     where: { videoId: params.videoId },
     update: {
       assetId: params.assetId,
-      keyId: params.keyId,
+      keyId,
       keyEnc,
       manifestUrl: params.manifestUrl ?? null,
     },
     create: {
       videoId: params.videoId,
       assetId: params.assetId,
-      keyId: params.keyId,
+      keyId,
       keyEnc,
       manifestUrl: params.manifestUrl ?? null,
     },
   });
+}
+
+function readDiskDrmKeys(safeId: string): {
+  tieredKeys: AxinomContentKey[];
+  manifestUrl?: string;
+} {
+  try {
+    const keyFilePath = path.resolve(process.cwd(), "uploads", "drm-keys", `${safeId}.json`);
+    if (!fs.existsSync(keyFilePath)) return { tieredKeys: [] };
+    const keyData = JSON.parse(fs.readFileSync(keyFilePath, "utf8"));
+    if (Array.isArray(keyData.keys) && keyData.keys.length) {
+      return { tieredKeys: keyData.keys, manifestUrl: keyData.manifestUrl || undefined };
+    }
+    if (keyData.keyId && keyData.key) {
+      return {
+        tieredKeys: [{ keyId: keyData.keyId, key: keyData.key, hardwareOnly: false }],
+        manifestUrl: keyData.manifestUrl || undefined,
+      };
+    }
+  } catch (err) {
+    console.warn(`[Axinom Pool] Disk lookup for video key failed:`, err);
+  }
+  return { tieredKeys: [] };
 }
 
 /**
@@ -488,50 +519,52 @@ export async function resolveVideoContentKeys(
 
     if (dbKey) {
       const rawKey = decryptAxinomSecret(dbKey.keyEnc);
-      return {
-        tieredKeys: [{ keyId: dbKey.keyId, key: rawKey, hardwareOnly: false }],
-        manifestUrl: dbKey.manifestUrl || undefined,
-      };
+      if (dbKey.keyId === TIERED_KEY_MARKER) {
+        const parsed = JSON.parse(rawKey) as AxinomContentKey[];
+        if (Array.isArray(parsed) && parsed.length) {
+          return { tieredKeys: parsed, manifestUrl: dbKey.manifestUrl || undefined };
+        }
+      } else {
+        const disk = readDiskDrmKeys(safeId);
+        // A leftover single-key DB row must not hide a later tiered package
+        // (HD hardware-only + SD software). Prefer disk when it has both.
+        if (disk.tieredKeys.length > 1) {
+          saveVideoDrmKey({
+            videoId,
+            assetId: safeId,
+            keyId: disk.tieredKeys[0].keyId,
+            keyHex: disk.tieredKeys[0].key,
+            keys: disk.tieredKeys,
+            manifestUrl: disk.manifestUrl,
+          }).catch((e) => console.error("[Axinom Pool] Lazy DB upgrade error:", e));
+          return disk;
+        }
+        return {
+          tieredKeys: [{ keyId: dbKey.keyId, key: rawKey, hardwareOnly: false }],
+          manifestUrl: dbKey.manifestUrl || undefined,
+        };
+      }
     }
   } catch (err) {
     console.warn(`[Axinom Pool] DB lookup for video key failed, falling back to disk:`, err);
   }
 
   // 2. Try Disk file: uploads/drm-keys/${safeId}.json
-  try {
-    const keyFilePath = path.resolve(process.cwd(), "uploads", "drm-keys", `${safeId}.json`);
-    if (fs.existsSync(keyFilePath)) {
-      const keyData = JSON.parse(fs.readFileSync(keyFilePath, "utf8"));
-      let tieredKeys: AxinomContentKey[] = [];
-      let foundKeyId = "";
-      let foundKeyHex = "";
-
-      if (Array.isArray(keyData.keys) && keyData.keys.length) {
-        tieredKeys = keyData.keys;
-      } else if (keyData.keyId && keyData.key) {
-        tieredKeys = [{ keyId: keyData.keyId, key: keyData.key, hardwareOnly: false }];
-        foundKeyId = keyData.keyId;
-        foundKeyHex = keyData.key;
-      }
-
-      // Lazy backup to DB for permanent resiliency
-      if (foundKeyId && foundKeyHex) {
-        saveVideoDrmKey({
-          videoId,
-          assetId: safeId,
-          keyId: foundKeyId,
-          keyHex: foundKeyHex,
-          manifestUrl: keyData.manifestUrl,
-        }).catch((e) => console.error("[Axinom Pool] Lazy DB save error:", e));
-      }
-
-      return {
-        tieredKeys,
-        manifestUrl: keyData.manifestUrl || undefined,
-      };
+  const disk = readDiskDrmKeys(safeId);
+  if (disk.tieredKeys.length) {
+    const foundKeyId = disk.tieredKeys[0].keyId;
+    const foundKeyHex = disk.tieredKeys[0].key;
+    if (foundKeyId && foundKeyHex) {
+      saveVideoDrmKey({
+        videoId,
+        assetId: safeId,
+        keyId: foundKeyId,
+        keyHex: foundKeyHex,
+        keys: disk.tieredKeys.length > 1 ? disk.tieredKeys : undefined,
+        manifestUrl: disk.manifestUrl,
+      }).catch((e) => console.error("[Axinom Pool] Lazy DB save error:", e));
     }
-  } catch (err) {
-    console.warn(`[Axinom Pool] Disk lookup for video key failed:`, err);
+    return disk;
   }
 
   // 3. Fallback to passed-in options
@@ -562,11 +595,11 @@ const USAGE_POLICIES = [
   {
     name: HARDWARE_POLICY,
     playready: { min_device_security_level: 3000 },
-    widevine: { device_security_level: "HW_SECURE_ALL" },
+    widevine: { device_security_level: "HW_SECURE_DECODE" },
   },
   {
     name: SOFTWARE_POLICY,
-    playready: { min_device_security_level: 150 },
+    playready: { min_device_security_level: 2000 },
     widevine: { device_security_level: "SW_SECURE_CRYPTO" },
   },
 ];
@@ -614,9 +647,9 @@ export async function mintAxinomTokenWithPool(options: MintTokenOptions): Promis
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ2ZXJzaW9uIjoxLCJjb21fa2V5X2lkIjoiYjMzNjRlYjUtNTFmNi00YWUzLThjOTgtMzNjZWQ1ZTMxYzc4IiwibWVzc2FnZSI6eyJ0eXBlIjoiZW50aXRsZW1lbnRfbWVzc2FnZSIsInZlcnNpb24iOjIsImxpY2Vuc2UiOnsiYWxsb3dfcGVyc2lzdGVuY2UiOnRydWV9LCJjb250ZW50X2tleXNfc291cmNlIjp7ImlubGluZSI6W3siaWQiOiI5ZWI0MDUwZC1lNDRiLTQ4MDItOTMyZS0yN2Q3NTA4M2UyNjYiLCJlbmNyeXB0ZWRfa2V5IjoibEszT2pITFlXMjRjcjJrdFI3NGZudz09IiwidXNhZ2VfcG9saWN5IjoiUG9saWN5IEEifV19LCJjb250ZW50X2tleV91c2FnZV9wb2xpY2llcyI6W3sibmFtZSI6IlBvbGljeSBBIiwicGxheXJlYWR5Ijp7Im1pbl9kZXZpY2Vfc2VjdXJpdHlfbGV2ZWwiOjE1MCwicGxheV9lbmFibGVycyI6WyI3ODY2MjdEOC1DMkE2LTQ0QkUtOEY4OC0wOEFFMjU1QjAxQTciXX19XX19.W2FbPDSDaq-LeeLfOnbpTMa-zCmXh8RLChEVDYvdcVw",
       manifestUrl: "https://media.axprod.net/TestVectors/v7-MultiDRM-SingleKey/Manifest_1080p.mpd",
       licenseServers: {
-        widevine: "https://drm-widevine-licensing.axtest.net/AcquireLicense",
-        playready: "https://drm-playready-licensing.axtest.net/AcquireLicense",
-        fairplay: "https://drm-fairplay-licensing.axtest.net/AcquireLicense",
+        widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+        playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+        fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
       },
       expiresAt,
       expiresInSeconds,
@@ -734,9 +767,9 @@ export async function mintAxinomTokenWithPool(options: MintTokenOptions): Promis
     token,
     manifestUrl,
     licenseServers: {
-      widevine: activeAccount.widevineLicenseUrl,
-      playready: activeAccount.playreadyLicenseUrl,
-      fairplay: activeAccount.fairplayLicenseUrl,
+      widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+      playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+      fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
       fairplayCertUrl: activeAccount.fairplayCertUrl || undefined,
     },
     expiresAt,

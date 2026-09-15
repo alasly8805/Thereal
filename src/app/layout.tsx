@@ -6,6 +6,7 @@ import { ErrorReporter } from "@/components/ErrorReporter";
 import { AIAssistant } from "@/components/ai/AIAssistant";
 import { MobileTabBar } from "@/components/ui/MobileTabBar";
 import { CenterModeBanner } from "@/components/center/CenterModeBanner";
+import SupportViewBanner from "@/components/SupportViewBanner";
 import { MaintenanceScreen } from "@/components/MaintenanceScreen";
 import { OverloadWaitingScreen } from "@/components/OverloadWaitingScreen";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -34,6 +35,9 @@ async function resolveGatedState(): Promise<GateResult> {
     const pathname = hdrs.get("x-pathname") ?? "";
     if (
       pathname.startsWith("/adminpanel") ||
+      // Support must stay reachable during maintenance and overload — that is
+      // precisely when students flood the inbox asking why nothing works.
+      pathname.startsWith("/thefake/support") ||
       pathname === "/maintenance" ||
       pathname.startsWith("/vpn-check") ||
       pathname.startsWith("/waiting-room")
@@ -211,6 +215,11 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const gateState = await resolveGatedState();
+  const pathname = (await headers()).get("x-pathname") ?? "";
+  const hideAppChrome =
+    pathname.startsWith("/adminpanel") ||
+    pathname.startsWith("/preview") ||
+    pathname.startsWith("/thefake/support");
 
   return (
     <html
@@ -256,9 +265,10 @@ export default async function RootLayout({
               <ErrorReporter />
               <ToastProvider>
                 <CenterModeBanner />
+                <SupportViewBanner />
                 {children}
-                <AIAssistant />
-                <MobileTabBar />
+                {!hideAppChrome && <AIAssistant />}
+                {!hideAppChrome && <MobileTabBar />}
               </ToastProvider>
             </>
           )}

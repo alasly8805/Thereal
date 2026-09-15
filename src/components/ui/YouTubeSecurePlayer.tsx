@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { VideoWatermark } from "./VideoWatermark";
 import { useFullscreen } from "./useFullscreen";
 import { extractYouTubeVideoId } from "@/lib/youtube";
+import { VideoSpeedMenu, usePlaybackRate } from "./VideoSpeedMenu";
 
 /**
  * Hardened YouTube player. Native controls are OFF and a full-surface click
@@ -24,6 +25,7 @@ interface YTPlayer {
   getDuration(): number;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getPlayerState(): number;
+  setPlaybackRate?(rate: number): void;
   destroy(): void;
 }
 
@@ -142,6 +144,18 @@ export function YouTubeSecurePlayer({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [useFallbackIframe, setUseFallbackIframe] = useState(false);
 
+  // Playback speed — remembered per browser. Pushed to the IFrame API once the
+  // player is ready and again whenever the student changes it.
+  const [playbackRate, setPlaybackRate] = usePlaybackRate();
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      playerRef.current?.setPlaybackRate?.(playbackRate);
+    } catch {
+      /* the API can reject rates a given video doesn't offer; keep going */
+    }
+  }, [ready, playbackRate]);
+
   // Play/pause programmatic control
   useEffect(() => {
     const p = playerRef.current;
@@ -207,7 +221,7 @@ export function YouTubeSecurePlayer({
               disablekb: 1,
               fs: 0,
               playsinline: 1,
-              autoplay: 0,
+              autoplay: 1,
               enablejsapi: 1,
               origin: typeof window !== "undefined" ? window.location.origin : undefined,
             },
@@ -230,6 +244,11 @@ export function YouTubeSecurePlayer({
                   } catch {
                     /* noop */
                   }
+                }
+                try {
+                  playerRef.current?.playVideo();
+                } catch {
+                  /* autoplay may still be blocked; the click shield starts it */
                 }
               },
               onStateChange: (e: { data: number }) => {
@@ -490,7 +509,12 @@ export function YouTubeSecurePlayer({
     };
 
     const handleBlur = () => {
-      setIsBlackoutActive(true);
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLIFrameElement && wrapRef.current?.contains(active)) return;
+        if (document.visibilityState === "visible" && active instanceof HTMLIFrameElement) return;
+        setIsBlackoutActive(true);
+      });
     };
 
     const handleFocus = () => {
@@ -586,12 +610,18 @@ export function YouTubeSecurePlayer({
 
       {/* ── Active Anti-Screenshot / Blur Blackout Barrier ── */}
       {isBlackoutActive && (
-        <div className="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center gap-3 select-none pointer-events-auto">
+        <div
+          className="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center gap-3 select-none pointer-events-auto cursor-pointer"
+          onClick={() => setIsBlackoutActive(false)}
+          role="button"
+          tabIndex={0}
+        >
           <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 animate-pulse text-xl">
             🛡️
           </div>
           <p className="text-sm font-bold text-white tracking-wide">تم تعتيم الشاشة لحماية المحتوى</p>
           <p className="text-xs text-slate-400 font-mono">Screen Capture Protected</p>
+          <p className="text-sky-400 text-xs font-bold">اضغط هنا للمتابعة</p>
         </div>
       )}
 
@@ -722,6 +752,8 @@ export function YouTubeSecurePlayer({
               </svg>
             )}
           </button>
+
+          <VideoSpeedMenu variant="inline" value={playbackRate} onChange={setPlaybackRate} />
 
           <button
             type="button"

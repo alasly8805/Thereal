@@ -66,7 +66,7 @@ export function TeacherOverview({
   courses, onCreateCourse, loadingCourses, onGoToMyPage,
 }: {
   courses: { id: string; title: string }[];
-  onCreateCourse: () => void;
+  onCreateCourse?: () => void;
   loadingCourses: boolean;
   onGoToMyPage?: () => void;
 }) {
@@ -121,9 +121,11 @@ export function TeacherOverview({
         <p className="font-bold text-[var(--ink)] text-lg">أهلاً بك في Code-UP{firstName ? `، ${firstName}` : ""} 👋</p>
         <p className="text-sm text-[var(--ink-muted)] mt-1.5 max-w-sm mx-auto leading-6">ابدأ بإنشاء كورسك الأول، وستظهر هنا كل إحصائياتك ومخططاتك مباشرة.</p>
         <div className="flex items-center justify-center gap-3 mt-5">
-          <button onClick={onCreateCourse} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold transition-colors">
-            <IconPlus className="w-4 h-4" /> إنشاء كورس
-          </button>
+          {onCreateCourse && (
+            <button onClick={onCreateCourse} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold transition-colors">
+              <IconPlus className="w-4 h-4" /> إنشاء كورس
+            </button>
+          )}
           {onGoToMyPage && (
             <button onClick={onGoToMyPage} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-[var(--border)] text-[var(--ink)] text-sm font-bold transition-colors hover:bg-[var(--surface-2)]">
               إضافة صورة شخصية 📸

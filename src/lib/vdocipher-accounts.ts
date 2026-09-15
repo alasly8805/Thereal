@@ -724,3 +724,126 @@ export async function reconcileStaleReservations(): Promise<number> {
   });
   return result.count;
 }
+
+/**
+ * Automatically ensures a video exists on an active VdoCipher account on-request.
+ * If the video was on an old/expired account and a new account has been added,
+ * triggers an automated background transfer from Google Drive/local source to the new account
+ * so the new account contains the old videos when requested.
+ */
+export async function ensureVideoSyncedToActiveAccount(video: {
+  id: string;
+  title?: string;
+  url?: string | null;
+  providerVideoId?: string | null;
+  vdoCipherId?: string | null;
+}): Promise<{
+  active: boolean;
+  vdoCipherVideoId?: string;
+  syncing?: boolean;
+}> {
+  // 1. Check if an active asset already exists on an active account
+  const currentAsset = await prisma.vdoCipherVideoAsset.findFirst({
+    where: {
+      videoId: video.id,
+      account: { isActive: true },
+    },
+    include: { account: true },
+  });
+
+  if (currentAsset && currentAsset.account.isActive) {
+    return { active: true, vdoCipherVideoId: currentAsset.vdoCipherVideoId };
+  }
+
+  // 2. Locate the best active account (e.g. newly added account)
+  const bestAccount = await selectBestAccountForUpload();
+  if (!bestAccount || !bestAccount.apiKey) {
+    return { active: false };
+  }
+
+  // 3. Extract Google Drive file ID if available
+  const rawUrl = video.url || video.providerVideoId || "";
+  const match =
+    rawUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+    rawUrl.match(/gdrive_([a-zA-Z0-9_-]+)/) ||
+    rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const fileId = match?.[1];
+
+  if (!fileId) {
+    return { active: false };
+  }
+
+  // 4. Trigger asynchronous background transfer to the new account (non-blocking for current viewer)
+  setTimeout(async () => {
+    try {
+      console.info(`[vdocipher-sync] Starting on-request background sync for video ${video.id} to new account ${bestAccount.name}...`);
+      const { getGoogleDriveAccessToken } = await import("./google-drive");
+      const { createWriteStream, openAsBlob, existsSync, mkdirSync } = await import("node:fs");
+      const { unlink } = await import("node:fs/promises");
+      const path = await import("node:path");
+      const { Readable } = await import("node:stream");
+      const { pipeline } = await import("node:stream/promises");
+      const { randomUUID } = await import("node:crypto");
+
+      const token = await getGoogleDriveAccessToken();
+      const downloadUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+      const res = await fetch(downloadUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok || !res.body) {
+        console.error(`[vdocipher-sync] Failed to download file from Google Drive: ${res.status}`);
+        return;
+      }
+
+      const tempDir = path.resolve(process.cwd(), "uploads", "temp");
+      if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true });
+      const tempPath = path.join(tempDir, `sync-vdocipher-${randomUUID()}.mp4`);
+
+      await pipeline(Readable.fromWeb(res.body as any), createWriteStream(tempPath));
+
+      const ticket = await requestVdoCipherUploadTicket({
+        apiKey: bestAccount.apiKey,
+        title: video.title || "درس مستورد تلقائياً",
+      });
+
+      const videoBlob = await openAsBlob(tempPath, { type: "video/mp4" });
+      const formData = new FormData();
+      if (ticket.clientPayload) {
+        for (const k of Object.keys(ticket.clientPayload)) {
+          if (k !== "uploadLink") formData.append(k, ticket.clientPayload[k]);
+        }
+      }
+      formData.append("file", videoBlob, "video.mp4");
+
+      const s3Res = await fetch(ticket.uploadLink, { method: "POST", body: formData });
+      await unlink(tempPath).catch(() => {});
+
+      if (s3Res.ok || s3Res.status === 201 || s3Res.status === 204) {
+        // Register asset under the new account
+        await prisma.$transaction([
+          prisma.vdoCipherVideoAsset.create({
+            data: {
+              videoId: video.id,
+              accountId: bestAccount.id,
+              vdoCipherVideoId: ticket.videoId,
+            },
+          }),
+          prisma.video.update({
+            where: { id: video.id },
+            data: {
+              videoProvider: "vdocipher",
+              vdoCipherId: ticket.videoId,
+              providerVideoId: ticket.videoId,
+            },
+          }),
+        ]);
+        console.info(`[vdocipher-sync] Successfully synced video ${video.id} to new account ${bestAccount.name} with assetId ${ticket.videoId}!`);
+      }
+    } catch (err) {
+      console.error("[vdocipher-sync] Error syncing video to new account:", err);
+    }
+  }, 100);
+
+  return { active: false, syncing: true };
+}

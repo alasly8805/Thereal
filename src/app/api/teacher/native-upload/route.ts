@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { initAlaslyUpload, completeAlaslyUpload } from "@/lib/alasly";
 import fs from "fs";
 import path from "path";
@@ -12,8 +13,11 @@ const UPLOAD_DIR = path.join(process.cwd(), "uploads", "videos");
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "admin" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "admin" && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+    }
+    if (isTeacherLike(session.role) && !hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
     const contentType = req.headers.get("content-type") || "";
@@ -89,6 +93,15 @@ export async function POST(req: NextRequest) {
         });
         await pipeline(nodeStream, writeStream);
       }
+
+      // Durable copy in S3; local disk is only a cache from here on. The
+      // low-bandwidth rendition is queued off the back of it so every lesson
+      // gets one without anyone having to remember to ask.
+      const { uploadVideoToS3 } = await import("@/lib/video-storage");
+      void uploadVideoToS3(filePath, filename).then(async () => {
+        const { enqueueRenditions } = await import("@/lib/rendition-queue");
+        enqueueRenditions(filename);
+      });
 
       return NextResponse.json({
         success: true,

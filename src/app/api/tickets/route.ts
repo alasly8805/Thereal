@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession, getStudentSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission, maskPhone } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 import { checkCourseEnrollment } from "@/lib/authorization";
@@ -67,9 +68,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ tickets });
     }
 
-    if (session.role === "teacher") {
+    if (isTeacherLike(session.role)) {
+      if (!hasAssistantPermission(session, "manageTickets")) {
+        return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية التذاكر" }, { status: 403 });
+      }
+      const canSeePhones = hasAssistantPermission(session, "viewStudentPhones");
       const courses = await prisma.course.findMany({
-        where: { teacherId: session.id },
+        where: { teacherId: actingTeacherId(session) },
         select: { id: true },
       });
       const tickets = await prisma.supportTicket.findMany({
@@ -83,7 +88,14 @@ export async function GET(req: NextRequest) {
           course: { select: { title: true } },
         },
       });
-      return NextResponse.json({ tickets });
+      return NextResponse.json({
+        tickets: tickets.map((t) => ({
+          ...t,
+          student: t.student
+            ? { ...t.student, phone: canSeePhones ? t.student.phone : maskPhone(t.student.phone) }
+            : t.student,
+        })),
+      });
     }
 
     if (session.role === "superadmin" || session.role === "admin") {

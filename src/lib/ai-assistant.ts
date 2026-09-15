@@ -25,7 +25,7 @@ const GEMINI_KEYS = [
 const BACKUP_BASE_RAW = process.env.AI_BACKUP_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 const BACKUP_BASE_URL = BACKUP_BASE_RAW.replace(/\/+$/, "");
 const BACKUP_MODEL = process.env.AI_BACKUP_MODEL || "gemini-flash-lite-latest";
-const PROVIDER_TIMEOUT_MS = 2_500;
+const PROVIDER_TIMEOUT_MS = 12_000;
 
 function providerSignal(requestSignal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
@@ -104,6 +104,7 @@ export interface AIAction {
     | "navigate"
     | "show_insights"
     | "interactive_question"
+    | "update_course"
     | "none";
   payload?: Record<string, unknown> | InteractiveQuestionPayload;
 }
@@ -118,6 +119,20 @@ const SYSTEM_PROMPT = `أنت "مرشد Code-UP"، الموجه الذكي وا�
 
 شخصيتك وأسلوبك:
 - أسلوبك سريع، ودود، ومباشر باللغة العربية، وتتحدث مباشرة في صلب الموضوع بإيجاز ونقاط واضحة دون مماطلة أو وعود زائفة.
+- **إدارة وتعديل الكورسات للمشرف العام (Superadmin Course Management):**
+  إذا كان المستخدم مشرفاً عاماً (Superadmin) وطلب تعديل كورس في رسالته (مثل: "كورس الشهر الاول عربي خليه مجاني"، "كورس كذا خليه 50 جنيه"، "كورس كذا خليه تأسيسي"، "كورس كذا خليه حصة"، "كورس كذا خليه شهر"):
+  - ابحث عن الكورس المطابق من قائمة الكورسات المرفقة في سياق المشرف العام أدناه بدقة.
+  - قم بتضمين action من نوع "update_course" بالبيانات المراد تعديلها:
+    {
+      "type": "update_course",
+      "payload": {
+        "courseId": "معرف الكورس من القائمة",
+        "category": "foundation" | "month" | "lesson" | "general" | "auto",
+        "isPaid": true | false,
+        "price": 50
+      }
+    }
+  - أجب في message بتأكيد التعديل واسم الكورس وما تم تغييره بوضوح تام ودون تردد.
 - **شرح المفاهيم وتدريب الطالب (Educational Tutoring & Concept Explanations):**
   - إذا سأل الطالب عن مفهوم علمي، أو طلب شرحاً، أو ضغط "اسأل المساعد عن المفهوم"، أو جاءت الرسالة بصيغة: *"اشرح لي بالتفصيل مفهوم ... ولا تعطني الإجابة مباشرة؛ ساعدني في فهم الفكرة"*:
   - **اشرح المفهوم العلمي خطوة بخطوة باللغة العربية مع تبسيط كامل وتلميحات ذكية في نص message**.
@@ -149,13 +164,14 @@ const SYSTEM_PROMPT = `أنت "مرشد Code-UP"، الموجه الذكي وا�
   "message": "ردك الودود المباشر والموجز باللغة العربية",
   "actions": [
     {
-      "type": "create_grade_request" | "create_ticket" | "submit_feedback" | "navigate" | "show_insights" | "interactive_question" | "none",
+      "type": "create_grade_request" | "create_ticket" | "submit_feedback" | "navigate" | "show_insights" | "interactive_question" | "update_course" | "none",
       "payload": { ... }
     }
   ]
 }
 
 أنواع الـ payload:
+- update_course: { "courseId": "c_id", "category": "foundation" | "month" | "lesson" | "general" | "auto", "isPaid": boolean, "price": number }
 - interactive_question: { "questionId": "q_1", "topic": "تطور تكنولوجيا المعلومات", "question": "نص السؤال؟", "options": [{"id":"A","text":"خيار أ"},{"id":"B","text":"خيار ب"},{"id":"C","text":"خيار ج"},{"id":"D","text":"خيار د"}], "correctAnswer": "A", "explanation": "تفسير سبب صحة الخيار أ ولماذا الخيارات الأخرى خاطئة" }
 - navigate: { "path": "/courses/..." | "/environments/programming?tab=curriculum" | "/curriculum/programming-and-ai", "reason": "نص زر الانتقال" }
 - create_grade_request: { quizId, reason, requestedScore, evidence }
@@ -164,6 +180,24 @@ const SYSTEM_PROMPT = `أنت "مرشد Code-UP"، الموجه الذكي وا�
 - show_insights: {}`;
 
 function summarizeContext(ctx: StudentContext): string {
+  const isSuper = ctx.profile?.role === "superadmin" || ctx.profile?.role === "admin";
+  if (isSuper) {
+    const courseLines = (ctx.courses || [])
+      .map(
+        (c) =>
+          `- [ID: ${c.id}] "${c.title}" | مدرس: ${c.teacher} | تصنيف: ${c.category || "auto"} | نوع: ${c.isPaid ? `مدفوع (${c.price} ج.م)` : "مجاني"}`
+      )
+      .join("\n");
+
+    return `بيانات المشرف العام (Superadmin Master Context):
+- الاسم: ${ctx.profile?.name || "المشرف العام"}
+- الصلاحية: ${ctx.profile?.role || "superadmin"} (تحكم كامل في كورسات وإعدادات المنصة)
+
+قائمة كورسات المنصة المتاحة للتحكم والتعديل:
+${courseLines || "لا يوجد كورسات"}
+`;
+  }
+
   const courseLines = (ctx.courses || [])
     .map((c) => {
       const quizSummary = (c.quizResults || [])

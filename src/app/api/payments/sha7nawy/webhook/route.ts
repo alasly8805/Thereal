@@ -22,7 +22,14 @@ export async function POST(req: NextRequest) {
       req.headers.get("x-sha7nawy-secret");
     if (!secretsMatch(incomingSecret, webhookSecret)) {
       const ip = req.headers.get("x-forwarded-for")?.split(",")[0] || req.headers.get("x-real-ip") || "127.0.0.1";
-      console.warn(`[Sha7nawy Webhook] Unauthorized secret attempt from IP: ${ip}`);
+      // A rejected delivery means the money is taken but nothing is fulfilled, and
+      // the previous log line said nothing about *why* the secret did not match.
+      // Record which headers actually arrived (names only — never the values) so a
+      // mismatch can be told apart from the gateway simply using a different header.
+      const headerNames = Array.from(req.headers.keys()).sort().join(",");
+      console.warn(
+        `[Sha7nawy Webhook] Unauthorized secret attempt from IP: ${ip} | secret header present: ${Boolean(incomingSecret)} | headers seen: ${headerNames}`
+      );
       return NextResponse.json({ error: "Unauthorized webhook caller" }, { status: 401 });
     }
 

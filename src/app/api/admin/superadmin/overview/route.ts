@@ -2,8 +2,108 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getExpensesFromDb, getTeacherPercentagesFromDb } from "@/lib/money-control";
+import { getPlanMonths } from "@/lib/subscription-terms";
+import { computeBookingIntelligence } from "@/lib/booking-intelligence";
 
 export const dynamic = "force-dynamic";
+
+const DEFAULT_PLAN_PRICES = { monthly: 180, termly: 750, yearly: 1200 } as const;
+
+const STAGE_LABELS: Record<string, string> = {
+  sec_1: "أولى بكالوريا",
+  sec_2: "ثانية بكالوريا",
+  sec_3: "ثالثة ثانوي",
+};
+
+type ProfilePricingInput = {
+  slug: string;
+  isPublished: boolean;
+  priceMonthly: number | null;
+  priceTermly: number | null;
+  priceYearly: number | null;
+  discountMonthly: number | null;
+  discountTermly: number | null;
+  discountYearly: number | null;
+  stagePricing: string | null;
+  enableLanguagesTrack: boolean;
+  priceLanguagesMonthly: number | null;
+  priceLanguagesTermly: number | null;
+  priceLanguagesYearly: number | null;
+} | null;
+
+/**
+ * Flatten a teacher's booking price configuration into one readable object:
+ * base plan prices (falling back to platform defaults), discounts, the
+ * languages-track surcharge, and any per-stage overrides.
+ */
+function buildPlanPricing(profile: ProfilePricingInput) {
+  const pick = (v: number | null | undefined, fallback: number) =>
+    typeof v === "number" && v > 0 ? v : fallback;
+
+  const base = {
+    monthly: pick(profile?.priceMonthly, DEFAULT_PLAN_PRICES.monthly),
+    termly: pick(profile?.priceTermly, DEFAULT_PLAN_PRICES.termly),
+    yearly: pick(profile?.priceYearly, DEFAULT_PLAN_PRICES.yearly),
+  };
+  const discounts = {
+    monthly: profile?.discountMonthly ?? 0,
+    termly: profile?.discountTermly ?? 0,
+    yearly: profile?.discountYearly ?? 0,
+  };
+  const languagesSurcharge = {
+    monthly: profile?.priceLanguagesMonthly ?? 0,
+    termly: profile?.priceLanguagesTermly ?? 0,
+    yearly: profile?.priceLanguagesYearly ?? 0,
+  };
+
+  const stages: Array<{
+    key: string;
+    label: string;
+    bookingEnabled: boolean;
+    monthly: number;
+    termly: number;
+    yearly: number;
+    languagesMonthly: number;
+    languagesTermly: number;
+    languagesYearly: number;
+  }> = [];
+
+  if (profile?.stagePricing) {
+    try {
+      const parsed = JSON.parse(profile.stagePricing) as Record<string, Record<string, unknown>>;
+      for (const [key, cfg] of Object.entries(parsed || {})) {
+        if (!cfg || typeof cfg !== "object") continue;
+        const num = (v: unknown, fallback: number) => (typeof v === "number" && v > 0 ? v : fallback);
+        const numOrZero = (v: unknown, fallback: number) => (typeof v === "number" ? v : fallback);
+        stages.push({
+          key,
+          label: STAGE_LABELS[key] ?? key,
+          bookingEnabled: cfg.bookingEnabled !== false,
+          monthly: num(cfg.priceMonthly, base.monthly),
+          termly: num(cfg.priceTermly, base.termly),
+          yearly: num(cfg.priceYearly, base.yearly),
+          languagesMonthly: numOrZero(cfg.priceLanguagesMonthly, languagesSurcharge.monthly),
+          languagesTermly: numOrZero(cfg.priceLanguagesTermly, languagesSurcharge.termly),
+          languagesYearly: numOrZero(cfg.priceLanguagesYearly, languagesSurcharge.yearly),
+        });
+      }
+    } catch {
+      /* malformed JSON → ignore stage overrides */
+    }
+  }
+
+  return {
+    hasProfile: Boolean(profile),
+    slug: profile?.slug ?? null,
+    isPublished: profile?.isPublished ?? false,
+    usesDefaults: !profile || [profile.priceMonthly, profile.priceTermly, profile.priceYearly].every((v) => !v),
+    base,
+    discounts,
+    enableLanguagesTrack: profile?.enableLanguagesTrack ?? true,
+    languagesSurcharge,
+    stages,
+  };
+}
 
 /** Superadmin-only: platform-wide overview stats. */
 export async function GET() {
@@ -12,36 +112,56 @@ export async function GET() {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
+  const demoTour = session.demoTour === true;
+  const studentAudience = demoTour
+    ? { role: "student" as const, isDeleted: false, isDemo: true }
+    : { role: "student" as const, isDeleted: false, accountMode: { not: "TESTER" as const } };
+  const nestedStudent = demoTour
+    ? { role: "student" as const, isDemo: true }
+    : { role: "student" as const, isVirtual: false, accountMode: { not: "TESTER" as const } };
+  const teacherAudience = demoTour
+    ? { role: "teacher" as const, isDeleted: false, isDemo: true }
+    : { role: "teacher" as const, isDeleted: false, isDemo: false };
+
   try {
     const [totalStudents, totalTeachers, teachers, walletDeposits, expenses, percentages, manualLogs, balanceTxs, courseExclusions] = await Promise.all([
       // Total active real students (not deleted, not QA tester)
       prisma.user.count({
-        where: {
-          role: "student",
-          isDeleted: false,
-          accountMode: { not: "TESTER" },
-        },
+        where: studentAudience,
       }),
 
       // Total active teachers
-      prisma.user.count({ where: { role: "teacher", isDeleted: false } }),
+      prisma.user.count({ where: teacherAudience }),
 
       // Teachers with their courses, actual real student subscriptions, access codes, and enrollments
       prisma.user.findMany({
-        where: { role: "teacher", isDeleted: false },
+        where: teacherAudience,
         select: {
           id: true,
           name: true,
           email: true,
           createdAt: true,
+          teacherProfile: {
+            select: {
+              slug: true,
+              isPublished: true,
+              priceMonthly: true,
+              priceTermly: true,
+              priceYearly: true,
+              discountMonthly: true,
+              discountTermly: true,
+              discountYearly: true,
+              stagePricing: true,
+              enableLanguagesTrack: true,
+              priceLanguagesMonthly: true,
+              priceLanguagesTermly: true,
+              priceLanguagesYearly: true,
+            },
+          },
           teacherSubscriptions: {
             where: {
               status: "active",
-              student: {
-                role: "student",
-                isVirtual: false,
-                accountMode: { not: "TESTER" },
-              },
+              student: nestedStudent,
             },
             select: {
               id: true,
@@ -55,6 +175,7 @@ export async function GET() {
               paymentSource: true,
               paymentRef: true,
               createdAt: true,
+              expiresAt: true,
               student: {
                 select: {
                   id: true,
@@ -97,23 +218,18 @@ export async function GET() {
               accessCodes: {
                 where: {
                   studentId: { not: null },
-                  student: {
-                    role: "student",
-                    isVirtual: false,
-                    accountMode: { not: "TESTER" },
-                  },
+                  student: nestedStudent,
                 },
                 select: { id: true, studentId: true, isActive: true },
               },
               enrollments: {
                 where: {
-                  student: {
-                    role: "student",
-                    isVirtual: false,
-                    accountMode: { not: "TESTER" },
-                  },
+                  student: nestedStudent,
                 },
                 select: { id: true, studentId: true, amountPaid: true },
+              },
+              folders: {
+                select: { id: true, name: true, monthIndex: true },
               },
             },
             orderBy: { createdAt: "desc" },
@@ -127,23 +243,19 @@ export async function GET() {
         where: {
           amount: { gt: 0 },
           type: { in: ["credit_sha7nawy_wallet", "credit_shakeout_wallet", "credit_code", "credit_admin"] },
-          user: {
-            role: "student",
-            isVirtual: false,
-            accountMode: { not: "TESTER" },
-          },
+          user: nestedStudent,
         },
         select: { amount: true },
       }),
 
       // Platform Expenses
-      getExpensesFromDb(),
+      demoTour ? Promise.resolve([]) : getExpensesFromDb(),
 
       // Teacher Custom Platform Percentages (default 25%)
       getTeacherPercentagesFromDb(),
 
       // Activity logs for manual registrations
-      prisma.activityLog.findMany({
+      demoTour ? Promise.resolve([]) : prisma.activityLog.findMany({
         where: { action: "MANUAL_TEACHER_SUBSCRIPTION" },
         select: { targetId: true, adminName: true, createdAt: true },
         orderBy: { createdAt: "desc" },
@@ -153,6 +265,7 @@ export async function GET() {
       prisma.balanceTransaction.findMany({
         where: {
           type: { in: ["credit_sha7nawy_wallet", "credit_shakeout_wallet", "credit_sha7nawy_pending", "credit_shakeout_pending", "debit_purchase"] },
+          ...(demoTour ? { user: nestedStudent } : {}),
         },
         select: { userId: true, type: true, note: true, providerRef: true, createdAt: true },
         orderBy: { createdAt: "desc" },
@@ -176,7 +289,7 @@ export async function GET() {
     const now = new Date();
     const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
-    const realStudentFilter = { role: "student", isVirtual: false, accountMode: { not: "TESTER" } } as const;
+    const realStudentFilter = nestedStudent;
 
     const [bookingsActiveNow, bookingsAddedToday, bookingsActiveAgg] = await Promise.all([
       prisma.teacherSubscription.count({
@@ -194,6 +307,7 @@ export async function GET() {
     // ── Access monitor: recent grants & money movements with anomaly flags ──
     const [recentEnrollments, recentSubs, recentDebits, payCodes, manualEnrollLogs] = await Promise.all([
       prisma.courseEnrollment.findMany({
+        ...(demoTour ? { where: { student: nestedStudent } } : {}),
         orderBy: { createdAt: "desc" },
         take: 50,
         select: {
@@ -203,6 +317,7 @@ export async function GET() {
         },
       }),
       prisma.teacherSubscription.findMany({
+        ...(demoTour ? { where: { student: nestedStudent } } : {}),
         orderBy: { createdAt: "desc" },
         take: 50,
         select: {
@@ -319,14 +434,13 @@ export async function GET() {
       const realReservationsRevenue = paidSubs.reduce((sum, s) => sum + (s.amount || 0), 0);
 
       // Track subscriptions per student for this teacher to prevent double counting
-      // Monthly plan = 1 course slot, termly = 3 course slots, yearly = 6 course slots
+      // One course slot per booked month (monthly 1 / termly 4 / yearly 8).
       const studentSubsMap = new Map<string, Array<{ id: string; amount: number; planType: string; remainingSlots: number }>>();
       for (const sub of paidSubs) {
         const sId = sub.student?.id;
         if (!sId) continue;
         if (!studentSubsMap.has(sId)) studentSubsMap.set(sId, []);
-        const monthsMap: Record<string, number> = { monthly: 1, termly: 3, yearly: 6 };
-        const slots = monthsMap[sub.planType] || 1;
+        const slots = getPlanMonths(sub.planType);
         studentSubsMap.get(sId)!.push({
           id: sub.id,
           amount: sub.amount || 0,
@@ -452,6 +566,7 @@ export async function GET() {
         platformPercentage,
         platformShare,
         teacherShare,
+        planPricing: buildPlanPricing(t.teacherProfile),
         subscriptions: activeSubs.map((s) => {
           const studentId = s.student?.id;
           const manualLog = manualLogs.find(
@@ -588,6 +703,35 @@ export async function GET() {
       }))
     );
 
+    // Booking intelligence: what each student paid for in months, versus how many
+    // curriculum months their teacher has actually published. The difference is
+    // content the platform still owes, and the money attached to it is not yet earned.
+    const bookingIntelligence = computeBookingIntelligence(
+      teachers.map((t) => ({
+        id: t.id,
+        name: t.name,
+        subscriptions: (t.teacherSubscriptions || []).map((s) => ({
+          id: s.id,
+          studentId: s.student?.id ?? null,
+          studentName: s.studentName || s.student?.name || null,
+          studentPhone: s.studentPhone || s.student?.phone || null,
+          educationalStage: s.educationalStage || s.student?.educationalStage || null,
+          planType: s.planType,
+          amount: s.amount || 0,
+          createdAt: s.createdAt,
+          expiresAt: s.expiresAt,
+        })),
+        courses: (t.courses || []).map((c) => ({
+          id: c.id,
+          title: c.title,
+          isPaid: c.isPaid,
+          price: c.price,
+          folders: c.folders || [],
+        })),
+      })),
+      now
+    );
+
     return NextResponse.json({
       totalStudents,
       totalTeachers,
@@ -603,6 +747,7 @@ export async function GET() {
         revenueActive: bookingsActiveAgg._sum.amount || 0,
         generatedAt: now.toISOString(),
       },
+      bookingIntelligence,
       coursesPricing,
       accessMonitor,
       accessMonitorAlertCount,

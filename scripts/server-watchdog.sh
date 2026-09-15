@@ -304,7 +304,7 @@ case "$1" in
   93) D="ecosystem.config.js present";                        T="warn";;
   94) D="server.js present";                                  T="warn";;
   95) D="no core.* dump files in home dir";                   T="disk";;
-  96) D="no watchdog lock file older than 1h in /tmp";        T="lock";;
+  96) D="no stale foreign thefake lock >1h in /tmp";          T="lock";;
   97) D="tsconfig.tsbuildinfo present";                       T="warn";;
   98) D=".git directory present";                             T="warn";;
   # ---- Memory / CPU / kernel (99-114) ----
@@ -458,7 +458,7 @@ case "$1" in
   93) [ -f ecosystem.config.js ] ;;
   94) [ -f server.js ] ;;
   95) [ -z "$(ls /home/ec2-user/core.* 2>/dev/null)" ] ;;
-  96) [ -z "$(find /tmp -maxdepth 2 -iname '*thefake*' \( -name '*.lock' -o -name 'lock' \) -mmin +60 2>/dev/null)" ] ;;
+  96) [ -z "$(find /tmp -maxdepth 2 -iname '*thefake*' \( -name '*.lock' -o -name 'lock' \) ! -name 'thefake_watchdog.lock' ! -name 'thefake_watchdog.cron.lock' -mmin +60 2>/dev/null)" ] ;;
   97) [ -f tsconfig.tsbuildinfo ] ;;
   98) [ -d .git ] ;;
 
@@ -516,11 +516,14 @@ esac
 REMEDY_LOG=""
 did() { REMEDY_LOG="$REMEDY_LOG $1"; log INFO "remedy: $1"; }
 
+# Our own flock files (thefake_watchdog.lock / .cron.lock) are long-lived by
+# design and are excluded from the sweep below -- they always age past 60m, and
+# deleting a held flock breaks the mutual exclusion it exists to provide.
 remedy_lock() {
   did lock
   rm -f .next/lock 2>/dev/null || true
   rm -rf .next.tmp .next-* 2>/dev/null || true
-  find /tmp -maxdepth 2 -iname '*thefake*' \( -name '*.lock' -o -name 'lock' \) -mmin +60 -delete 2>/dev/null || true
+  find /tmp -maxdepth 2 -iname '*thefake*' \( -name '*.lock' -o -name 'lock' \) ! -name 'thefake_watchdog.lock' ! -name 'thefake_watchdog.cron.lock' -mmin +60 -delete 2>/dev/null || true
   pkill -f 'next-server' 2>/dev/null || true
 }
 remedy_env_perms() { did env_perms; chmod 600 .env 2>/dev/null || true; }

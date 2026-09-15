@@ -1,6 +1,7 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 export async function DELETE(
@@ -21,7 +22,7 @@ export async function DELETE(
         });
       } catch (e) {}
     }
-  if (!session || session.role !== "teacher") {
+  if (!session || !isTeacherLike(session.role)) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -39,7 +40,7 @@ export async function DELETE(
         id: materialId,
         folder: {
           courseId,
-          course: { teacherId: session.id },
+          course: { teacherId: actingTeacherId(session) },
         },
       },
     });

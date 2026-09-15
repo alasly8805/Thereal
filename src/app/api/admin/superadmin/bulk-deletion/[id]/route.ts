@@ -24,6 +24,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (!session || !hasPermission(session.role, "bulk_delete_users")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
+  if (session.demoTour) {
+    return NextResponse.json({ ok: true, success: true });
+  }
 
   try {
     const { id } = await params;

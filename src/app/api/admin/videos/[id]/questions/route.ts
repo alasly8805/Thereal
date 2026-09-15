@@ -1,6 +1,7 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
       } catch (e) {}
     }
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Verify the video exists and belongs to the teacher's course
   const videoWhere = session.role === "superadmin"
     ? { id: videoId }
-    : { id: videoId, folder: { course: { teacherId: session.id } } };
+    : { id: videoId, folder: { course: { teacherId: actingTeacherId(session) } } };
   const video = await prisma.video.findFirst({
     where: videoWhere,
     select: { id: true, durationMinutes: true, videoProvider: true },
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -132,7 +133,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // Verify the video belongs to the teacher
   const videoWhere = session.role === "superadmin"
     ? { id: videoId }
-    : { id: videoId, folder: { course: { teacherId: session.id } } };
+    : { id: videoId, folder: { course: { teacherId: actingTeacherId(session) } } };
   const video = await prisma.video.findFirst({
     where: videoWhere,
     select: { id: true },
@@ -199,7 +200,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         });
       } catch (e) {}
     }
-  if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -215,7 +216,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     where: {
       id: body.questionId,
       videoId,
-      ...(session.role !== "superadmin" ? { video: { folder: { course: { teacherId: session.id } } } } : {}),
+      ...(session.role !== "superadmin" ? { video: { folder: { course: { teacherId: actingTeacherId(session) } } } } : {}),
     },
   });
   if (!question) {

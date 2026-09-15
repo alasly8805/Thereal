@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStudentSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { blockSupportView } from "@/lib/support-auth";
 import {
   canAccessContent,
   ContentType,
@@ -9,6 +10,10 @@ import {
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getStudentSession();
+  // Defence in depth behind the proxy guard: never let a support agent act as
+  // the student on grades, progress or money.
+  const supportBlocked = blockSupportView(session);
+  if (supportBlocked) return supportBlocked;
   if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
 
   const { id: videoId } = await params;
@@ -49,10 +54,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       select: { watchedSecondsTotal: true }
     });
 
-    const requiredSeconds = (video.durationMinutes * 60) * 0.8;
+    // Same superadmin-configurable threshold the auto-complete path uses
+    // (position route) — was hardcoded to 80% and drifted out of sync.
+    const { getConfigNumberClamped } = await import("@/lib/config");
+    const thresholdPercent = await getConfigNumberClamped("mark_complete_threshold", 1, 100);
+    const requiredSeconds = (video.durationMinutes * 60) * (thresholdPercent / 100);
     if ((progress?.watchedSecondsTotal ?? 0) < requiredSeconds) {
       return NextResponse.json(
-        { error: "يجب مشاهدة 80% من الفيديو على الأقل لإكماله" },
+        { error: `يجب مشاهدة ${thresholdPercent}% من الفيديو على الأقل لإكماله` },
         { status: 400 }
       );
     }
@@ -77,50 +86,20 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     );
   });
 
+  // Sync watch status to duplicate/equivalent videos across other courses
+  try {
+    const { syncVideoWatchToRelatedCourses } = await import("@/lib/video-sync");
+    await syncVideoWatchToRelatedCourses(session.id, videoId, { completedAt });
+  } catch (syncErr) {
+    console.error("[video complete] sync error:", syncErr);
+  }
+
   // Track plan lesson progress
-  const now = new Date();
-  const planSources = await prisma.planLessonSource.findMany({
-    where: { videoId },
-    include: {
-      planLesson: {
-        select: {
-          id: true,
-          planId: true,
-        }
-      }
-    }
-  });
-
-  for (const source of planSources) {
-    const enrollment = await prisma.planEnrollment.findFirst({
-      where: {
-        studentId: session.id,
-        planId: source.planLesson.planId,
-        expiresAt: { gt: now }
-      },
-      select: { id: true }
-    });
-
-    if (enrollment) {
-      await prisma.planLessonProgress.upsert({
-        where: {
-          enrollmentId_planLessonId: {
-            enrollmentId: enrollment.id,
-            planLessonId: source.planLessonId
-          }
-        },
-        create: {
-          enrollmentId: enrollment.id,
-          planLessonId: source.planLessonId,
-          chosenSourceId: source.id,
-          watched: true
-        },
-        update: {
-          chosenSourceId: source.id,
-          watched: true
-        }
-      });
-    }
+  try {
+    const { markPlanLessonsWatched } = await import("@/lib/plan-progress");
+    await markPlanLessonsWatched(session.id, videoId);
+  } catch (planErr) {
+    console.error("[video complete] plan progress error:", planErr);
   }
 
   return NextResponse.json({ success: true });

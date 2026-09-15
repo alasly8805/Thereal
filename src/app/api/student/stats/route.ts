@@ -37,7 +37,9 @@ export async function GET() {
       select: { video: { select: { durationMinutes: true } } },
     }),
     prisma.quizResult.findMany({
-      where: { studentId },
+      // Results with essay answers still PENDING have no final grade; counting
+      // them would read as a 0% failure. See lib/quiz-grading.
+      where: { studentId, completedAt: { not: null }, answers: { none: { status: "PENDING" } } },
       select: {
         score: true,
         quiz: {

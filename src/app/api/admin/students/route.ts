@@ -1,12 +1,13 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission, maskPhone } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
     }
 
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
 
     // Verify course belongs to teacher
     const course = await prisma.course.findFirst({
-      where: { id: courseId, teacherId: session.id },
+      where: { id: courseId, teacherId: actingTeacherId(session) },
     });
 
     if (!course) {
@@ -41,7 +42,18 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ students });
+    const canSeePhones = hasAssistantPermission(session, "viewStudentPhones");
+    const canViewStudents = hasAssistantPermission(session, "viewStudents");
+    if (!canViewStudents) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية عرض الطلاب" }, { status: 403 });
+    }
+
+    return NextResponse.json({
+      students: students.map((s) => ({
+        ...s,
+        phone: canSeePhones ? s.phone : maskPhone(s.phone),
+      })),
+    });
   } catch (error) {
     console.error("Failed to fetch students:", error);
     return NextResponse.json(
@@ -67,8 +79,11 @@ export async function PATCH(req: NextRequest) {
         });
       } catch (e) {}
     }
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (!hasAssistantPermission(session, "manageCodes")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إدارة وصول الطلاب" }, { status: 403 });
     }
 
     const { studentId, courseId, action } = await req.json();
@@ -82,7 +97,7 @@ export async function PATCH(req: NextRequest) {
 
     // Verify course belongs to teacher
     const course = await prisma.course.findFirst({
-      where: { id: courseId, teacherId: session.id },
+      where: { id: courseId, teacherId: actingTeacherId(session) },
     });
 
     if (!course) {

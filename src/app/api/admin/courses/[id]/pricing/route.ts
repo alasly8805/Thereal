@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { invalidateCourseCache } from "@/lib/cache";
+import { actingTeacherId, hasAssistantPermission, isTeacherLike } from "@/lib/teacher-scope";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -20,13 +21,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       } catch (e) {}
     }
   if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+  if (session.role !== "superadmin" && !isTeacherLike(session.role)) {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (isTeacherLike(session.role) && !hasAssistantPermission(session, "editCourses")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
+  }
 
   const { id } = await params;
 
   const course = await prisma.course.findUnique({ where: { id }, select: { teacherId: true } });
   if (!course) return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
 
-  if (session.role !== "superadmin" && course.teacherId !== session.id) {
+  if (session.role !== "superadmin" && course.teacherId !== actingTeacherId(session)) {
     return NextResponse.json({ error: "لا يمكنك تعديل هذا الكورس" }, { status: 403 });
   }
 

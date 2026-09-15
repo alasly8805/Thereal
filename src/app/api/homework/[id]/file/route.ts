@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { checkHomeworkAccess } from "@/lib/authorization";
 import path from "path";
@@ -37,12 +38,12 @@ export async function GET(
     if (!hasAccess) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول لهذا الواجب" }, { status: 403 });
     }
-  } else if (session.role === "teacher") {
+  } else if (isTeacherLike(session.role)) {
     const hw = await prisma.homework.findUnique({
       where: { id: homeworkId },
       select: { teacherId: true }
     });
-    if (!hw || hw.teacherId !== session.id) {
+    if (!hw || hw.teacherId !== actingTeacherId(session)) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول لواجب كورس آخر" }, { status: 403 });
     }
   } else if (session.role !== "admin" && session.role !== "superadmin") {

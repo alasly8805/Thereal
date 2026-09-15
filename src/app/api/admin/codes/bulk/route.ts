@@ -1,6 +1,7 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
 
@@ -27,8 +28,11 @@ export async function POST(req: NextRequest) {
         });
       } catch (e) {}
     }
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (isTeacherLike(session.role) && !hasAssistantPermission(session, "manageCodes")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية أكواد الوصول" }, { status: 403 });
     }
 
     const body = await req.json();
@@ -96,7 +100,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "courseId أو planId مطلوب" }, { status: 400 });
     }
 
-    const courseWhere = session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: session.id };
+    const courseWhere = session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: actingTeacherId(session) };
     const course = await prisma.course.findFirst({
       where: courseWhere,
       select: { id: true, title: true },

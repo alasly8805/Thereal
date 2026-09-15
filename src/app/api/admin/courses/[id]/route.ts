@@ -1,6 +1,7 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma";
 import { invalidateCourseCache } from "@/lib/cache";
@@ -83,14 +84,17 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         });
       } catch (e) {}
     }
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (!hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
     const { id } = await params;
 
     const course = await prisma.course.findFirst({
-      where: { id, teacherId: session.id },
+      where: { id, teacherId: actingTeacherId(session) },
     });
 
     if (!course) {
@@ -126,14 +130,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         });
       } catch (e) {}
     }
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (!hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
     const { id } = await params;
 
     const course = await prisma.course.findFirst({
-      where: { id, teacherId: session.id },
+      where: { id, teacherId: actingTeacherId(session) },
     });
 
     if (!course) {

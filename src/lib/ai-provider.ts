@@ -203,3 +203,138 @@ export async function resolvePlanProviders(): Promise<{
   }
   return { primary, backup };
 }
+
+// ── Shared text completion ───────────────────────────────────────────────────
+
+export interface ProviderCompletion {
+  text: string;
+  tokensUsed: number;
+}
+
+/** Thrown for provider failures; `code` is safe to store/log (never the body or key). */
+export class ProviderCallError extends Error {
+  constructor(public code: string) {
+    super(code);
+  }
+}
+
+/**
+ * One completion from a resolved provider, in whichever request shape its kind
+ * needs. Used by features that must be deterministic (temperature defaults to 0)
+ * and need token accounting. The decrypted key is sent in a header, never in a
+ * URL, and never logged; errors carry only a short code.
+ */
+export async function completeWithProvider(
+  provider: ResolvedProvider,
+  opts: { system: string; user: string; maxTokens: number; temperature?: number; timeoutMs?: number; json?: boolean }
+): Promise<ProviderCompletion> {
+  const base = provider.baseUrl.replace(/\/+$/, "");
+  const temperature = opts.temperature ?? 0;
+  const signal = AbortSignal.timeout(opts.timeoutMs ?? 30_000);
+
+  let res: Response;
+  try {
+    if (provider.kind === "anthropic") {
+      res = await fetch(base, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": provider.key, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: provider.model,
+          max_tokens: opts.maxTokens,
+          temperature,
+          system: opts.system,
+          messages: [{ role: "user", content: opts.user }],
+        }),
+        signal,
+      });
+    } else if (provider.kind === "gemini") {
+      const geminiBase = base.endsWith("/models") ? base : `${base}/models`;
+      res = await fetch(`${geminiBase}/${provider.model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": provider.key },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: opts.system }] },
+          contents: [{ role: "user", parts: [{ text: opts.user }] }],
+          generationConfig: {
+            maxOutputTokens: opts.maxTokens,
+            temperature,
+            ...(opts.json ? { responseMimeType: "application/json" } : {}),
+          },
+        }),
+        signal,
+      });
+    } else {
+      res = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${provider.key}` },
+        body: JSON.stringify({
+          model: provider.model,
+          max_tokens: opts.maxTokens,
+          temperature,
+          messages: [
+            { role: "system", content: opts.system },
+            { role: "user", content: opts.user },
+          ],
+        }),
+        signal,
+      });
+    }
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    throw new ProviderCallError(name === "TimeoutError" || name === "AbortError" ? "TIMEOUT" : "NETWORK");
+  }
+
+  if (!res.ok) {
+    // Drain without keeping the body — it can echo request content.
+    await res.text().catch(() => "");
+    throw new ProviderCallError(res.status === 429 ? "RATE_LIMITED" : `HTTP_${res.status}`);
+  }
+
+  let text = "";
+  let tokensUsed = 0;
+  try {
+    if (provider.kind === "anthropic") {
+      const d = (await res.json()) as { content?: Array<{ text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+      text = (d.content ?? []).map((c) => c.text ?? "").join("");
+      tokensUsed = (d.usage?.input_tokens ?? 0) + (d.usage?.output_tokens ?? 0);
+    } else if (provider.kind === "gemini") {
+      const d = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        usageMetadata?: { totalTokenCount?: number };
+      };
+      text = (d.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+      tokensUsed = d.usageMetadata?.totalTokenCount ?? 0;
+    } else {
+      const d = (await res.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: { total_tokens?: number } };
+      text = d.choices?.[0]?.message?.content ?? "";
+      tokensUsed = d.usage?.total_tokens ?? 0;
+    }
+  } catch {
+    throw new ProviderCallError("BAD_RESPONSE");
+  }
+  if (!text.trim()) throw new ProviderCallError("EMPTY_RESPONSE");
+  return { text, tokensUsed };
+}
+
+/**
+ * Runs `attempt` against the primary provider, then the backup. Returns the
+ * first result `attempt` accepts; `attempt` throws to reject (e.g. output that
+ * failed validation) so the backup gets a chance.
+ */
+export async function withProviderFallback<T>(
+  attempt: (provider: ResolvedProvider) => Promise<T>
+): Promise<{ value: T; provider: ResolvedProvider }> {
+  const { primary, backup } = await resolvePlanProviders();
+  const providers = [primary, backup].filter((p): p is ResolvedProvider => p !== null);
+  if (providers.length === 0) throw new ProviderCallError("NO_PROVIDER");
+  let lastCode = "UNKNOWN";
+  for (const provider of providers) {
+    try {
+      return { value: await attempt(provider), provider };
+    } catch (err) {
+      lastCode = err instanceof ProviderCallError ? err.code : err instanceof Error ? err.message.slice(0, 60) : "UNKNOWN";
+      console.error(`[ai-provider] "${provider.name}" failed: ${lastCode}`);
+    }
+  }
+  throw new ProviderCallError(lastCode);
+}

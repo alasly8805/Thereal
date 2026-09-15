@@ -34,13 +34,18 @@ interface ShapedResult {
   courseTitle: string; subject: string; courseId: string;
   totalQ: number; score: number; pct: number;
   attempted: number; correct: number; hasAnswers: boolean;
+  pendingEssays?: number; essayCount?: number; gradingStatus?: "PENDING" | "GRADED";
   startedAt: string | null; completedAt: string;
   allowRetake: boolean;
 }
 interface AnswerDetail {
   id: string; question: string;
+  questionType?: string; imageUrl?: string | null;
   optionA: string; optionB: string; optionC: string; optionD: string;
   selectedAnswer: string | null; correctAnswer: string; isCorrect: boolean;
+  essayAnswer?: string | null;
+  status?: "PENDING" | "APPROVED" | "DISAPPROVED";
+  teacherReply?: string | null; reviewedAt?: string | null;
 }
 interface WrongQuestion {
   id: string; questionId: string; question: string;
@@ -196,7 +201,7 @@ function Ring({ pct, color, size = 100, label, sublabel }: { pct: number; color:
 
 /* ─── Answer review modal ───────────────────────────────────────────────── */
 function AnswerModal({ resultId, quizTitle, onClose }: { resultId: string; quizTitle: string; onClose: () => void }) {
-  const [data, setData] = useState<{ answers: AnswerDetail[]; score: number; totalQ: number } | null>(null);
+  const [data, setData] = useState<{ answers: AnswerDetail[]; score: number; totalQ: number; pendingEssays?: number; correct?: number } | null>(null);
   useEffect(() => {
     fetch(`/api/student/results/${resultId}`, { credentials: "include" })
       .then(r => r.ok ? r.json() : null)
@@ -219,11 +224,41 @@ function AnswerModal({ resultId, quizTitle, onClose }: { resultId: string; quizT
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {data.answers.map((a, i) => (
-                <div key={a.id} style={{ padding: "14px 16px", borderRadius: 12, border: `1px solid ${a.isCorrect ? "var(--brand)" : "var(--danger)"}`, background: a.isCorrect ? "var(--brand-soft)" : "var(--danger-soft)" }}>
+              {(data.pendingEssays ?? 0) > 0 && (
+                <div style={{ padding: "12px 14px", borderRadius: 12, border: "1px solid var(--gold-2)", background: "var(--gold-soft)", color: "var(--gold-2)", fontSize: 13, fontWeight: 700 }}>
+                  ⏳ {data.pendingEssays} سؤال مقالي بانتظار تصحيح المعلم — الدرجة النهائية تظهر بعد التصحيح.
+                </div>
+              )}
+              {data.answers.map((a, i) => {
+                const isEssay = a.questionType === "essay";
+                const pending = isEssay && a.status !== "APPROVED" && a.status !== "DISAPPROVED";
+                const good = isEssay ? a.status === "APPROVED" : a.isCorrect;
+                const edge = pending ? "var(--gold-2)" : good ? "var(--brand)" : "var(--danger)";
+                const soft = pending ? "var(--gold-soft)" : good ? "var(--brand-soft)" : "var(--danger-soft)";
+                return (
+                <div key={a.id} style={{ padding: "14px 16px", borderRadius: 12, border: `1px solid ${edge}`, background: soft }}>
                   <p style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", margin: "0 0 10px" }}>
                     <span style={{ color: "var(--ink-3)", marginLeft: 6 }}>س{i + 1}.</span> {a.question}
                   </p>
+                  {a.imageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.imageUrl} alt="" style={{ maxHeight: 240, width: "100%", objectFit: "contain", borderRadius: 10, marginBottom: 10, border: "1px solid var(--border)" }} />
+                  )}
+                  {isEssay ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <span style={{ alignSelf: "flex-start", padding: "3px 10px", borderRadius: 8, fontSize: 12, fontWeight: 800, color: edge, background: "var(--surface)", border: `1px solid ${edge}` }}>
+                        {pending ? "📝 مقالي — بانتظار التصحيح ⏳" : good ? "📝 مقالي — مقبولة ✓" : "📝 مقالي — لم تُقبل ✗"}
+                      </span>
+                      <div style={{ padding: "10px 12px", borderRadius: 8, fontSize: 13, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--ink)", whiteSpace: "pre-wrap", lineHeight: 1.7 }}>
+                        {a.essayAnswer?.trim() || "— لم تكتب إجابة —"}
+                      </div>
+                      {!pending && a.teacherReply && (
+                        <div style={{ padding: "10px 12px", borderRadius: 8, fontSize: 13, background: "var(--surface)", border: "1px dashed var(--border)", color: "var(--ink-2)" }}>
+                          <strong style={{ color: "var(--ink)" }}>ملاحظة المعلم: </strong>{a.teacherReply}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {(["A", "B", "C", "D"] as const).map(opt => {
                       const isSelected = a.selectedAnswer === opt;
@@ -245,8 +280,10 @@ function AnswerModal({ resultId, quizTitle, onClose }: { resultId: string; quizT
                       );
                     })}
                   </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -441,8 +478,9 @@ export default function AccountPage() {
     const rows = [
       ["التسلسل", "اسم الامتحان", "الكورس", "عدد الأسئلة", "النتيجة %", "الدرجة", "محلولة", "صحيحة", "وقت البداية", "وقت النهاية"],
       ...results.map(r => [
-        r.serial, r.quizTitle, r.courseTitle, r.totalQ, r.pct + "%",
-        `${r.score} من ${r.totalQ}`, r.attempted, r.correct,
+        r.serial, r.quizTitle, r.courseTitle, r.totalQ,
+        (r.pendingEssays ?? 0) > 0 ? "قيد التصحيح" : r.pct + "%",
+        (r.pendingEssays ?? 0) > 0 ? "—" : `${r.correct} من ${r.totalQ}`, r.attempted, r.correct,
         r.startedAt ? new Date(r.startedAt).toLocaleString("ar-EG") : "—",
         new Date(r.completedAt).toLocaleString("ar-EG"),
       ])
@@ -870,20 +908,24 @@ export default function AccountPage() {
                     {/* Mobile: card list (table scrolls horribly on phones) */}
                     <div className="md:hidden flex flex-col gap-3" style={{ padding: 14 }}>
                       {pagedResults.map((r) => {
-                        const tone = r.pct >= 80 ? "brand" : r.pct >= 50 ? "gold" : "danger";
+                        const pending = (r.pendingEssays ?? 0) > 0;
+                        const tone = pending ? "gold" : r.pct >= 80 ? "brand" : r.pct >= 50 ? "gold" : "danger";
                         const bg = tone === "brand" ? "var(--brand-soft)" : tone === "gold" ? "var(--gold-soft)" : "var(--danger-soft)";
                         const fg = tone === "brand" ? "var(--brand)" : tone === "gold" ? "var(--gold-2)" : "var(--danger)";
                         return (
                           <div key={r.id} style={{ borderRadius: 14, border: "1px solid var(--border)", background: "var(--surface-2)", padding: 14 }}>
                             <div className="flex items-start gap-3">
-                              <span className="flex items-center justify-center shrink-0" style={{ width: 54, height: 54, borderRadius: 13, background: bg, color: fg, fontFamily: "var(--font-head)", fontWeight: 900, fontSize: 17 }}>
-                                {r.pct}%
+                              <span className="flex items-center justify-center shrink-0 text-center" style={{ width: 54, height: 54, borderRadius: 13, background: bg, color: fg, fontFamily: "var(--font-head)", fontWeight: 900, fontSize: pending ? 11 : 17, lineHeight: 1.2 }}>
+                                {pending ? "قيد التصحيح" : `${r.pct}%`}
                               </span>
                               <div className="flex-1 min-w-0">
                                 <div style={{ fontWeight: 700, fontSize: 14.5, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.quizTitle}</div>
-                                <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 7 }}>{r.subject}</div>
+                                <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 7 }}>
+                                  {r.subject}
+                                  {pending && <span style={{ color: "var(--gold-2)", fontWeight: 700 }}> · {r.pendingEssays} مقالي بانتظار المعلم</span>}
+                                </div>
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1" style={{ fontSize: 12, color: "var(--ink-2)" }}>
-                                  <span>الدرجة <strong style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>{r.score}/{r.totalQ}</strong></span>
+                                  <span>الدرجة <strong style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>{pending ? "—" : `${r.correct}/${r.totalQ}`}</strong></span>
                                   <span>صحيحة <strong style={{ color: "var(--brand)", fontFamily: "var(--font-head)" }}>{r.correct}</strong></span>
                                   <span>محلولة {r.attempted}</span>
                                 </div>
@@ -926,17 +968,26 @@ export default function AccountPage() {
                               </td>
                               <td style={{ padding: "12px 14px", color: "var(--ink-2)", fontSize: 13, textAlign: "center" }}>{r.totalQ}</td>
                               <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                                <span style={{
-                                  padding: "4px 10px", borderRadius: 8, fontSize: 13, fontWeight: 800,
-                                  background: r.pct >= 80 ? "var(--brand-soft)" : r.pct >= 50 ? "var(--gold-soft)" : "var(--danger-soft)",
-                                  color: r.pct >= 80 ? "var(--brand)" : r.pct >= 50 ? "var(--gold-2)" : "var(--danger)",
-                                  fontFamily: "var(--font-head)"
-                                }}>
-                                  {r.pct}%
-                                </span>
+                                {(r.pendingEssays ?? 0) > 0 ? (
+                                  <span title={`${r.pendingEssays} سؤال مقالي بانتظار تصحيح المعلم`} style={{
+                                    padding: "4px 10px", borderRadius: 8, fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
+                                    background: "var(--gold-soft)", color: "var(--gold-2)", fontFamily: "var(--font-head)"
+                                  }}>
+                                    ⏳ قيد التصحيح
+                                  </span>
+                                ) : (
+                                  <span style={{
+                                    padding: "4px 10px", borderRadius: 8, fontSize: 13, fontWeight: 800,
+                                    background: r.pct >= 80 ? "var(--brand-soft)" : r.pct >= 50 ? "var(--gold-soft)" : "var(--danger-soft)",
+                                    color: r.pct >= 80 ? "var(--brand)" : r.pct >= 50 ? "var(--gold-2)" : "var(--danger)",
+                                    fontFamily: "var(--font-head)"
+                                  }}>
+                                    {r.pct}%
+                                  </span>
+                                )}
                               </td>
                               <td style={{ padding: "12px 14px", fontFamily: "var(--font-head)", fontWeight: 900, fontSize: 14, color: "var(--ink)", textAlign: "center" }}>
-                                {r.score} من {r.totalQ}
+                                {(r.pendingEssays ?? 0) > 0 ? "—" : `${r.correct} من ${r.totalQ}`}
                               </td>
                               <td style={{ padding: "12px 14px", color: "var(--ink-2)", fontSize: 13, textAlign: "center" }}>{r.attempted}</td>
                               <td style={{ padding: "12px 14px", textAlign: "center" }}>

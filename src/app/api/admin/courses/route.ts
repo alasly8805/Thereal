@@ -1,6 +1,7 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { buildCourseSlug } from "@/lib/course-slug";
 
@@ -21,12 +22,12 @@ function isValidUrl(url: string): boolean {
 
 export async function GET() {
   const session = await getSession();
-  if (!session || session.role !== "teacher") {
+  if (!session || !isTeacherLike(session.role)) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
   const courses = await prisma.course.findMany({
-    where: { teacherId: session.id },
+    where: { teacherId: actingTeacherId(session) },
     include: {
       _count: {
         select: {
@@ -46,7 +47,12 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ courses });
+  const teacher = await prisma.user.findUnique({
+    where: { id: actingTeacherId(session) },
+    select: { name: true },
+  });
+
+  return NextResponse.json({ courses, teacherName: teacher?.name || "" });
 }
 
 export async function POST(req: NextRequest) {
@@ -65,8 +71,11 @@ export async function POST(req: NextRequest) {
         });
       } catch (e) {}
     }
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (!hasAssistantPermission(session, "createCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إنشاء كورسات" }, { status: 403 });
     }
 
     const body = await req.json();
@@ -126,7 +135,7 @@ export async function POST(req: NextRequest) {
     // Check for duplicate course title for this teacher
     const existingCourse = await prisma.course.findFirst({
       where: {
-        teacherId: session.id,
+        teacherId: actingTeacherId(session),
         title: title,
       },
     });
@@ -145,7 +154,7 @@ export async function POST(req: NextRequest) {
         description: description || null,
         thumbnailUrl: thumbnailUrl || null,
         educationalStage,
-        teacherId: session.id,
+        teacherId: actingTeacherId(session),
         contactPhone: contactPhone || null,
         deliveryMode,
       },

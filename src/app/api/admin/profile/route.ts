@@ -1,6 +1,7 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { slugify, isValidSlug } from "@/lib/slug";
 
@@ -29,11 +30,11 @@ export async function GET() {
       return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
     }
 
-    let profile = await prisma.teacherProfile.findUnique({ where: { teacherId: session.id } });
+    let profile = await prisma.teacherProfile.findUnique({ where: { teacherId: actingTeacherId(session) } });
     if (!profile) {
       profile = await prisma.teacherProfile.create({
         data: {
-          teacherId: session.id,
+          teacherId: actingTeacherId(session),
           slug: await uniqueSlug(session.name, session.id),
           displayName: session.name,
           priceMonthly: 180,
@@ -58,7 +59,7 @@ export async function GET() {
 
       if (Object.keys(updates).length > 0) {
         profile = await prisma.teacherProfile.update({
-          where: { teacherId: session.id },
+          where: { teacherId: actingTeacherId(session) },
           data: updates,
         });
       }
@@ -122,7 +123,7 @@ export async function PUT(req: NextRequest) {
         return NextResponse.json({ error: "الرابط غير صالح أو محجوز" }, { status: 400 });
       }
       const taken = await prisma.teacherProfile.findFirst({
-        where: { slug: s, NOT: { teacherId: session.id } },
+        where: { slug: s, NOT: { teacherId: actingTeacherId(session) } },
         select: { id: true },
       });
       if (taken) return NextResponse.json({ error: "الرابط مستخدم بالفعل" }, { status: 409 });
@@ -130,11 +131,11 @@ export async function PUT(req: NextRequest) {
     }
 
     // Ensure a row exists (create-on-write).
-    const existing = await prisma.teacherProfile.findUnique({ where: { teacherId: session.id } });
+    const existing = await prisma.teacherProfile.findUnique({ where: { teacherId: actingTeacherId(session) } });
     const profile = existing
-      ? await prisma.teacherProfile.update({ where: { teacherId: session.id }, data })
+      ? await prisma.teacherProfile.update({ where: { teacherId: actingTeacherId(session) }, data })
       : await prisma.teacherProfile.create({
-          data: { teacherId: session.id, slug: (data.slug as string) || (await uniqueSlug(session.name, session.id)), ...data },
+          data: { teacherId: actingTeacherId(session), slug: (data.slug as string) || (await uniqueSlug(session.name, session.id)), ...data },
         });
 
     return NextResponse.json({ profile });

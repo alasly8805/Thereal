@@ -12,6 +12,7 @@ const VIDEO_FRAME_HOSTS = [
   "https://iframe.mediadelivery.net",
   "https://*.b-cdn.net",
   "https://alasly.lovable.app",
+  "https://drive.google.com",
 ];
 
 const isProd = process.env.NODE_ENV === "production";
@@ -52,6 +53,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
   reactStrictMode: true,
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   images: {
     formats: ["image/avif", "image/webp"],
   },
@@ -64,10 +66,62 @@ const nextConfig: NextConfig = {
   transpilePackages: ["framer-motion", "motion-dom", "motion-utils", "axios"],
 
   experimental: {
+    // Next.js 16 proxy buffers request bodies for every matched route. Without
+    // raising this, multipart homework uploads (PDFs etc.) get truncated/corrupted
+    // and the browser shows "Failed to fetch".
+    proxyClientMaxBodySize: "15mb",
     serverActions: {
       allowedOrigins: ["localhost:3000", "127.0.0.1:3000", "*.app.github.dev"],
+      bodySizeLimit: "15mb",
     },
   },
+
+  redirects: async () => [
+    // Forward Arabic standalone lesson to Arabic month course
+    {
+      source: "/courses/cmtqbw41d005qqwobfcrfg07c",
+      destination: "/courses/cmtqhrxrh0013qw6iec0ikr89",
+      permanent: false,
+    },
+    {
+      source: "/courses/cmtqbw41d005qqwobfcrfg07c/learn",
+      destination: "/courses/cmtqhrxrh0013qw6iec0ikr89/learn",
+      permanent: false,
+    },
+    // Forward Languages standalone lesson to Languages month course
+    {
+      source: "/courses/cmtr54unr00wfqwwvtbvaxy8q",
+      destination: "/courses/cmtr5aiko00zkqwwv03ucyju7",
+      permanent: false,
+    },
+    {
+      source: "/courses/cmtr54unr00wfqwwvtbvaxy8q/learn",
+      destination: "/courses/cmtr5aiko00zkqwwv03ucyju7/learn",
+      permanent: false,
+    },
+    // Forward Youssef El-Tareq Languages standalone lesson to Month 1 Programming Languages
+    {
+      source: "/courses/cmta9me5r0007qxmwnnsq1cez",
+      destination: "/courses/cmtaozekq0022qxrwfwjpxcyp",
+      permanent: false,
+    },
+    {
+      source: "/courses/cmta9me5r0007qxmwnnsq1cez/learn",
+      destination: "/courses/cmtaozekq0022qxrwfwjpxcyp/learn",
+      permanent: false,
+    },
+    // Forward Youssef El-Tareq Arabic standalone lesson to Month 1 Programming Arabic
+    {
+      source: "/courses/cmt45qxsf001oqx3e9jtlwny8",
+      destination: "/courses/cmt45u9p9001pqx3qos4rpxpx",
+      permanent: false,
+    },
+    {
+      source: "/courses/cmt45qxsf001oqx3e9jtlwny8/learn",
+      destination: "/courses/cmt45u9p9001pqx3qos4rpxpx/learn",
+      permanent: false,
+    },
+  ],
 
   headers: async () => [
     {
@@ -81,7 +135,10 @@ const nextConfig: NextConfig = {
         { key: "X-Content-Type-Options", value: "nosniff" },
         {
           key: "Permissions-Policy",
-          value: "camera=(), microphone=(), geolocation=(), payment=(), display-capture=()",
+          // autoplay=(self) blocked YouTube/VdoCipher iframes from ever starting
+          // (playVideo() from the parent is treated as cross-origin autoplay).
+          // encrypted-media stays allowed for same-origin Axinom and iframe DRM.
+          value: 'encrypted-media=(self "https://www.youtube.com" "https://www.youtube-nocookie.com" "https://player.vdocipher.com"), autoplay=(self "https://www.youtube.com" "https://www.youtube-nocookie.com" "https://player.vdocipher.com" "https://iframe.mediadelivery.net" "https://drive.google.com" "https://alasly.lovable.app"), camera=(), microphone=(), geolocation=(), payment=(), display-capture=()',
         },
         { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
       ],

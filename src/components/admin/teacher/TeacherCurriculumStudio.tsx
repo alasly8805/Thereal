@@ -7,6 +7,8 @@ import {
   AddQuizModal,
   AddHomeworkModal,
   AddMaterialModal,
+  exportQuizToJson,
+  exportHomeworkToJson,
 } from "./TeacherCurriculumModals";
 import {
   Folder,
@@ -29,6 +31,7 @@ import {
   AlertCircle,
   Video,
   Sparkles,
+  Download,
 } from "lucide-react";
 
 export interface VideoItem {
@@ -47,7 +50,8 @@ export interface VideoItem {
 export interface QuizItem {
   id: string;
   title?: string;
-  questions?: Array<unknown>;
+  timeLimitMinutes?: number;
+  questions?: Array<any>;
 }
 
 export interface MaterialItem {
@@ -61,6 +65,9 @@ export interface HomeworkItem {
   id: string;
   title: string;
   type: string;
+  description?: string | null;
+  timeLimitMinutes?: number;
+  questions?: Array<any>;
   _count?: { questions?: number; submissions?: number };
 }
 
@@ -207,6 +214,7 @@ export function TeacherCurriculumStudio({
   const [loadingQuestions, setLoadingQuestions] = useState<Record<string, boolean>>({});
   const [addQuestionStates, setAddQuestionStates] = useState<Record<string, any>>({});
   const [submittingQuestion, setSubmittingQuestion] = useState<Record<string, boolean>>({});
+  const [togglingFreeVideoId, setTogglingFreeVideoId] = useState<string | null>(null);
 
   // ── Handlers ──
 
@@ -318,16 +326,28 @@ export function TeacherCurriculumStudio({
     }
   };
 
-  // Toggle Video Free Preview
-  const handleToggleVideoFree = async (folderId: string, videoId: string, currentFree: boolean) => {
+  const handleToggleVideoFree = async (videoId: string, currentFree: boolean) => {
+    if (togglingFreeVideoId) return;
+    setTogglingFreeVideoId(videoId);
     try {
-      const res = await fetch(`/api/admin/folders/${folderId}/videos`, {
+      const res = await fetch(`/api/admin/videos/${videoId}`, {
         method: "PATCH",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId, isFree: !currentFree }),
+        body: JSON.stringify({ isFree: !currentFree }),
       });
 
-      const data = await res.json();
+      const raw = await res.text();
+      let data: { error?: string } = {};
+      if (raw) {
+        try {
+          data = JSON.parse(raw) as { error?: string };
+        } catch {
+          toastError("تعذر تعديل حالة الفيديو");
+          return;
+        }
+      }
+
       if (res.ok && !data.error) {
         toastSuccess(!currentFree ? "تم جعل الدرس تجريبياً مجانياً للطلاب" : "تم إلغاء التجريبي وجعله مدفوعاً");
         await onRefreshFolders();
@@ -336,6 +356,8 @@ export function TeacherCurriculumStudio({
       }
     } catch {
       toastError("تعذر الاتصال بالخادم");
+    } finally {
+      setTogglingFreeVideoId(null);
     }
   };
 
@@ -1012,15 +1034,21 @@ export function TeacherCurriculumStudio({
                                         {/* Free Demo Toggle */}
                                         <button
                                           type="button"
-                                          onClick={() => void handleToggleVideoFree(folder.id, video.id, Boolean(video.isFree))}
-                                          className={`px-2.5 py-1 rounded-xl text-[10.5px] font-bold border transition-all cursor-pointer ${
+                                          onClick={() => void handleToggleVideoFree(video.id, Boolean(video.isFree))}
+                                          disabled={togglingFreeVideoId === video.id}
+                                          aria-pressed={Boolean(video.isFree)}
+                                          className={`px-2.5 py-1 rounded-xl text-[10.5px] font-bold border transition-all cursor-pointer disabled:opacity-60 disabled:cursor-wait ${
                                             video.isFree
                                               ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300"
                                               : "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400"
                                           }`}
                                           title="تبديل الدرس بين مجاني ومدفوع"
                                         >
-                                          {video.isFree ? "تجريبي ✓" : "اجعله تجريبياً"}
+                                          {togglingFreeVideoId === video.id
+                                            ? "جارٍ الحفظ…"
+                                            : video.isFree
+                                              ? "تجريبي ✓"
+                                              : "اجعله تجريبياً"}
                                         </button>
 
                                         {/* Timed Questions Toggle Button */}
@@ -1330,6 +1358,14 @@ export function TeacherCurriculumStudio({
                                   <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                                     <button
                                       type="button"
+                                      onClick={() => exportQuizToJson(quiz)}
+                                      className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors cursor-pointer"
+                                      title="تحميل وتصدير الاختبار كملف JSON"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
                                       onClick={() => void handleDeleteQuiz(quiz.id, quiz.title)}
                                       className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
                                       title="حذف هذا الاختبار"
@@ -1393,6 +1429,16 @@ export function TeacherCurriculumStudio({
                                     </div>
 
                                     <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                                      {hw.type === "exam" && (
+                                        <button
+                                          type="button"
+                                          onClick={() => exportHomeworkToJson(hw)}
+                                          className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors cursor-pointer"
+                                          title="تحميل وتصدير الواجب كملف JSON"
+                                        >
+                                          <Download className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
                                       <button
                                         type="button"
                                         onClick={() => void handleDeleteHomework(hw.id, hw.title)}

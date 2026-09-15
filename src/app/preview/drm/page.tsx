@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState, useMemo, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { SecurePlayer } from "@/components/ui/SecurePlayer";
 import { VideoGuard } from "@/components/ui/VideoGuard";
-import { AXINOM_CONFIG } from "@/lib/axinom-config";
+import type { DeviceDrmInfo } from "@/components/ui/DrmPlayer";
+import { AXINOM_CONFIG, SAME_ORIGIN_LICENSE_SERVERS } from "@/lib/axinom-config";
 
 function DrmPreviewContent() {
   const searchParams = useSearchParams();
@@ -19,12 +20,7 @@ function DrmPreviewContent() {
   const [timeLeft, setTimeLeft] = useState<string>("02:00:00");
   const [isExpired, setIsExpired] = useState(false);
   const [fullUrl, setFullUrl] = useState<string>("");
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setFullUrl(window.location.href);
-    }
-  }, []);
+  const [detectedDrm, setDetectedDrm] = useState<DeviceDrmInfo | null>(null);
 
   const isAxinomDemo =
     assetId === "axinom_demo" ||
@@ -52,13 +48,26 @@ function DrmPreviewContent() {
   } | null>(
     isAxinomDemo
       ? {
-          widevine: "https://drm-widevine-licensing.axtest.net/AcquireLicense",
-          playready: "https://drm-playready-licensing.axtest.net/AcquireLicense",
-          fairplay: "https://drm-fairplay-licensing.axtest.net/AcquireLicense",
+          widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+          playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+          fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
         }
       : null
   );
   const [tokenLoading, setTokenLoading] = useState(!token && !isAxinomDemo && !isClearDemo);
+
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (assetId) url.searchParams.set("assetId", assetId);
+    if (title) url.searchParams.set("title", title);
+    const tok = activeToken || token;
+    if (tok) url.searchParams.set("token", tok);
+    if (exp) url.searchParams.set("exp", exp);
+    setFullUrl(url.toString());
+  }, [assetId, title, token, activeToken, exp]);
 
   useEffect(() => {
     if (isClearDemo) {
@@ -66,6 +75,7 @@ function DrmPreviewContent() {
       setActiveManifestUrl("https://media.axprod.net/TestVectors/v7-Clear/Manifest_1080p.mpd");
       setActiveLicenseServers(null);
       setTokenLoading(false);
+      setAuthError(null);
       return;
     }
 
@@ -73,17 +83,24 @@ function DrmPreviewContent() {
       setActiveToken(token || AXINOM_DEMO_TOKEN);
       setActiveManifestUrl("https://media.axprod.net/TestVectors/v7-MultiDRM-SingleKey/Manifest_1080p.mpd");
       setActiveLicenseServers({
-        widevine: "https://drm-widevine-licensing.axtest.net/AcquireLicense",
-        playready: "https://drm-playready-licensing.axtest.net/AcquireLicense",
-        fairplay: "https://drm-fairplay-licensing.axtest.net/AcquireLicense",
+        widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+        playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+        fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
       });
       setTokenLoading(false);
+      setAuthError(null);
       return;
     }
 
     if (token) {
       setActiveToken(token);
+      setActiveLicenseServers({
+        widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+        playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+        fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
+      });
       setTokenLoading(false);
+      setAuthError(null);
       return;
     }
 
@@ -94,22 +111,46 @@ function DrmPreviewContent() {
 
     let isMounted = true;
     setTokenLoading(true);
+    setAuthError(null);
     fetch("/api/teacher/drm-preview", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ assetId, title }),
     })
-      .then((res) => res.json())
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) {
+            throw new Error("تحتاج لتسجيل الدخول بحساب المعلم أو المشرف لعرض هذه المعاينة، أو استخدام الرابط الكامل المزوّد بالتوكن.");
+          }
+          throw new Error(data.error || "تعذر إنشاء جلسة ترخيص DRM");
+        }
+        return data;
+      })
       .then((data) => {
         if (!isMounted) return;
         if (data.success && data.drm) {
           if (data.drm.token) setActiveToken(data.drm.token);
           if (data.drm.licenseServers) setActiveLicenseServers(data.drm.licenseServers);
           if (data.manifestUrl) setActiveManifestUrl(data.manifestUrl);
+          if (typeof data.previewUrl === "string" && data.previewUrl) {
+            setFullUrl(data.previewUrl);
+            try {
+              const parsed = new URL(data.previewUrl, window.location.origin);
+              window.history.replaceState({}, "", parsed.pathname + parsed.search);
+            } catch {
+              // keep current address if the server URL cannot be parsed
+            }
+          }
+        } else if (data.error) {
+          setAuthError(data.error);
         }
       })
-      .catch((e) => console.warn("Auto-token generation error:", e))
+      .catch((e: any) => {
+        if (!isMounted) return;
+        setAuthError(e.message || "حدث خطأ أثناء تحميل بيانات الترخيص");
+      })
       .finally(() => {
         if (isMounted) setTokenLoading(false);
       });
@@ -187,9 +228,9 @@ function DrmPreviewContent() {
       return {
         token: activeToken || AXINOM_DEMO_TOKEN,
         licenseServers: {
-          widevine: "https://drm-widevine-licensing.axtest.net/AcquireLicense",
-          playready: "https://drm-playready-licensing.axtest.net/AcquireLicense",
-          fairplay: "https://drm-fairplay-licensing.axtest.net/AcquireLicense",
+          widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+          playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+          fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
         },
       };
     }
@@ -200,9 +241,9 @@ function DrmPreviewContent() {
     const servers =
       activeLicenseServers ||
       {
-        widevine: AXINOM_CONFIG.endpoints.widevine,
-        playready: AXINOM_CONFIG.endpoints.playready,
-        fairplay: AXINOM_CONFIG.endpoints.fairplay,
+        widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+        playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+        fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
       };
 
     return {
@@ -262,8 +303,8 @@ function DrmPreviewContent() {
             <div className="h-4 w-px bg-white/10 hidden sm:block" />
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded text-[10px] font-black bg-sky-500/20 text-sky-400 border border-sky-500/30">
-                  {isClearDemo ? "Clear DASH Stream" : "Axinom DRM Preview"}
+                <span className="px-2.5 py-0.5 rounded text-xs font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  TOPTEIR
                 </span>
                 <span className="text-xs text-gray-400 font-mono hidden md:inline">Asset: {assetId}</span>
               </div>
@@ -324,7 +365,27 @@ function DrmPreviewContent() {
       {/* Main Preview Cinema Player Stage */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
         <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-black shadow-2xl aspect-video w-full max-h-[75vh]">
-          {isExpired ? (
+          {authError && !activeToken ? (
+            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center space-y-3 bg-black/95">
+              <span className="text-4xl">🔒</span>
+              <h3 className="text-base font-bold text-white">تسجيل الدخول بحساب المعلم مطلوب</h3>
+              <p className="text-xs text-gray-400 max-w-md leading-relaxed">{authError}</p>
+              <div className="flex items-center gap-3 pt-2">
+                <Link
+                  href={`/login?redirect=${encodeURIComponent(fullUrl || `/preview/drm?assetId=${assetId}`)}`}
+                  className="px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold transition-all shadow-md"
+                >
+                  تسجيل الدخول للمنصة ↗
+                </Link>
+                <Link
+                  href="/adminpanel/teacher"
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-gray-300 text-xs font-bold transition-all"
+                >
+                  لوحة تحكم المعلم
+                </Link>
+              </div>
+            </div>
+          ) : isExpired ? (
             <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center space-y-3 bg-black/90">
               <span className="text-4xl">⏳</span>
               <h3 className="text-base font-bold text-white">انتهت فترة المعاينة المحددة (ساعتان)</h3>
@@ -344,8 +405,8 @@ function DrmPreviewContent() {
             </div>
           ) : (
             <VideoGuard
-              studentName="معاينة المعلم"
-              studentPhone="Teacher Preview"
+              studentName="معاينة المعلم (Teacher Preview)"
+              studentPhone="01012345678"
               videoId={assetId}
             >
               <SecurePlayer
@@ -353,7 +414,8 @@ function DrmPreviewContent() {
                 provider={isDirectStream ? "alasly" : "axinom"}
                 drm={drmConfig}
                 title={title}
-                watermark="معاينة المعلم (Teacher Preview)"
+                watermark="معاينة المعلم • 01012345678"
+                onDrmDetected={setDetectedDrm}
               />
             </VideoGuard>
           )}
@@ -363,22 +425,14 @@ function DrmPreviewContent() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="p-4 rounded-2xl bg-[#0f172a] border border-white/5 space-y-1.5">
             <div className="flex items-center justify-between text-xs text-gray-400 font-bold">
-              <span>نظام البث والحماية</span>
-              <span className="text-sky-400">{isDirectStream ? "Native Cloud Stream" : "CENC Multi-DRM"}</span>
+              <span>الحماية</span>
+              <span className="text-emerald-400 font-bold">TOPTEIR</span>
             </div>
-            <p className="text-xs font-mono text-gray-300">
-              {isDirectStream
-                ? "Google Drive Direct Stream + Dynamic Watermark"
-                : isClearDemo
-                  ? "Clear DASH — بدون تشفير (عيّنة اختبار)"
-                  : "Widevine / PlayReady / FairPlay (المستوى يحدده الجهاز)"}
+            <p className="text-sm font-mono text-gray-200 font-bold">
+              {detectedDrm ? detectedDrm.name : "TOPTEIR CENC + Widevine"}
             </p>
-            <p className="text-[10px] text-gray-500">
-              {isDirectStream
-                ? "بث سحابي مباشر عالي السرعة مع علامة مائية متحركة."
-                : isClearDemo
-                  ? "هذه العيّنة غير مشفّرة عمدًا وتُستخدم للتحقق من أن برنامج التسجيل يعمل. تصويرها أمر طبيعي ولا يدل على خلل في الحماية."
-                  : "منع تصوير الشاشة يتحقق فقط عند توفّر فك تشفير عتادي على الجهاز والمتصفح (Edge/PlayReady SL3000 أو Widevine L1). راجع صفحة فحص القدرات."}
+            <p className="text-[10px] text-gray-500 leading-relaxed">
+              التشفير كامل. Brave على الكمبيوتر يشغّل جودة SD المحمية؛ الأجهزة العتادية تشغّل HD.
             </p>
           </div>
 
@@ -414,7 +468,7 @@ function DrmPreviewContent() {
         <div className="p-4 rounded-2xl bg-[#0f172a] border border-white/5 space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-              <span>🔗</span> رابط المعاينة المستقل (افتحه على هاتفك أو أي متصفح للاختبار لمدة ساعتين):
+              <span>🔗</span> رابط المعاينة المستقل (Brave / Chrome / الهاتف — ساعتان، الحماية كما هي):
             </label>
             <button
               type="button"

@@ -106,6 +106,15 @@ const PRODUCTION_REQUIRED = [
     hint: "Bearer secret for /api/cron/* . Must not be the old hardcoded 'codeup_secret_cron'. Generate: openssl rand -base64 24",
   },
   {
+    key: "SUPPORT_PANEL_PASSWORD",
+    // Without it the panel silently accepts only SUPERADMIN_MASTER_PASSWORD,
+    // which reads as "my password stopped working" rather than as a config
+    // error. It also gates password resets on student accounts, so a short or
+    // placeholder value is a real exposure, not a cosmetic one.
+    test: (v) => v.length >= 12 && !/replace-with|change-me|password/i.test(v),
+    hint: "Password for /thefake/support. At least 12 characters, not a placeholder. Generate: openssl rand -base64 18",
+  },
+  {
     key: "ALASLY_API_KEY",
     test: (v) => v.length > 0 && v !== "alk_06a5ofogdqo11inzwoqn186jukk0bh7o",
     hint: "Native video API key. The previously committed key is published — rotate it and set the new one here.",

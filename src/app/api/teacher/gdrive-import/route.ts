@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import {
   extractGoogleDriveFileId,
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (session.role !== "teacher" && session.role !== "superadmin") {
+    if (!isTeacherLike(session.role) && session.role !== "superadmin") {
       console.warn(
         `[Security Guard] Unauthorized gdrive-import access attempt by user ID: ${session.id}, role: ${session.role}`
       );
@@ -58,6 +59,9 @@ export async function POST(req: NextRequest) {
         },
         { status: 403 }
       );
+    }
+    if (isTeacherLike(session.role) && !hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
     activeTeacherId = session.id;
@@ -123,7 +127,7 @@ export async function POST(req: NextRequest) {
         where:
           session.role === "superadmin"
             ? { id: folderId }
-            : { id: folderId, course: { teacherId: session.id } },
+            : { id: folderId, course: { teacherId: actingTeacherId(session) } },
         include: { course: { select: { id: true } } },
       });
 

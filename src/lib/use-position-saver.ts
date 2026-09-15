@@ -6,8 +6,15 @@ import { useCallback, useEffect, useRef } from "react";
  * Debounced position saver. Tracks elapsed playback delta and sends position
  * updates to the server every ~5s of active playback. On unmount, flushes the
  * last known position so navigation mid-video preserves the resume point.
+ *
+ * When the server auto-marks the video watched (crossed the configured
+ * completion threshold) on a ping, the optional onWatched callback fires so
+ * the page can unlock the next chained content without waiting for a reload.
  */
-export function usePositionSaver(videoId: string | null) {
+export function usePositionSaver(
+  videoId: string | null,
+  options?: { onWatched?: (videoId: string) => void }
+) {
   const lastSavedRef = useRef(0);      // last position we sent to server
   const lastSaveTimeRef = useRef(0);    // Date.now() of last save
   const lastReportedRef = useRef(0);    // last currentTime from player
@@ -15,6 +22,8 @@ export function usePositionSaver(videoId: string | null) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoIdRef = useRef(videoId);
   videoIdRef.current = videoId;
+  const onWatchedRef = useRef(options?.onWatched);
+  onWatchedRef.current = options?.onWatched;
 
   // Send position to server
   const flush = useCallback(async () => {
@@ -30,7 +39,7 @@ export function usePositionSaver(videoId: string | null) {
     lastSaveTimeRef.current = Date.now();
 
     try {
-      await fetch(`/api/videos/${vid}/position`, {
+      const res = await fetch(`/api/videos/${vid}/position`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -39,6 +48,10 @@ export function usePositionSaver(videoId: string | null) {
           deltaWatchedSeconds: Math.max(0, delta),
         }),
       });
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { justCompleted?: boolean } | null;
+        if (data?.justCompleted) onWatchedRef.current?.(vid);
+      }
     } catch {
       // Network error — delta is lost, but that's acceptable; server-side
       // watchedSecondsTotal is a best-effort cumulative signal, not a hard gate.

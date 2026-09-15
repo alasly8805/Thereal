@@ -7,6 +7,7 @@ import { isVpnOrProxy } from "./lib/vpn-guard";
 const ADMIN_PANEL_PREFIXES = [
   "/adminpanel/superadmin",
   "/adminpanel/teacher",
+  "/adminpanel/assistant",
 ];
 
 /** Student/user page routes — require a valid session; redirect to /login on failure */
@@ -71,28 +72,61 @@ function isVpnExemptRoute(pathname: string) {
     pathname.startsWith("/api/security/vpn-check/") ||
     isAdminLoginPage(pathname) ||
     startsWithAny(pathname, ADMIN_PANEL_PREFIXES) ||
-    pathname.startsWith("/api/admin/")
+    pathname.startsWith("/api/admin/") ||
+    // Support panel: agents are staff and may legitimately be behind a VPN.
+    pathname === "/thefake/support" ||
+    pathname.startsWith("/thefake/support/") ||
+    pathname.startsWith("/api/support/")
   );
 }
 
 // Read JWT_SECRET dynamically inside hasValidSession to handle hot-reloads and Edge runtime environment injection correctly.
-async function hasValidSession(req: NextRequest) {
+async function readSession(req: NextRequest): Promise<{ supportView: boolean; demoTour: boolean } | null> {
   const secretStr = process.env.JWT_SECRET;
   if (!secretStr) {
     console.warn("JWT_SECRET environment variable is missing in middleware context!");
-    return false;
+    return null;
   }
   const token = req.cookies.get("auth_token")?.value;
   if (!token) {
-    return false;
+    return null;
   }
   try {
     const secret = new TextEncoder().encode(secretStr);
-    await jwtVerify(token, secret);
-    return true;
+    const { payload } = await jwtVerify(token, secret);
+    return { supportView: payload.supportView === true, demoTour: payload.demoTour === true };
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function hasValidSession(req: NextRequest) {
+  return (await readSession(req)) !== null;
+}
+
+/**
+ * The single chokepoint that makes a support agent's visit to a student account
+ * read-only.
+ *
+ * Enforcing this here rather than inside each handler means a route added next
+ * month is covered by default — the failure mode of the alternative is a new
+ * endpoint that silently lets support write to a student's record.
+ *
+ * The one carve-out is starting video playback: that POST is what opens a
+ * lesson, and the watch route already creates the session with
+ * usedWatchSlot=false for a support view, so it costs the student nothing.
+ */
+function isSupportViewAllowedWrite(pathname: string) {
+  return /^\/api\/videos\/[^/]+\/watch$/.test(pathname);
+}
+
+function isSupportViewReadOnlyViolation(req: NextRequest, pathname: string) {
+  const method = req.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  // Leaving the student account is a POST and must always be permitted.
+  if (pathname === "/thefake/support/exit-student") return false;
+  if (isSupportViewAllowedWrite(pathname)) return false;
+  return true;
 }
 
 export default async function proxy(req: NextRequest) {
@@ -140,10 +174,29 @@ export default async function proxy(req: NextRequest) {
   }
 
   // Admin panel login page — always public
-  if (isAdminLoginPage(pathname)) return pass();
+  if (isAdminLoginPage(pathname) || pathname === "/adminpanel/login") return pass();
+
+  // Superadmin → teacher panel (form POST, not /api, so Cloudflare does not challenge it)
+  if (pathname === "/adminpanel/enter-teacher") {
+    if (!(await hasValidSession(req))) {
+      return NextResponse.redirect(new URL("/adminpanel", req.url));
+    }
+    return pass();
+  }
 
   // VPN Check Waiting Room & Verification API are always exempt
-  if (isVpnExemptRoute(pathname)) return pass();
+  if (isVpnExemptRoute(pathname)) {
+    if (
+      pathname.startsWith("/api/admin/") &&
+      !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase())
+    ) {
+      const tour = await readSession(req);
+      if (tour?.demoTour) {
+        return NextResponse.json({ ok: true, success: true }, { status: 200 });
+      }
+    }
+    return pass();
+  }
 
   // Always allow public access to login and signup
   if (pathname.startsWith("/login") || pathname.startsWith("/signup")) {
@@ -183,7 +236,33 @@ export default async function proxy(req: NextRequest) {
     }
   }
 
-  const authed = await hasValidSession(req);
+  const sessionInfo = await readSession(req);
+  const authed = sessionInfo !== null;
+
+  // Read-only enforcement for "support is looking at this account". Runs before
+  // every other check so no downstream branch can let a write slip through.
+  if (sessionInfo?.supportView && isSupportViewReadOnlyViolation(req, pathname)) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        {
+          error: "جلسة دعم فني للاطّلاع فقط — لا يمكن تنفيذ أي تعديل على حساب الطالب.",
+          code: "SUPPORT_VIEW_READONLY",
+        },
+        { status: 403 }
+      );
+    }
+    return NextResponse.redirect(new URL("/thefake/support?notice=readonly", req.url));
+  }
+
+  // Showroom superadmin: the UI is live, writes to admin APIs stay on demo rows
+  // by no-op so a client cannot delete real students or move money.
+  if (
+    sessionInfo?.demoTour &&
+    pathname.startsWith("/api/admin/") &&
+    !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase())
+  ) {
+    return NextResponse.json({ ok: true, success: true }, { status: 200 });
+  }
 
   // Admin sub-pages: redirect to /adminpanel login if no session
   if (startsWithAny(pathname, ADMIN_PANEL_PREFIXES) && !authed) {
@@ -232,6 +311,8 @@ export default async function proxy(req: NextRequest) {
 export const config = {
   matcher: [
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
+    // Exclude multipart upload routes — proxy body buffering corrupts FormData.
+    // Auth is enforced inside each upload handler instead.
+    "/(api|trpc)((?!/homework/[^/]+/upload$).*)",
   ],
 };

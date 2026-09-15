@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 // PATCH — update ticket status / resolution (teacher/admin)
@@ -9,8 +10,11 @@ export async function PATCH(
 ) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin" && session.role !== "admin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin" && session.role !== "admin")) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+    }
+    if (isTeacherLike(session.role) && !hasAssistantPermission(session, "manageTickets")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية التذاكر" }, { status: 403 });
     }
 
     const { id } = await params;
@@ -23,8 +27,8 @@ export async function PATCH(
     if (!ticket) return NextResponse.json({ error: "غير موجود" }, { status: 404 });
 
     // Teachers can only manage tickets for their own courses
-    if (session.role === "teacher") {
-      if (!ticket.course || ticket.course.teacherId !== session.id) {
+    if (isTeacherLike(session.role)) {
+      if (!ticket.course || ticket.course.teacherId !== actingTeacherId(session)) {
         return NextResponse.json({ error: "ليست لديك صلاحية" }, { status: 403 });
       }
     }

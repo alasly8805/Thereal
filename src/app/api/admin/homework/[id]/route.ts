@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 /** GET /api/admin/homework/[id] — teacher views a single homework */
@@ -8,8 +9,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getSession();
-  if (!session || session.role !== "teacher")
+  if (!session || !isTeacherLike(session.role))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "manageHomework") && !hasAssistantPermission(session, "gradeHomework")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الواجبات" }, { status: 403 });
+  }
 
   const { id } = await params;
   const hw = await prisma.homework.findUnique({
@@ -20,7 +24,7 @@ export async function GET(
       video: { select: { id: true, title: true } },
     },
   });
-  if (!hw || hw.teacherId !== session.id)
+  if (!hw || hw.teacherId !== actingTeacherId(session))
     return NextResponse.json({ error: "غير موجود" }, { status: 404 });
 
   return NextResponse.json({ homework: hw });
@@ -32,12 +36,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getSession();
-  if (!session || session.role !== "teacher")
+  if (!session || !isTeacherLike(session.role))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "manageHomework"))
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إدارة الواجبات" }, { status: 403 });
 
   const { id } = await params;
   const hw = await prisma.homework.findUnique({ where: { id }, select: { teacherId: true } });
-  if (!hw || hw.teacherId !== session.id)
+  if (!hw || hw.teacherId !== actingTeacherId(session))
     return NextResponse.json({ error: "غير موجود" }, { status: 404 });
 
   await prisma.homework.delete({ where: { id } });

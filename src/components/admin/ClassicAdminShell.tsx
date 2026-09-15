@@ -30,6 +30,7 @@ import {
   LifeBuoy,
   Menu,
   Search,
+  UserCog,
 } from "lucide-react";
 import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
 import { AdminActionPasswordBar } from "@/components/admin/AdminActionPasswordBar";
@@ -51,7 +52,7 @@ export interface NavHub {
 }
 
 interface ClassicAdminShellProps {
-  role: "superadmin" | "admin" | "staff" | "teacher";
+  role: "superadmin" | "admin" | "staff" | "teacher" | "assistant";
   activeSection: string;
   setActiveSection: (id: string) => void;
   onLogout: () => void;
@@ -61,6 +62,7 @@ interface ClassicAdminShellProps {
   onRefresh?: () => void;
   refreshing?: boolean;
   onOpenMoneyControl?: () => void;
+  allowedSectionIds?: string[] | null;
   children: React.ReactNode;
 }
 
@@ -75,6 +77,7 @@ export function ClassicAdminShell({
   onRefresh,
   refreshing,
   onOpenMoneyControl,
+  allowedSectionIds,
   children,
 }: ClassicAdminShellProps) {
   // Mobile bottom sheet state
@@ -167,6 +170,7 @@ export function ClassicAdminShell({
       sections: [
         { id: "dashboard", label: "مؤشرات الأداء والتحليلات", icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
         { id: "my-page", label: "الملف التعريفي العام للمعلم", icon: <Eye className="w-3.5 h-3.5" /> },
+        { id: "assistants", label: "المساعدون", icon: <UserCog className="w-3.5 h-3.5" /> },
       ],
     },
     {
@@ -186,7 +190,7 @@ export function ClassicAdminShell({
         { id: "homework", label: "إدارة الواجبات والملفات", icon: <FileText className="w-3.5 h-3.5" /> },
         { id: "review", label: "مركز تصحيح الإجابات المباشر", badge: "Live", badgeVariant: "warning", icon: <Activity className="w-3.5 h-3.5" /> },
         { id: "quiz-results", label: "سجل ونتائج الاختبارات", icon: <Award className="w-3.5 h-3.5" /> },
-        { id: "in-video-responses", label: "إجابات أسئلة الفيديو التفاعلية", icon: <Activity className="w-3.5 h-3.5" /> },
+        { id: "in-video-responses", label: "تصحيح الأسئلة المقالية (اختبارات وفيديو)", icon: <Activity className="w-3.5 h-3.5" /> },
         { id: "grade-requests", label: "طلبات تعديل الدرجات", icon: <Award className="w-3.5 h-3.5" /> },
       ],
     },
@@ -196,6 +200,7 @@ export function ClassicAdminShell({
       icon: <Users className="w-4 h-4" />,
       sections: [
         { id: "teacher-subscriptions", label: "حجوزات واشتراكات الطلاب", icon: <Wallet className="w-3.5 h-3.5" /> },
+        { id: "students", label: "قائمة الطلاب وأرقامهم", icon: <Phone className="w-3.5 h-3.5" /> },
         { id: "codes", label: "توليد أكواد الوصول الذكية", icon: <KeyRound className="w-3.5 h-3.5" /> },
         { id: "referred-students", label: "الطلاب المُحالون والإحالات", icon: <Users className="w-3.5 h-3.5" /> },
         { id: "requests", label: "طلبات زيادة المشاهدات", icon: <Eye className="w-3.5 h-3.5" /> },
@@ -205,16 +210,33 @@ export function ClassicAdminShell({
     },
   ];
 
-  const hubs = role === "teacher" ? teacherHubs : superadminHubs;
+  const baseHubs = role === "teacher" || role === "assistant" ? teacherHubs : superadminHubs;
+  const hubs = allowedSectionIds
+    ? baseHubs
+        .map((hub) => ({
+          ...hub,
+          sections: hub.sections.filter((s) => allowedSectionIds.includes(s.id)),
+        }))
+        .filter((hub) => hub.sections.length > 0)
+    : role === "assistant"
+      ? baseHubs
+          .map((hub) => ({
+            ...hub,
+            sections: hub.sections.filter((s) => s.id !== "assistants" && s.id !== "my-page"),
+          }))
+          .filter((hub) => hub.sections.length > 0)
+      : baseHubs;
 
   // Mobile Bottom Navigation Anchors
-  const mobileAnchors = role === "teacher" ? [
+  const teacherAnchors = [
     { hubId: "academic", label: "الرئيسية", directId: "dashboard", icon: <LayoutDashboard className="w-5 h-5" /> },
     { hubId: "curriculum", label: "الكورسات", directId: "courses", icon: <Video className="w-5 h-5" /> },
     { hubId: "assessment", label: "التقييم", icon: <Award className="w-5 h-5" /> },
     { hubId: "students", label: "الطلاب", icon: <Users className="w-5 h-5" /> },
     { hubId: "all_menu", label: "كل الخيارات", isMenu: true, icon: <Menu className="w-5 h-5" /> },
-  ] : [
+  ].filter((anchor) => anchor.isMenu || hubs.some((h) => h.id === anchor.hubId));
+
+  const mobileAnchors = role === "teacher" || role === "assistant" ? teacherAnchors : [
     { hubId: "main", label: "الرئيسية", icon: <LayoutDashboard className="w-5 h-5" /> },
     { hubId: "users", label: "المستخدمين", icon: <Users className="w-5 h-5" /> },
     { hubId: "finance", label: "المالية", icon: <Wallet className="w-5 h-5" /> },
@@ -298,7 +320,13 @@ export function ClassicAdminShell({
                       : "bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800/60"
                   }`}
                 >
-                  {role === "superadmin" ? "المشرف العام" : role === "teacher" ? "لوحة المعلم" : role}
+                  {role === "superadmin"
+                    ? "المشرف العام"
+                    : role === "teacher"
+                      ? "لوحة المعلم"
+                      : role === "assistant"
+                        ? "مساعد المعلم"
+                        : role}
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">

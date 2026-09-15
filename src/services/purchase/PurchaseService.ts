@@ -6,6 +6,7 @@ import { ReferralService } from "@/services/referral/ReferralService";
 import { DiscountService, PurchaseType } from "@/services/discount/DiscountService";
 import { isValidCurrencyAmount, verifyAuthoritativePrice } from "@/lib/price-verifier";
 import { isTester, canBypassPayment, logTesterActivity } from "@/lib/tester";
+import { getPlanMonths } from "@/lib/subscription-terms";
 
 export interface BasePurchaseParams {
   studentId: string;
@@ -1013,8 +1014,7 @@ export class PurchaseService {
       finalPrice = discountValidation.pricing?.finalPrice ?? basePrice;
     }
 
-    const monthsMap: Record<string, number> = { monthly: 1, termly: 3, yearly: 10 };
-    const months = monthsMap[planType] || 1;
+    const months = getPlanMonths(planType);
     const isLanguages = languageTrack === "languages" || languageTrack === "english";
 
     const profile = await db.teacherProfile.findUnique({

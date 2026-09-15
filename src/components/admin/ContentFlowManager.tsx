@@ -73,7 +73,9 @@ export function ContentFlowManager({ courseId }: ContentFlowManagerProps) {
           setFolders(data.folders || []);
           setPrerequisites(data.prerequisites || []);
 
-          if (!data.sequentialAccess && (!data.prerequisites || data.prerequisites.length === 0)) {
+          if (["free", "per_folder", "course", "custom"].includes(data.contentFlowMode)) {
+            setFlowMode(data.contentFlowMode);
+          } else if (!data.sequentialAccess && (!data.prerequisites || data.prerequisites.length === 0)) {
             setFlowMode("free");
           } else {
             setFlowMode("per_folder");
@@ -110,7 +112,9 @@ export function ContentFlowManager({ courseId }: ContentFlowManagerProps) {
           setItems(data.items);
           setFolders(data.folders || []);
           setPrerequisites(data.prerequisites || []);
-          if (!data.sequentialAccess && (!data.prerequisites || data.prerequisites.length === 0)) {
+          if (["free", "per_folder", "course", "custom"].includes(data.contentFlowMode)) {
+            setFlowMode(data.contentFlowMode);
+          } else if (!data.sequentialAccess && (!data.prerequisites || data.prerequisites.length === 0)) {
             setFlowMode("free");
           } else {
             setFlowMode("per_folder");

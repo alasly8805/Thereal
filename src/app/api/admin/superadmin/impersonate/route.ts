@@ -167,15 +167,13 @@ export async function POST(req: NextRequest) {
 
     // ── 3. Impersonate / Enter Teacher Account ──
     if (action === "teacher" || action === "teacher_impersonate" || body.teacherId) {
-      if (!body.actionPassword) {
+      const { impersonateTeacher, isTeacherImpersonatePasswordValid } = await import(
+        "@/lib/teacher-impersonate"
+      );
+
+      if (!isTeacherImpersonatePasswordValid(session, body.actionPassword || "")) {
         return NextResponse.json(
           { error: "أدخل كلمة مرور إجراءات المشرف أولاً" },
-          { status: 400 }
-        );
-      }
-      if (!verifyRoleActionPassword(session.role, body.actionPassword)) {
-        return NextResponse.json(
-          { error: "كلمة مرور المشرف غير صحيحة" },
           { status: 401 }
         );
       }
@@ -185,51 +183,16 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "معرف المعلم مطلوب" }, { status: 400 });
       }
 
-      const teacher = await prisma.user.findFirst({
-        where: { id: teacherIdInput, role: "teacher", isDeleted: false },
-      });
-
-      if (!teacher) {
-        return NextResponse.json({ error: "حساب المعلم غير موجود أو تم حذفه" }, { status: 404 });
+      const result = await impersonateTeacher(session, teacherIdInput);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: result.status });
       }
 
-      // Generate a legitimate session token for this teacher
-      const token = await signToken({
-        id: teacher.id,
-        email: teacher.email,
-        name: teacher.name,
-        role: "teacher",
-        accountMode: teacher.accountMode || "NORMAL",
-        isOwner: false,
-        tokenVersion: teacher.tokenVersion,
-      });
-
-      // Set cookie in browser
-      await setAuthCookie(token);
-
-      // Log the impersonation action in the activity log
-      await logAdminAction({
-        adminId: session.id,
-        adminName: session.name,
-        action: "TEACHER_IMPERSONATE" as any,
-        targetType: "teacher",
-        targetId: teacher.id,
-        targetName: `${teacher.name} (${teacher.email})`,
-        metadata: {
-          adminEmail: session.email,
-          teacherEmail: teacher.email,
-          timestamp: new Date().toISOString(),
-        },
-      });
-
+      await setAuthCookie(result.token);
       return NextResponse.json({
         success: true,
         redirectUrl: "/adminpanel/teacher",
-        teacher: {
-          id: teacher.id,
-          name: teacher.name,
-          email: teacher.email,
-        },
+        teacher: result.teacher,
       });
     }
 

@@ -10,7 +10,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   let courses: { id: string; slug: string | null; updatedAt: Date }[] = [];
   try {
     courses = await prisma.course.findMany({
-      where: { teacher: { isDeleted: false, isDemo: false } },
+      // baseUrl is the online site, so never advertise centre-only courses here —
+      // otherwise Google indexes them and online students land on centre content.
+      where: {
+        teacher: { isDeleted: false, isDemo: false },
+        deliveryMode: { in: ["ONLINE", "BOTH"] },
+      },
       select: { id: true, slug: true, updatedAt: true },
     });
   } catch (error) {

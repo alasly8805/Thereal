@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
     const where = {
       role: "student",
       isDeleted: true,
+      ...(session.demoTour ? { isDemo: true } : {}),
       ...(name ? { name: { contains: name } } : {}),
     };
 

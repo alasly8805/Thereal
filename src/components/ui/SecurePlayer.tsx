@@ -4,8 +4,16 @@ import React, { useState, useRef, useEffect } from "react";
 import { VideoWatermark } from "./VideoWatermark";
 import { YouTubeSecurePlayer } from "./YouTubeSecurePlayer";
 import { DrmPlayer } from "./DrmPlayer";
+import { useApplyPlaybackRate, usePlaybackRate } from "./VideoSpeedMenu";
+import { VideoControlBar } from "./VideoControlBar";
 import { useFullscreen } from "./useFullscreen";
 import { extractYouTubeVideoId } from "@/lib/youtube";
+import {
+  type VideoQualityOption,
+  readStoredQuality,
+  storeQuality,
+  connectionLooksSlow,
+} from "./VideoQualityMenu";
 
 function extractDriveFileId(url: string): string | null {
   if (!url) return null;
@@ -58,7 +66,7 @@ function IframeSecureEmbed({
 }: CommonEmbedProps & { provider?: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const vdoPlayerRef = useRef<VdoPlayerInstance | null>(null);
-  const [drmError, setDrmError] = useState<string | null>(null);
+  const [playerError, setPlayerError] = useState<{ kind: "drm" | "playback"; message: string } | null>(null);
 
   // Resume playback for Bunny & VdoCipher
   useEffect(() => {
@@ -121,7 +129,10 @@ function IframeSecureEmbed({
           });
 
           player.video?.addEventListener("error", () => {
-            setDrmError("استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم");
+            setPlayerError({
+              kind: "playback",
+              message: "تعذر تشغيل الفيديو. تحقّق من الاتصال ثم أعد المحاولة.",
+            });
           });
         }
       };
@@ -137,7 +148,10 @@ function IframeSecureEmbed({
             (typeof data?.message === "string" && /drm|widevine|not supported|license/i.test(data.message))
           ) {
             console.warn("[SecurePlayer] VdoCipher DRM error detected:", data);
-            setDrmError("استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم");
+            setPlayerError({
+              kind: "drm",
+              message: "استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم",
+            });
           }
         } catch {}
       };
@@ -191,24 +205,38 @@ function IframeSecureEmbed({
         style={{ border: "none" }}
         draggable={false}
       />
-      {drmError && (
+      {playerError && (
         <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-50 dir-rtl animate-in fade-in duration-300">
-          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 shadow-lg shadow-amber-500/10 text-3xl">
-            📱
+          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-lg text-3xl ${
+            playerError.kind === "drm"
+              ? "bg-amber-500/10 border border-amber-500/30 text-amber-400 shadow-amber-500/10"
+              : "bg-rose-500/10 border border-rose-500/30 text-rose-400 shadow-rose-500/10"
+          }`}>
+            {playerError.kind === "drm" ? "📱" : "⚠️"}
           </div>
-          <h3 className="text-lg font-black text-white mb-2">تنبيه توافق الجهاز (DRM)</h3>
-          <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-4 max-w-md w-full mb-5 shadow-inner text-center">
-            <p className="text-sm md:text-base font-black text-amber-300 leading-relaxed">
-              استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم
+          <h3 className="text-lg font-black text-white mb-2">
+            {playerError.kind === "drm" ? "تنبيه توافق الجهاز (DRM)" : "تعذر تشغيل الفيديو"}
+          </h3>
+          <div className={`border rounded-2xl p-4 max-w-md w-full mb-5 shadow-inner text-center ${
+            playerError.kind === "drm"
+              ? "bg-amber-500/10 border-amber-500/25"
+              : "bg-slate-800/60 border-slate-700"
+          }`}>
+            <p className={`text-sm md:text-base font-black leading-relaxed ${
+              playerError.kind === "drm" ? "text-amber-300" : "text-slate-200"
+            }`}>
+              {playerError.message}
             </p>
-            <p className="text-xs text-slate-300 mt-2.5 leading-relaxed">
-              هذا الدرس محمي بأحدث تقنيات التشفير العتادية العالمية (DRM)، وبعض معالجات الهواتف لا تدعم هذا المستوى الأمني. يمكنك المتابعة بدون أي مشكلة من تابلت المدرسة أو أي جهاز كمبيوتر أو لابتوب.
-            </p>
+            {playerError.kind === "drm" && (
+              <p className="text-xs text-slate-300 mt-2.5 leading-relaxed">
+                هذا الدرس محمي بتشفير DRM. إذا لم يعمل على هذا الجهاز جرّب متصفحاً حديثاً أو جهازاً آخر.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => setDrmError(null)}
+              onClick={() => setPlayerError(null)}
               className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer border border-slate-700"
             >
               إعادة المحاولة
@@ -229,6 +257,13 @@ function IframeSecureEmbed({
 
 /**
  * Direct Video Player (MP4 / WebM / local streaming endpoint).
+ *
+ * Native (alasly) lectures are a single file, not an adaptive ladder, so a
+ * 1080p recording is a ~5 Mbit/s stream with nothing to fall back to when the
+ * connection cannot carry it. When smaller renditions have been generated the
+ * quality menu appears and re-requests the same lesson with ?q=<height>; the
+ * position is carried across the switch so it feels like changing quality
+ * rather than restarting the lesson.
  */
 function DirectVideoEmbed({
   embedUrl,
@@ -237,6 +272,8 @@ function DirectVideoEmbed({
   onEnded,
   onProgress,
   onError,
+  isFullscreen,
+  onToggleFullscreen,
 }: {
   embedUrl: string;
   onPlay?: () => void;
@@ -244,39 +281,106 @@ function DirectVideoEmbed({
   onEnded?: () => void;
   onProgress?: (seconds: number) => void;
   onError?: () => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }) {
-  const [deviceError, setDeviceError] = useState(false);
-  const isMobile =
-    typeof window !== "undefined" &&
-    (/Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-     (navigator.maxTouchPoints > 0 && window.innerWidth <= 768));
+  const [playbackError, setPlaybackError] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  // Playback speed — remembered per browser; re-applied after a quality swap
+  // because changing `src` resets the element's playbackRate to 1.
+  const [playbackRate, setPlaybackRate] = usePlaybackRate();
+  useApplyPlaybackRate(videoRef, playbackRate);
+  const [qualities, setQualities] = useState<VideoQualityOption[]>([]);
+  const [quality, setQuality] = useState<number | null>(null);
+  // Position + play state to restore on the other side of a quality switch.
+  const resumeRef = useRef<{ time: number; playing: boolean } | null>(null);
+
+  const isNativeStream = embedUrl.startsWith("/api/videos/stream/");
+  const streamPath = isNativeStream ? embedUrl.split("?")[0] : "";
+
+  useEffect(() => {
+    if (!streamPath) {
+      setQualities([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`${streamPath}/qualities`, { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { qualities?: VideoQualityOption[] } | null) => {
+        if (cancelled || !data?.qualities?.length) return;
+        const list = data.qualities;
+        setQualities(list);
+
+        const stored = readStoredQuality();
+        if (stored !== undefined && list.some((o) => o.height === stored)) {
+          setQuality(stored);
+          return;
+        }
+        // Nobody who is struggling with the connection goes hunting for a
+        // settings button, so start them low when the browser says the link is
+        // weak. They can always raise it, and the choice is then remembered.
+        if (stored === undefined && connectionLooksSlow()) {
+          const lightest = list
+            .filter((o) => o.height !== null)
+            .sort((a, b) => (a.height as number) - (b.height as number))[0];
+          if (lightest) setQuality(lightest.height);
+        }
+      })
+      .catch(() => {
+        // A player that cannot list qualities still plays the original.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [streamPath]);
+
+  const src =
+    quality === null ? embedUrl : `${embedUrl}${embedUrl.includes("?") ? "&" : "?"}q=${quality}`;
+
+  const changeQuality = (height: number | null) => {
+    const v = videoRef.current;
+    resumeRef.current = v ? { time: v.currentTime, playing: !v.paused } : null;
+    storeQuality(height);
+    setPlaybackError(false);
+    setQuality(height);
+  };
 
   const handleVideoError = () => {
     onError?.();
-    if (isMobile) {
-      setDeviceError(true);
+    setPlaybackError(true);
+  };
+
+  const handleLoadedMetadata = () => {
+    const resume = resumeRef.current;
+    if (!resume) return;
+    resumeRef.current = null;
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      if (resume.time > 0) v.currentTime = resume.time;
+      if (resume.playing) void v.play();
+    } catch {
+      // seeking can fail while the new source is still opening; playback just
+      // starts from the beginning rather than breaking
     }
   };
 
-  if (deviceError) {
+  if (playbackError) {
     return (
       <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-50 dir-rtl animate-in fade-in duration-300">
-        <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 shadow-lg shadow-amber-500/10 text-3xl">
-          📱
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-4 shadow-lg shadow-rose-500/10 text-3xl">
+          ⚠️
         </div>
-        <h3 className="text-lg font-black text-white mb-2">تنبيه توافق الجهاز (DRM)</h3>
-        <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-4 max-w-md w-full mb-5 shadow-inner text-center">
-          <p className="text-sm md:text-base font-black text-amber-300 leading-relaxed">
-            استخدم جهاز اخر او تابلت الوزاره لان جهازك غير مدعوم
-          </p>
-          <p className="text-xs text-slate-300 mt-2.5 leading-relaxed">
-            هذا الدرس محمي بأنظمة تشفير DRM ولا يعمل على بعض الهواتف غير المعتمدة. يمكنك المتابعة بشكل طبيعي عبر تابلت المدرسة أو أي لابتوب أو كمبيوتر.
+        <h3 className="text-lg font-black text-white mb-2">تعذر تشغيل الفيديو</h3>
+        <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-4 max-w-md w-full mb-5 shadow-inner text-center">
+          <p className="text-sm text-slate-200 leading-relaxed">
+            فشل تحميل المشغل. تحقّق من الاتصال ثم أعد المحاولة. هذه الحماية ليست نظام DRM.
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setDeviceError(false)}
+            onClick={() => setPlaybackError(false)}
             className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer border border-slate-700"
           >
             إعادة المحاولة
@@ -294,19 +398,38 @@ function DirectVideoEmbed({
   }
 
   return (
-    <video
-      src={embedUrl}
-      controls
-      controlsList="nodownload noplaybackrate"
-      disablePictureInPicture
-      playsInline
-      className="absolute inset-0 w-full h-full object-contain"
-      onPlay={() => onPlay?.()}
-      onPause={() => onPause?.()}
-      onEnded={() => onEnded?.()}
-      onError={handleVideoError}
-      onTimeUpdate={(e) => onProgress?.((e.target as HTMLVideoElement).currentTime)}
-    />
+    <>
+      {/* Native chrome is off: VideoControlBar owns play/seek/mute/quality/speed/fullscreen. */}
+      <video
+        ref={videoRef}
+        src={src}
+        controlsList="nodownload noplaybackrate"
+        disablePictureInPicture
+        playsInline
+        className="absolute inset-0 w-full h-full object-contain cursor-pointer"
+        onClick={(e) => {
+          const v = e.currentTarget;
+          if (v.paused || v.ended) void v.play().catch(() => {});
+          else v.pause();
+        }}
+        onPlay={() => onPlay?.()}
+        onPause={() => onPause?.()}
+        onEnded={() => onEnded?.()}
+        onError={handleVideoError}
+        onLoadedMetadata={handleLoadedMetadata}
+        onTimeUpdate={(e) => onProgress?.((e.target as HTMLVideoElement).currentTime)}
+      />
+      <VideoControlBar
+        videoRef={videoRef}
+        playbackRate={playbackRate}
+        onPlaybackRateChange={setPlaybackRate}
+        qualities={qualities}
+        quality={quality}
+        onQualityChange={changeQuality}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={onToggleFullscreen}
+      />
+    </>
   );
 }
 
@@ -330,6 +453,7 @@ export interface SecurePlayerProps {
   onProgress?: (seconds: number) => void;
   onPause?: () => void;
   onPlay?: () => void;
+  onDrmDetected?: (drm: import("./DrmPlayer").DeviceDrmInfo) => void;
   className?: string;
   paused?: boolean;
   noNativeSecurity?: boolean;
@@ -351,6 +475,7 @@ export function SecurePlayer({
   onProgress,
   onPause,
   onPlay,
+  onDrmDetected,
   className = "",
   paused = false,
   noNativeSecurity = false,
@@ -469,29 +594,7 @@ export function SecurePlayer({
     };
   }, [noNativeSecurity, useDriveDirect]);
 
-  // 1. Axinom Hardware Multi-DRM Player
-  if (provider === "axinom") {
-    return (
-      <DrmPlayer
-        manifestUrl={embedUrl}
-        drmToken={drm?.token}
-        licenseServers={drm?.licenseServers}
-        clearKeys={drm?.clearKeys}
-        initialPosition={startSeconds}
-        watermark={watermark}
-        title={title}
-        onTimeUpdate={onProgress}
-        onEnded={onEnded}
-        onPause={onPause}
-        onPlay={onPlay}
-        paused={paused}
-      >
-        {children}
-      </DrmPlayer>
-    );
-  }
-
-  // 2. YouTube Hardened Embed
+  // 1. YouTube Hardened Embed
   if (provider === "youtube") {
     const id = extractYouTubeVideoId(embedUrl) || embedUrl.match(/\/embed\/([^?/]+)/)?.[1] || "";
     if (id) {
@@ -519,6 +622,9 @@ export function SecurePlayer({
     embedUrl.includes(".webm") ||
     embedUrl.includes(".mov");
 
+  // These two surfaces render our own control bar (with fullscreen inside it).
+  const hasOwnControlBar = provider === "axinom" || (!(driveFileId && useDriveDirect) && isDirectVideo);
+
   return (
     <div
       ref={wrapRef}
@@ -533,7 +639,26 @@ export function SecurePlayer({
       onContextMenu={(e) => e.preventDefault()}
     >
       {/* ── Video / Iframe Surface ── */}
-      {driveFileId && useDriveDirect ? (
+      {provider === "axinom" ? (
+        <div className="absolute inset-0 w-full h-full">
+          <DrmPlayer
+            manifestUrl={embedUrl}
+            drmToken={drm?.token}
+            licenseServers={drm?.licenseServers}
+            clearKeys={drm?.clearKeys}
+            initialPosition={startSeconds}
+            title={title}
+            onTimeUpdate={onProgress}
+            onEnded={onEnded}
+            onPause={onPause}
+            onPlay={onPlay}
+            onDrmDetected={onDrmDetected}
+            paused={paused}
+            isFullscreen={isFs}
+            onToggleFullscreen={toggleFs}
+          />
+        </div>
+      ) : driveFileId && useDriveDirect ? (
         <iframe
           src={`https://drive.google.com/file/d/${driveFileId}/preview`}
           title={title}
@@ -548,11 +673,8 @@ export function SecurePlayer({
           onPause={onPause}
           onEnded={onEnded}
           onProgress={onProgress}
-          onError={() => {
-            if (driveFileId) {
-              setUseDriveDirect(true);
-            }
-          }}
+          isFullscreen={isFs}
+          onToggleFullscreen={toggleFs}
         />
       ) : (
         <IframeSecureEmbed
@@ -585,7 +707,9 @@ export function SecurePlayer({
       {/* Interactive overlays & modals */}
       {children}
 
-      {/* ── Fullscreen Toggle Button ── */}
+      {/* ── Fullscreen Toggle Button — iframe providers only; the HTML5 players
+           (axinom / direct) carry it inside their own VideoControlBar. ── */}
+      {!hasOwnControlBar && (
       <button
         type="button"
         onClick={toggleFs}
@@ -602,6 +726,7 @@ export function SecurePlayer({
           </svg>
         )}
       </button>
+      )}
     </div>
   );
 }

@@ -16,6 +16,7 @@ interface CourseCardProps {
     teacher: { id: string; name: string };
     _count?: { accessCodes: number };
     hasAccess?: boolean;
+    inLibrary?: boolean;
     isPaid?: boolean;
     price?: number | null;
     discountPercent?: number | null;
@@ -53,6 +54,7 @@ export function CourseCard({ course, onCodeApplied }: CourseCardProps) {
   const [purchasing, setPurchasing] = useState(false);
   const [payMode,    setPayMode]    = useState<"code" | "balance">("code");
 
+  const hasAccessOrInLibrary = Boolean(course.hasAccess || course.inLibrary);
   const countdown      = useCountdown(course.discountExpiresAt ?? null);
   const hasDiscount    = (course.discountPercent ?? 0) > 0;
   const discountActive = hasDiscount && !(countdown?.expired ?? false);
@@ -176,42 +178,46 @@ export function CourseCard({ course, onCodeApplied }: CourseCardProps) {
           </div>
         )}
 
-        {/* Enrolled ribbon */}
-        {course.hasAccess && (
+        {/* Enrolled / In Library ribbon */}
+        {hasAccessOrInLibrary && (
           <div
-            className="absolute top-4 right-0 flex items-center gap-1.5 font-bold text-xs text-white"
+            className="absolute top-3 right-0 flex items-center gap-1.5 font-bold text-xs text-white z-10"
             style={{
               padding: "6px 14px 6px 10px",
-              background: course.isOwnerTeacher ? "#0284c7" : "var(--brand)",
+              background: course.isOwnerTeacher
+                ? "linear-gradient(135deg, #0284c7, #0369a1)"
+                : "linear-gradient(135deg, #059669, #10b981)",
               borderRadius: "0 0 0 12px",
-              boxShadow: "-3px 3px 12px rgba(14,110,98,.4)",
+              boxShadow: "-3px 3px 12px rgba(5,150,105,.4)",
             }}
           >
             {course.isOwnerTeacher ? (
               <>👁️ معاينة كطالب</>
             ) : (
               <>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-                أنت مشترك
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                في مكتبتك (لديك صلاحية)
               </>
             )}
           </div>
         )}
 
         {/* Free / Discount badge */}
-        <div className="absolute top-3 left-3 flex flex-col gap-1.5">
-          {effectivelyFree && (
-            <span className="text-xs font-bold text-white px-2.5 py-1 rounded-full" style={{ background: "#10b981" }}>مجاني</span>
-          )}
-          {discountActive && !effectivelyFree && (
-            <span className="text-xs font-bold text-white px-2.5 py-1 rounded-full" style={{ background: "#ec4899" }}>
-              خصم {(course.discountPercent ?? 0)}٪
-            </span>
-          )}
-        </div>
+        {!hasAccessOrInLibrary && (
+          <div className="absolute top-3 left-3 flex flex-col gap-1.5">
+            {effectivelyFree && (
+              <span className="text-xs font-bold text-white px-2.5 py-1 rounded-full" style={{ background: "#10b981" }}>مجاني</span>
+            )}
+            {discountActive && !effectivelyFree && (
+              <span className="text-xs font-bold text-white px-2.5 py-1 rounded-full" style={{ background: "#ec4899" }}>
+                خصم {(course.discountPercent ?? 0)}٪
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Countdown bar */}
-        {discountActive && countdown && !countdown.expired && (
+        {!hasAccessOrInLibrary && discountActive && countdown && !countdown.expired && (
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 py-2 text-xs font-bold text-amber-300"
             style={{ background: "linear-gradient(to top, rgba(0,0,0,.75), transparent)" }}>
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -248,17 +254,35 @@ export function CourseCard({ course, onCodeApplied }: CourseCardProps) {
           </p>
         )}
 
-        {/* Teacher + Price row */}
+        {/* Teacher + Price / Status row */}
         <div className="flex items-center justify-between gap-2 mt-auto pt-1">
           <div className="flex items-center gap-2">
-            {course.isPaid && !effectivelyFree && finalPrice != null ? (
+            {hasAccessOrInLibrary ? (
+              <span
+                className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+                style={{
+                  background: course.isOwnerTeacher ? "rgba(2,132,199,0.12)" : "rgba(16,185,129,0.12)",
+                  color: course.isOwnerTeacher ? "#0284c7" : "#059669",
+                  border: `1px solid ${course.isOwnerTeacher ? "rgba(2,132,199,0.25)" : "rgba(16,185,129,0.25)"}`,
+                }}
+              >
+                {course.isOwnerTeacher ? (
+                  <>👁️ صانع الكورس</>
+                ) : (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    متاح بمكتبتك
+                  </>
+                )}
+              </span>
+            ) : course.isPaid && !effectivelyFree && finalPrice != null ? (
               <div className="flex items-baseline gap-1.5" dir="rtl">
                 <span className="font-black text-lg" style={{ color: "var(--gold-2)", fontFamily: "var(--font-head)" }}>{formatEgp(finalPrice)}</span>
                 {discountActive && course.price != null && (
                   <span className="text-xs line-through" style={{ color: "var(--ink-3)" }}>{formatEgp(course.price)}</span>
                 )}
               </div>
-            ) : effectivelyFree && !course.hasAccess ? (
+            ) : effectivelyFree ? (
               <span className="text-sm font-bold" style={{ color: "#10b981" }}>مجاني</span>
             ) : null}
           </div>
@@ -275,17 +299,28 @@ export function CourseCard({ course, onCodeApplied }: CourseCardProps) {
 
         {/* ── CTAs ── */}
         <div className="flex flex-col gap-2 pt-1" style={{ borderTop: "1px solid var(--border)", marginTop: 4 }}>
-          {course.hasAccess ? (
+          {hasAccessOrInLibrary ? (
             <>
               <button
                 onClick={() => router.push(`/courses/${course.id}/learn`)}
-                className="w-full py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98] hover:opacity-90"
+                className="w-full py-2.5 rounded-xl font-bold text-sm text-white transition-all active:scale-[0.98] hover:opacity-90 flex items-center justify-center gap-2"
                 style={{
-                  background: course.isOwnerTeacher ? "linear-gradient(135deg,#0284c7,#0369a1)" : "linear-gradient(135deg,var(--brand),var(--brand-strong))",
-                  boxShadow: "0 4px 14px -4px var(--brand-shadow)",
+                  background: course.isOwnerTeacher
+                    ? "linear-gradient(135deg,#0284c7,#0369a1)"
+                    : "linear-gradient(135deg,#10b981,#059669)",
+                  boxShadow: course.isOwnerTeacher
+                    ? "0 4px 14px -4px rgba(2,132,199,.4)"
+                    : "0 4px 14px -4px rgba(16,185,129,.4)",
                 }}
               >
-                {course.isOwnerTeacher ? "👁️ معاينة الكورس ←" : "الدخول للكورس ←"}
+                {course.isOwnerTeacher ? (
+                  "👁️ معاينة الكورس ←"
+                ) : (
+                  <>
+                    <span>الدخول للكورس ومتابعة التعلم</span>
+                    <span>←</span>
+                  </>
+                )}
               </button>
               <button
                 onClick={() => router.push(`/courses/${course.id}`)}

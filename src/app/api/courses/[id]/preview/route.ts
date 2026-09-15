@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { getCachedCourseOutline } from "@/lib/cache";
+import { checkCourseEnrollment } from "@/lib/authorization";
+import { isCenterRequest, isCourseOnSite } from "@/lib/center-mode";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -27,17 +29,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!course) return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
 
     let hasAccess = false;
+    let inLibrary = false;
     let isOwnerTeacher = false;
     try {
       const session = await getSession();
       if (session) {
         isOwnerTeacher = session.role === "teacher" && course.teacherId === session.id;
         const isAdminPreview = session.role === "admin" || session.role === "superadmin";
-        const hasCode = !!(await prisma.accessCode.findFirst({ where: { courseId: course.id, studentId: session.id } }));
-        hasAccess = hasCode || isOwnerTeacher || isAdminPreview || (session.role === "teacher" && (!course.isPaid || course.price === 0));
+        inLibrary = await checkCourseEnrollment(session.id, course.id, session.role);
+        hasAccess = inLibrary || isOwnerTeacher || isAdminPreview || (session.role === "teacher" && (!course.isPaid || course.price === 0));
       }
     } catch {
       // If auth fails, just show as no-access
+    }
+
+    // A centre course must not be reachable from code-up.tech (or vice versa).
+    // Anyone who already holds it — enrolled student, owning teacher, admin —
+    // keeps their existing link working; everyone else gets a plain 404.
+    if (!isCourseOnSite(course.deliveryMode, isCenterRequest(req)) && !hasAccess) {
+      return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
     }
 
     const totalVideos = course.folders.reduce((sum, f) => sum + f._count.videos, 0);
@@ -84,6 +94,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         quizCount: f._count.quizzes,
       })),
       hasAccess,
+      inLibrary,
       isOwnerTeacher,
     };
 

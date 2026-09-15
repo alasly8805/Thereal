@@ -1,11 +1,14 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import type { NextResponse } from "next/server";
 import { isPhoneVerificationBypassed } from "@/lib/aws-sms";
 import { prisma } from "./prisma";
+import { getCachedUserSession } from "./cache";
 import { normalizeEgyptPhone } from "@/lib/phone";
 import { getConfigNumberClamped } from "./config";
-import { getCachedUserSession } from "./cache";
+import type { AssistantPermissions } from "./teacher-scope";
+import { parseAssistantPermissions } from "./teacher-scope";
 
 function getJwtSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;
@@ -32,6 +35,16 @@ export interface JWTPayload {
   isOwner?: boolean;
   deviceId?: string;
   tokenVersion?: number;
+  /**
+   * Set only on a token minted by the support panel when an agent enters a
+   * student's account. Marks the session read-only: proxy.ts refuses every
+   * mutating request carrying it, and playback does not spend a watch slot.
+   */
+  supportView?: boolean;
+  /** Which panel minted the support-view token, for the audit trail. */
+  supportViewBy?: string;
+  /** Client showroom tour: demo accounts only, production students untouched. */
+  demoTour?: boolean;
   jti?: string;
   iat?: number;
   exp?: number;
@@ -45,6 +58,11 @@ export interface SessionUser {
   role: string;
   accountMode?: string;
   isOwner?: boolean;
+  /** True while a support agent is viewing this account. Read-only session. */
+  supportView?: boolean;
+  supportViewBy?: string;
+  /** Showroom walkthrough — never treat this session as the platform owner. */
+  demoTour?: boolean;
   profileCompleted: boolean;
   phone?: string | null;
   parentPhone?: string | null;
@@ -55,6 +73,8 @@ export interface SessionUser {
   referralCode?: string | null;
   streakFreezes?: number;
   balance?: number;
+  assistantOfTeacherId?: string | null;
+  assistantPermissions?: AssistantPermissions | null;
 }
 
 type PhoneChallengePayload = {
@@ -107,17 +127,26 @@ export async function verifyToken(token: string): Promise<JWTPayload | null> {
   }
 }
 
+function authCookieOptions(days: number) {
+  return {
+    httpOnly: true,
+    secure: isSecureCookieContext(),
+    sameSite: "lax" as const,
+    maxAge: 60 * 60 * 24 * days,
+    path: "/",
+  };
+}
+
 export async function setAuthCookie(token: string) {
   const cookieStore = await cookies();
   const days = await getConfigNumberClamped("jwt_expiry_days", 1, 365); // matches the JWT expiry
-  const isSecure = isSecureCookieContext();
-  cookieStore.set(AUTH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: isSecure,
-    sameSite: "lax",
-    maxAge: 60 * 60 * 24 * days,
-    path: "/",
-  });
+  cookieStore.set(AUTH_COOKIE_NAME, token, authCookieOptions(days));
+}
+
+/** Attach the session cookie to a specific response (form POST 303 redirects). */
+export async function applyAuthCookie(res: NextResponse, token: string) {
+  const days = await getConfigNumberClamped("jwt_expiry_days", 1, 365);
+  res.cookies.set(AUTH_COOKIE_NAME, token, authCookieOptions(days));
 }
 
 export async function clearAuthCookie() {
@@ -271,9 +300,10 @@ async function getJwtSession(): Promise<SessionUser | null> {
         email: payload.email,
         name: payload.name,
         role: payload.role,
-        isOwner: true,
+        isOwner: payload.demoTour === true ? false : true,
         profileCompleted: true,
         deviceId: payload.deviceId,
+        demoTour: payload.demoTour === true,
       };
     }
     // Named DB-backed superadmin — re-validate against the row so a
@@ -287,9 +317,10 @@ async function getJwtSession(): Promise<SessionUser | null> {
       email: sa.email,
       name: sa.name,
       role: "superadmin",
-      isOwner: sa.isOwner,
+      isOwner: payload.demoTour === true ? false : sa.isOwner,
       profileCompleted: true,
       deviceId: payload.deviceId,
+      demoTour: payload.demoTour === true,
     };
   }
 
@@ -316,6 +347,11 @@ async function getJwtSession(): Promise<SessionUser | null> {
     name: user.name,
     role: user.role,
     accountMode: user.accountMode || "NORMAL",
+    // Carried from the token, not the DB row: the flag describes THIS session
+    // (a support agent looking at the account), not the account itself.
+    supportView: payload.supportView === true,
+    supportViewBy: payload.supportViewBy,
+    demoTour: payload.demoTour === true,
     profileCompleted: user.profileCompleted,
     phone: user.phone,
     parentPhone: user.parentPhone,
@@ -326,6 +362,11 @@ async function getJwtSession(): Promise<SessionUser | null> {
     referralCode: user.referralCode,
     streakFreezes: user.streakFreezes,
     balance: user.balance ?? 0,
+    assistantOfTeacherId: (user as { assistantOfTeacherId?: string | null }).assistantOfTeacherId ?? null,
+    assistantPermissions:
+      user.role === "assistant"
+        ? parseAssistantPermissions((user as { assistantPermissions?: string | null }).assistantPermissions)
+        : null,
   };
 }
 

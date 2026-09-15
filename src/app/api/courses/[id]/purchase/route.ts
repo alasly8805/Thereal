@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { PurchaseService } from "@/services/purchase/PurchaseService";
+import { prisma } from "@/lib/prisma";
+import { isCenterRequest, isCourseOnSite } from "@/lib/center-mode";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -10,6 +12,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   const { id: courseId } = await params;
+
+  // Block the purchase before any money moves if the course does not belong to
+  // the site the student is on.
+  const scoped = await prisma.course.findUnique({
+    where: { id: courseId },
+    select: { deliveryMode: true },
+  });
+  if (scoped && !isCourseOnSite(scoped.deliveryMode, isCenterRequest(req))) {
+    return NextResponse.json({ error: "هذا الكورس غير متاح على هذه المنصة" }, { status: 404 });
+  }
+
   const reqBody = await req.json().catch(() => ({}));
   const promoCodeInput = reqBody.promoCode || reqBody.promo_code;
   const discountCode = reqBody.discountCode || reqBody.discount_code;

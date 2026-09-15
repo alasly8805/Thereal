@@ -13,7 +13,9 @@ export async function GET() {
   if (session.role !== "student") return NextResponse.json({ total: 0, bySubject: {}, questions: [] });
 
   const wrongAnswers = await prisma.quizAnswer.findMany({
-    where: { studentId: session.id, isCorrect: false },
+    // MCQ only: essay answers are teacher-graded (and pending ones are stored as
+    // isCorrect=false), so they must not be turned into practice questions.
+    where: { studentId: session.id, isCorrect: false, questionType: { not: "essay" } },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,

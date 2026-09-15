@@ -5,6 +5,10 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { hasPermission } from "@/lib/rbac";
 
+export const dynamic = "force-dynamic";
+
+const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
+
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "غير مصحح" }, { status: 401 });
@@ -13,7 +17,11 @@ export async function GET() {
   }
   try {
     const teachers = await prisma.user.findMany({
-      where: { role: "teacher" },
+      where: {
+        role: "teacher",
+        isDeleted: false,
+        ...(session.demoTour ? { isDemo: true } : { isDemo: false }),
+      },
       select: {
         id: true,
         name: true,
@@ -27,7 +35,7 @@ export async function GET() {
       },
       orderBy: { createdAt: "desc" },
     });
-    return NextResponse.json({ teachers });
+    return NextResponse.json({ teachers }, { headers: NO_STORE });
   } catch (error) {
     console.error("Teachers GET error:", error);
     return NextResponse.json({ error: "تعذر جلب المعلمين" }, { status: 500 });
@@ -50,6 +58,9 @@ export async function POST(req: NextRequest) {
       } catch (e) {}
     }
   if (!session) return NextResponse.json({ error: "غير مصحح" }, { status: 401 });
+  if (session.demoTour) {
+    return NextResponse.json({ ok: true, success: true });
+  }
   if (!hasPermission(session.role, "create_teacher")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }

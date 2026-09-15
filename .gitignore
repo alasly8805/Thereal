@@ -68,6 +68,8 @@ bin/
 .env.save
 .env.save.1
 .env.save.2
+# timestamped .env backups (.env.bak-<tag>-<date>) — these hold live secrets
+.env.bak*
 .eslintcache
 scratch/
 
@@ -79,3 +81,4 @@ scratch/
 /.next.last-good.old/
 /.next.restoring/
 /.next.broken/
+/.next.prev/

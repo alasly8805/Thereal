@@ -30,7 +30,11 @@ export default async function ParentDashboardPage() {
     where: { id: session.id },
     include: {
       quizResults: {
-        include: { quiz: true },
+        include: {
+          quiz: true,
+          // Essay answers awaiting teacher review — no final grade yet.
+          answers: { where: { status: "PENDING" }, select: { id: true } },
+        },
         orderBy: { completedAt: "desc" },
         take: 5
       },
@@ -218,6 +222,20 @@ export default async function ParentDashboardPage() {
                     // QuizResult.score is already a percentage; dividing by
                     // totalQ (the question count) showed parents e.g. 2833%.
                     const percentage = Math.round(quizResultPercent(result));
+                    const pendingEssays = result.answers.length;
+                    if (pendingEssays > 0) {
+                      return (
+                        <div key={result.id} className="group">
+                          <div className="flex justify-between text-sm mb-2">
+                            <span className="font-bold text-gray-700 dark:text-gray-300">{result.quiz.title}</span>
+                            <span className="font-black text-amber-500" title={`${pendingEssays} سؤال مقالي بانتظار تصحيح المعلم`}>
+                              ⏳ يتم المراجعة
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-100 dark:bg-[#0F141F] rounded-full h-3 overflow-hidden border border-dashed border-amber-300 dark:border-amber-500/30"></div>
+                        </div>
+                      );
+                    }
                     return (
                       <div key={result.id} className="group">
                         <div className="flex justify-between text-sm mb-2">

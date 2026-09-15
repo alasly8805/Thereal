@@ -2,6 +2,7 @@ import { logAdminAction } from "@/lib/admin-auth";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 // Validation constants
@@ -108,8 +109,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
       } catch (e) {}
     }
-    if (!session || session.role !== "teacher") {
+    if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+    }
+    if (!hasAssistantPermission(session, "editCourses")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
     const { id: folderId } = await params;
@@ -125,7 +129,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const folder = await prisma.folder.findFirst({
       where: {
         id: folderId,
-        course: { teacherId: session.id },
+        course: { teacherId: actingTeacherId(session) },
       },
     });
 

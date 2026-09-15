@@ -264,15 +264,19 @@ async function testAiVideoAssessmentInvariants() {
   assert.match(aiAssistant, /gemini-flash/);
   assert.match(aiAssistant, /GEMINI_KEY_3/);
 
-  assert.match(watchRoute, /renewedUntil = new Date\(now\.getTime\(\) \+ 90_000\)/);
+  assert.match(watchRoute, /WATCH_DURATION_HOURS \* 60 \* 60 \* 1000/);
+  assert.match(watchRoute, /heartbeatBody\.heartbeat/);
   assert.match(watchRoute, /heartbeatBody\.heartbeat/);
   assert.match(watchRoute, /videoWatchSession\.updateMany/);
   assert.match(watchPage, /heartbeat: true/);
   assert.match(quizRoute, /const \{ correctAnswer: _ca, \.\.\.q \}/);
   assert.match(quizSubmit, /elapsedSeconds > limitMinutes \* 60/);
   assert.match(quizSubmit, /quiz-submit:\$\{session\.id\}:\$\{quizId\}/);
+  assert.match(quizSubmit, /completedAt && !existingResult.allowRetake/, 'a completed quiz must lock even at 0%');
   assert.match(homeworkSubmit, /hw\.dueAt && new Date\(\) > hw\.dueAt/);
-  assert.match(homeworkSubmit, /error\?\.code === "P2002"/);
+  assert.match(homeworkSubmit, /err\?\.code === "P2002"/);
+  assert.match(homeworkSubmit, /alreadySubmitted: true/, 'homework must refuse a second graded submit');
+  assert.match(homeworkSubmit, /existing && !existing.allowRetake/, 'homework retake must stay locked unless the teacher reopened it');
 }
 
 async function testContentDependencyGraphInvariants() {
@@ -288,9 +292,9 @@ async function testContentDependencyGraphInvariants() {
   for (const route of [watchRoute, quizRoute, quizSubmit, homeworkRoute, homeworkSubmit]) {
     assert.match(route, /canAccessContent/, 'student content routes must use the generic access engine');
   }
-  for (const completionRoute of [videoComplete, quizSubmit, homeworkSubmit]) {
-    assert.match(completionRoute, /recordContentCompleted/, 'completion must synchronize generic progress');
-  }
+  assert.match(videoComplete, /recordContentCompleted/, 'video completion must synchronize generic progress');
+  assert.match(quizSubmit, /recordContentCompleted/, 'quiz completion must synchronize generic progress');
+  assert.match(homeworkSubmit, /syncHomeworkContentProgress/, 'homework completion must not open the next item unless the attempt passed');
 
   const {
     ContentProgressStatus,
@@ -390,19 +394,218 @@ async function testCurriculumPracticeInvariants() {
   assert.match(environmentsPage, /\/environments\/programming\?tab=curriculum/);
 }
 
+/**
+ * Teacher-panel "اجعله تجريبياً" must PATCH a real JSON handler.
+ * Production previously hit PATCH /api/admin/folders/:id/videos, which only
+ * exported POST+DELETE. Next.js answered 405 HTML, res.json() threw, and the
+ * UI showed "تعذر الاتصال بالخادم".
+ */
+async function testTeacherTrialVideoToggleInvariants() {
+  const { readFile } = await import('node:fs/promises');
+  const [studio, foldersVideos, videosPatch] = await Promise.all([
+    readFile(new URL('../src/components/admin/teacher/TeacherCurriculumStudio.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/app/api/admin/folders/[id]/videos/route.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/app/api/admin/videos/[id]/route.ts', import.meta.url), 'utf8'),
+  ]);
+
+  const toggle = studio.slice(
+    studio.indexOf('const handleToggleVideoFree'),
+    studio.indexOf('const handleDeleteQuiz'),
+  );
+  assert.match(toggle, /\/api\/admin\/videos\/\$\{videoId\}/,
+    'اجعله تجريبياً must PATCH the canonical video update route');
+  assert.doesNotMatch(toggle, /\/api\/admin\/folders\/\$\{/,
+    'اجعله تجريبياً must not PATCH the folders videos collection (that 405ed in production)');
+  assert.match(toggle, /method:\s*"PATCH"/,
+    'trial toggle must use PATCH');
+  assert.match(toggle, /isFree:\s*!currentFree/,
+    'trial toggle must send the inverted isFree flag');
+  assert.match(toggle, /await res\.text\(\)/,
+    'trial toggle must parse the body as text first so HTML 405 cannot look like a network outage');
+
+  assert.match(foldersVideos, /export async function PATCH/,
+    'folders videos route must accept PATCH so cached teacher-panel clients keep working');
+  assert.match(foldersVideos, /data:\s*\{\s*isFree\s*\}/,
+    'folders videos PATCH must persist isFree');
+  assert.match(foldersVideos, /isFree:\s*body\.isFree === true/,
+    'creating a video must persist the trial flag the upload modal already sends');
+
+  assert.match(videosPatch, /export async function PATCH/,
+    'canonical video route must expose PATCH');
+  assert.match(videosPatch, /if \(typeof body\.isFree === "boolean"\)/,
+    'canonical video PATCH must accept isFree');
+}
+
+/**
+ * Support panel (/thefake/support) invariants.
+ *
+ * These are the properties that make the panel safe to hand to a support agent:
+ * the discount ceiling is enforced on the server, entering a student's account
+ * is read-only and free, and unlocking content does not forge coursework. Each
+ * one is a silent failure if it regresses — a leaked write only shows up later
+ * as a grade nobody can explain — so they are pinned here rather than left to
+ * review.
+ */
+async function testSupportPanelInvariants() {
+  const { readFile } = await import('node:fs/promises');
+  const read = (p: string) => readFile(new URL(p, import.meta.url), 'utf8');
+
+  const [
+    supportAuth,
+    impersonate,
+    discounts,
+    unlock,
+    views,
+    password,
+    settings,
+    proxy,
+    engine,
+    watchRoute,
+    quizSubmit,
+    homeworkSubmit,
+    uploadRoute,
+    panelPage,
+    layout,
+    courseRoute,
+    learnPage,
+  ] = await Promise.all([
+    read('../src/lib/support-auth.ts'),
+    read('../src/lib/support-impersonate.ts'),
+    read('../src/app/api/support/discounts/route.ts'),
+    read('../src/app/api/support/unlock/route.ts'),
+    read('../src/app/api/support/views/route.ts'),
+    read('../src/app/api/support/password/route.ts'),
+    read('../src/app/api/support/settings/route.ts'),
+    read('../src/proxy.ts'),
+    read('../src/lib/content-access-engine.ts'),
+    read('../src/app/api/videos/[id]/watch/route.ts'),
+    read('../src/app/api/quizzes/[id]/submit/route.ts'),
+    read('../src/app/api/homework/[id]/submit/route.ts'),
+    read('../src/app/api/homework/[id]/upload/route.ts'),
+    read('../src/app/thefake/support/page.tsx'),
+    read('../src/app/layout.tsx'),
+    read('../src/app/api/courses/[id]/route.ts'),
+    read('../src/app/courses/[id]/learn/page.tsx'),
+  ]);
+
+  // The panel password must never be a literal in the tree.
+  for (const [name, source] of Object.entries({ supportAuth, panelPage })) {
+    assert.doesNotMatch(source, /AlphaOmegaTerra/i, `${name} must not hardcode the support password`);
+  }
+  assert.match(supportAuth, /process\.env\.SUPPORT_PANEL_PASSWORD/, 'support password must come from the environment');
+  assert.match(supportAuth, /timingSafeEqual/, 'support password comparison must be timing-safe');
+
+  // Every support endpoint is gated.
+  for (const [name, route] of Object.entries({ discounts, unlock, views, password, settings })) {
+    assert.match(route, /getSupportSession\(\)/, `${name} route must require a support session`);
+    assert.match(route, /status: 401/, `${name} route must reject an unauthenticated caller`);
+  }
+
+  // The 10% ceiling is enforced server-side, and by refusing rather than clamping.
+  assert.match(discounts, /MAX_SUPPORT_DISCOUNT_PERCENT = 10/, 'support discount ceiling must be 10%');
+  assert.match(discounts, /percent > MAX_SUPPORT_DISCOUNT_PERCENT/, 'the ceiling must be checked in the handler');
+  assert.match(discounts, /scope: "PLATFORM_WIDE"/, 'support discounts are platform-wide');
+
+  // Entering an account is read-only and costs the student nothing.
+  assert.match(impersonate, /supportView: true/, 'impersonation token must carry the read-only claim');
+  assert.match(proxy, /isSupportViewReadOnlyViolation/, 'proxy must enforce the read-only guard');
+  assert.match(proxy, /SUPPORT_VIEW_READONLY/, 'blocked writes must return a recognisable code');
+  assert.match(watchRoute, /usedWatchSlot: !isSupportView/, 'a support view must not consume a watch slot');
+  assert.match(watchRoute, /bypassQuota/, 'a support view must not be refused by the watch quota');
+  // Extra views granted after a lesson is exhausted must actually raise the
+  // student's remaining count — both in the learn-page lock and in the
+  // session-create response. Counting only maxWatchesPerUser made support
+  // grants look successful in the panel while the student stayed locked out.
+  assert.match(courseRoute, /grantedViews: grantedByVideo\.get\(video\.id\)/, 'the course payload must include support/teacher extra views');
+  assert.match(learnPage, /grantedViews \?\? 0/, 'the learn page must add granted extra views to the allowance');
+  assert.match(watchRoute, /allowance - used - 1/, 'a new watch session must report remaining against the granted allowance');
+  assert.doesNotMatch(watchRoute, /remainingWatches: bypassQuota \? null : video\.maxWatchesPerUser - used - 1/, 'remaining watches must not ignore extra grants');
+  // The upload route is excluded from the proxy matcher, so it must guard itself.
+  assert.match(uploadRoute, /supportView/, 'the proxy-excluded upload route must guard itself');
+
+  // Defence in depth: the routes where a leaked write would cost a grade or money.
+  for (const [name, route] of Object.entries({ quizSubmit, homeworkSubmit })) {
+    assert.match(route, /blockSupportView/, `${name} must refuse a support-view session directly`);
+  }
+
+  // Unlocking bypasses the prerequisite graph only, and never forges coursework.
+  assert.match(engine, /hasSupportOverride/, 'the access engine must honour support overrides');
+  assert.match(engine, /revokedAt: null/, 'a revoked override must stop granting access');
+  assert.doesNotMatch(unlock, /homeworkSubmission\.(create|upsert)/, 'unlocking must never fabricate a homework submission');
+  assert.doesNotMatch(unlock, /quizResult\.(create|upsert)/, 'unlocking must never fabricate a quiz result');
+
+  // Changing a password must evict existing devices.
+  assert.match(password, /tokenVersion: \{ increment: 1 \}/, 'a password reset must revoke existing sessions');
+  assert.doesNotMatch(password, /newPassword,\s*$/m, 'the plaintext password must not be logged');
+
+  // Everything the panel does is auditable.
+  for (const [name, route] of Object.entries({ discounts, unlock, views, password, settings })) {
+    assert.match(route, /logSupportAction/, `${name} route must write an audit entry`);
+  }
+
+  // The panel is unlisted, and stays reachable when the platform is gated.
+  assert.match(panelPage, /robots:\s*\{[^}]*index:\s*false/, 'the support panel must not be indexed');
+  assert.match(layout, /thefake\/support/, 'the support panel must bypass the maintenance gate');
+
+  // Assessment timing is a switch, not a deletion.
+  assert.match(quizSubmit, /quiz_time_limit_disabled/, 'quiz expiry must be governed by the platform flag');
+  assert.match(homeworkSubmit, /homework_deadline_disabled/, 'homework expiry must be governed by the platform flag');
+}
+
+const TESTS: Array<[string, () => Promise<void>]> = [
+  ['phoneNormalization', testPhoneNormalization],
+  ['devMockSms', testDevMockSms],
+  ['verifySmsRequestShape', testVerifySmsRequestShape],
+  ['whatsAppPayloadShape', testWhatsAppPayloadShape],
+  ['whatsAppFallbackToSms', testWhatsAppFallbackToSms],
+  ['verifiedPaymentAmountBinding', testVerifiedPaymentAmountBinding],
+  ['currencyAmountValidation', testCurrencyAmountValidation],
+  ['securityPatchInvariants', testSecurityPatchInvariants],
+  ['aiVideoAssessmentInvariants', testAiVideoAssessmentInvariants],
+  ['contentDependencyGraphInvariants', testContentDependencyGraphInvariants],
+  ['curriculumPracticeInvariants', testCurriculumPracticeInvariants],
+  ['teacherTrialVideoToggleInvariants', testTeacherTrialVideoToggleInvariants],
+  ['supportPanelInvariants', testSupportPanelInvariants],
+];
+
+/**
+ * Runs every test by default. Pass `--only=<substring>` to run a subset —
+ * without it, one failing invariant hides every test declared after it, so a
+ * red suite makes the rest unverifiable rather than merely unproven.
+ * Example: npm run test:verification -- --only=supportPanel
+ */
 async function main() {
-  await testPhoneNormalization();
-  await testDevMockSms();
-  await testVerifySmsRequestShape();
-  await testWhatsAppPayloadShape();
-  await testWhatsAppFallbackToSms();
-  await testVerifiedPaymentAmountBinding();
-  await testCurrencyAmountValidation();
-  await testSecurityPatchInvariants();
-  await testAiVideoAssessmentInvariants();
-  await testContentDependencyGraphInvariants();
-  await testCurriculumPracticeInvariants();
-  console.log('verification tests passed');
+  const onlyArg = process.argv.find((a) => a.startsWith('--only='));
+  const filter = onlyArg ? onlyArg.slice('--only='.length).toLowerCase() : '';
+  const selected = filter
+    ? TESTS.filter(([name]) => name.toLowerCase().includes(filter))
+    : TESTS;
+
+  if (selected.length === 0) {
+    console.error(`no test matches --only=${filter}`);
+    console.error(`available: ${TESTS.map(([n]) => n).join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const failures: string[] = [];
+  for (const [name, fn] of selected) {
+    try {
+      await fn();
+      console.log(`PASS ${name}`);
+    } catch (error) {
+      failures.push(name);
+      console.error(`FAIL ${name}`);
+      console.error(error);
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error(`\n${failures.length} of ${selected.length} failed: ${failures.join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`\nverification tests passed (${selected.length})`);
 }
 
 main().catch((error) => {

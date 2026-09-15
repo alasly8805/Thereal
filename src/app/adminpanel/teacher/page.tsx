@@ -17,11 +17,22 @@ import { EDUCATIONAL_STAGES, SUBJECTS } from "@/types";
 import {
   IconPlus, IconTrash, IconFolder, IconVideo, IconFile, IconLink,
   IconClipboard, IconChevronLeft, IconSettings, IconTag, IconBook, IconUsers,
-  IconKey, IconShield, IconClock, IconEye,
+  IconKey, IconShield, IconClock, IconEye, IconDownload,
+  IconEdit, IconCheck, IconClose,
 } from "@/components/admin/AdminIcons";
 import { HomeworkManagerSection, LiveReviewPanel } from "@/components/admin/TeacherHomeworkComponents";
 import { ContentFlowManager } from "@/components/admin/ContentFlowManager";
 import { extractYouTubeVideoId } from "@/lib/youtube";
+import {
+  TeacherJSONGuideModal,
+  sampleQuizData,
+  sampleHomeworkData,
+  downloadJsonFile,
+} from "@/components/admin/teacher/TeacherJSONGuideModal";
+import {
+  exportQuizToJson,
+  exportHomeworkToJson,
+} from "@/components/admin/teacher/TeacherCurriculumModals";
 
 function fileToResizedDataUrl(file: File, max = 600): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -81,9 +92,9 @@ interface Folder {
   id: string;
   name: string;
   videos?: Array<{ id: string; title: string; vdoCipherId?: string; videoProvider?: string; providerVideoId?: string; maxWatchesPerUser?: number; durationMinutes?: number; isFree?: boolean }>;
-  quizzes?: Array<{ id: string; title?: string }>;
+  quizzes?: Array<{ id: string; title?: string; timeLimitMinutes?: number; questions?: any[] }>;
   materials?: Array<{ id: string; title: string; type: string; url: string }>;
-  homeworks?: Array<{ id: string; title: string; type: string; _count?: { questions?: number; submissions?: number } }>;
+  homeworks?: Array<{ id: string; title: string; type: string; description?: string | null; timeLimitMinutes?: number; questions?: any[]; _count?: { questions?: number; submissions?: number } }>;
   _count?: { videos?: number; quizzes?: number; materials?: number; homeworks?: number };
 }
 
@@ -92,7 +103,7 @@ interface AccessCode {
   code: string;
   courseId: string;
   isActive?: boolean;
-  student?: { id: string; name: string; email?: string } | null;
+  student?: { id: string; name: string; email?: string; phone?: string | null } | null;
 }
 
 // ─── Shared style vocabulary ──────────────────────────────────────────────────
@@ -109,12 +120,15 @@ const cardPad = `${card} p-5 sm:p-6`;
 import { ReferredStudentsSection } from "@/components/admin/teacher/ReferredStudentsSection";
 import { TeacherSubscriptionsSection } from "@/components/admin/teacher/TeacherSubscriptionsSection";
 import { InVideoResponsesSection } from "@/components/admin/InVideoResponsesSection";
+import { TeacherAssistantsSection } from "@/components/admin/teacher/TeacherAssistantsSection";
+import { StudentPhoneActions } from "@/components/admin/StudentPhoneActions";
+import { StudentDossierButton } from "@/components/admin/TeacherStudentDossierModal";
 
 const SECTION_TITLES: Record<string, string> = {
   dashboard: "لوحة التحكم",
   "my-page": "صفحتي",
   "teacher-subscriptions": "حجوزات واشتراكات الطلاب",
-  "in-video-responses": "إجابات أسئلة الفيديو",
+  "in-video-responses": "تصحيح الأسئلة المقالية",
   "quiz-results": "نتائج الاختبارات",
   "create-course": "كورس جديد",
   codes: "أكواد الوصول",
@@ -126,6 +140,7 @@ const SECTION_TITLES: Record<string, string> = {
   feedback: "ملاحظات المتعلمين",
   homework: "إدارة الواجبات",
   review: "مراجعة الإجابات",
+  assistants: "المساعدون",
 };
 
 interface QuizQuestionInput {
@@ -134,9 +149,10 @@ interface QuizQuestionInput {
   imageUrl?: string;
   optionA: string;
   optionB: string;
-  optionC: string;
-  optionD: string;
+  optionC?: string;
+  optionD?: string;
   correctAnswer: string;
+  optionsCount?: 2 | 3 | 4;
 }
 
 interface NewQuizState {
@@ -172,6 +188,11 @@ export default function TeacherDashboardPage() {
   const [nativeStatus, setNativeStatus] = useState("");
   const [lastUploadedVideoId, setLastUploadedVideoId] = useState<string | null>(null);
   const [lastCreatedVideoInfo, setLastCreatedVideoInfo] = useState<{ id: string; providerVideoId: string; title: string } | null>(null);
+
+  // ✏️ Inline editing for lesson/video title
+  const [editingVideoId, setEditingVideoId] = useState<string | null>(null);
+  const [editingVideoTitle, setEditingVideoTitle] = useState("");
+  const [savingVideoTitle, setSavingVideoTitle] = useState(false);
 
   // 📥 Google Drive Import State & Handler
   const [gdriveUrl, setGdriveUrl] = useState("");
@@ -425,7 +446,12 @@ export default function TeacherDashboardPage() {
             setNewVideo((prev) => ({ ...prev, providerVideoId: packagedId }));
             setLastUploadedVideoId(packagedId);
             handleGenerateDrmPreview(packagedId);
-            notify("success", "تم تشفير الفيديو عتادياً بـ CENC Widevine + PlayReady بنجاح! 🔒");
+            notify(
+              "success",
+              packData.status === "ready"
+                ? "تم تشفير الفيديو عتادياً بـ CENC Widevine + PlayReady بنجاح! 🔒"
+                : "بدأ التشفير العتادي CENC في الخلفية 🔒 — يمكنك حفظ الدرس الآن وستُفعَّل الحماية تلقائياً عند الانتهاء."
+            );
             return;
           }
         } catch (e) {
@@ -612,7 +638,12 @@ export default function TeacherDashboardPage() {
               setNewVideo((prev) => ({ ...prev, providerVideoId: packagedId }));
               setLastUploadedVideoId(packagedId);
               handleGenerateDrmPreview(packagedId);
-              notify("success", "تم تشفير الفيديو عتادياً بـ CENC Widevine + PlayReady بنجاح! 🔒 (شاشة سوداء عند التصوير)");
+              notify(
+                "success",
+                packData.status === "ready"
+                  ? "تم تشفير الفيديو عتادياً بـ CENC Widevine + PlayReady بنجاح! 🔒 (شاشة سوداء عند التصوير)"
+                  : "بدأ التشفير العتادي CENC في الخلفية 🔒 — يمكنك حفظ الدرس الآن وستُفعَّل الحماية تلقائياً عند الانتهاء."
+              );
               return;
             }
           } catch (e) {
@@ -703,7 +734,7 @@ export default function TeacherDashboardPage() {
     codeTemplate: "",
     codeLanguage: "python",
     allowedFileTypes: "pdf,py,js,zip",
-    questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
+    questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", optionsCount: 4 as 2 | 3 | 4 }],
   });
   const [newQuiz, setNewQuiz] = useState<NewQuizState>({
     title: "", folderId: "",
@@ -772,8 +803,11 @@ export default function TeacherDashboardPage() {
 
   const fetchCourses = useCallback(async () => {
     const res = await fetch("/api/admin/courses", { credentials: "include" });
-    if (res.status === 403) { router.push("/adminpanel"); return; }
-    const data = await readJson<{ courses?: Course[] }>(res);
+    const data = await readJson<{ courses?: Course[]; error?: string }>(res);
+    if (res.status === 403 && data?.error) {
+      router.push("/adminpanel");
+      return;
+    }
     setCourses(data?.courses || []);
     setLoading(false);
   }, [router]);
@@ -794,12 +828,28 @@ export default function TeacherDashboardPage() {
   useEffect(() => {
     const loadCoursesAndPlans = async () => {
       try {
-        const [resCourses, resPlans] = await Promise.all([
+        const [resMe, resCourses, resPlans] = await Promise.all([
+          fetch("/api/auth/me", { credentials: "include" }),
           fetch("/api/admin/courses", { credentials: "include" }),
           fetch("/api/plans"),
         ]);
-        if (resCourses.status === 403) { router.push("/adminpanel"); return; }
-        const dataCourses = await readJson<{ courses?: Course[] }>(resCourses);
+        const me = await readJson<{
+          user?: { role?: string };
+        }>(resMe);
+        const role = me?.user?.role;
+        if (role === "assistant") {
+          router.replace("/adminpanel/assistant");
+          return;
+        }
+        if (role !== "teacher") {
+          router.push("/adminpanel");
+          return;
+        }
+        const dataCourses = await readJson<{ courses?: Course[]; error?: string }>(resCourses);
+        if (resCourses.status === 403 && dataCourses?.error) {
+          router.push("/adminpanel");
+          return;
+        }
         const dataPlans = await readJson<{ plans?: any[] }>(resPlans);
         setCourses(dataCourses?.courses || []);
         setPlans(dataPlans?.plans || []);
@@ -971,45 +1021,60 @@ export default function TeacherDashboardPage() {
     }
   };
 
-  const patchVideo = async (videoId: string, body: { maxWatchesPerUser?: number; durationMinutes?: number; isFree?: boolean }) => {
-    await fetch(`/api/admin/videos/${videoId}`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (selectedCourse) fetchFolders(selectedCourse.id);
+  const patchVideo = async (videoId: string, body: { maxWatchesPerUser?: number; durationMinutes?: number; isFree?: boolean; title?: string }) => {
+    try {
+      const res = await fetch(`/api/admin/videos/${videoId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        notify("error", data?.error || "تعذر تحديث الدرس");
+        return false;
+      }
+      if (selectedCourse) fetchFolders(selectedCourse.id);
+      return true;
+    } catch {
+      notify("error", "حدث خطأ أثناء تحديث الدرس");
+      return false;
+    }
   };
   const updateVideoWatches = (videoId: string, val: number) => patchVideo(videoId, { maxWatchesPerUser: val });
 
+  const handleStartEditingVideoTitle = (video: { id: string; title: string }) => {
+    setEditingVideoId(video.id);
+    setEditingVideoTitle(video.title);
+  };
+
+  const handleCancelEditingVideoTitle = () => {
+    setEditingVideoId(null);
+    setEditingVideoTitle("");
+  };
+
+  const handleSaveVideoTitle = async (videoId: string) => {
+    const trimmed = editingVideoTitle.trim();
+    if (!trimmed) {
+      notify("error", "يرجى كتابة عنوان للدرس");
+      return;
+    }
+    setSavingVideoTitle(true);
+    const ok = await patchVideo(videoId, { title: trimmed });
+    setSavingVideoTitle(false);
+    if (ok) {
+      notify("success", "تم تعديل اسم الدرس بنجاح ✓");
+      setEditingVideoId(null);
+      setEditingVideoTitle("");
+    }
+  };
+
   const downloadSampleQuizJson = () => {
-    const sample = {
-      title: "اختبار مراجعة شاملة (نموذج)",
-      timeLimitMinutes: 30,
-      questions: [
-        {
-          question: "ما هي وحدة قياس القوة في النظام الدولي؟",
-          questionType: "mcq",
-          imageUrl: "",
-          optionA: "النيوتن",
-          optionB: "الجول",
-          optionC: "الفولت",
-          optionD: "الواط",
-          correctAnswer: "A"
-        },
-        {
-          question: "اشرح قانون نيوتن الأول وتطبيقاته باختصار",
-          "questionType": "essay"
-        }
-      ]
-    };
-    const blob = new Blob([JSON.stringify(sample, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "quiz_sample.json";
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadJsonFile("quiz_sample.json", sampleQuizData);
+  };
+
+  const downloadSampleHomeworkJson = () => {
+    downloadJsonFile("homework_sample.json", sampleHomeworkData);
   };
 
   const handleQuizJsonImport = (file: File) => {
@@ -1038,14 +1103,20 @@ export default function TeacherDashboardPage() {
         const validQuestions = rawQuestions.map((q, idx) => {
           if (!q || typeof q !== "object") throw new Error(`السؤال ${idx + 1} بتنسيق غير صحيح`);
           const isEssay = q.questionType === "essay";
+          const optA = isEssay ? "" : String(q.optionA || q.a || "").trim();
+          const optB = isEssay ? "" : String(q.optionB || q.b || "").trim();
+          const optC = isEssay ? "" : String(q.optionC || q.c || "").trim();
+          const optD = isEssay ? "" : String(q.optionD || q.d || "").trim();
+          const count: 2 | 3 | 4 = !optC && !optD ? 2 : !optD ? 3 : 4;
           return {
             question: String(q.question || q.title || "").trim(),
             questionType: isEssay ? "essay" : "mcq",
+            optionsCount: count,
             imageUrl: typeof q.imageUrl === "string" ? q.imageUrl.trim() : "",
-            optionA: isEssay ? "" : String(q.optionA || q.a || "").trim(),
-            optionB: isEssay ? "" : String(q.optionB || q.b || "").trim(),
-            optionC: isEssay ? "" : String(q.optionC || q.c || "").trim(),
-            optionD: isEssay ? "" : String(q.optionD || q.d || "").trim(),
+            optionA: optA,
+            optionB: optB,
+            optionC: optC,
+            optionD: optD,
             correctAnswer: isEssay ? "A" : (["A", "B", "C", "D"].includes(String(q.correctAnswer).toUpperCase()) ? String(q.correctAnswer).toUpperCase() : "A"),
           };
         });
@@ -1067,15 +1138,54 @@ export default function TeacherDashboardPage() {
   const addQuiz = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newQuiz.folderId) return;
+
+    for (let i = 0; i < newQuiz.questions.length; i++) {
+      const q = newQuiz.questions[i];
+      if (!q.question.trim()) {
+        notify("error", `يرجى إدخال نص السؤال رقم ${i + 1}`);
+        return;
+      }
+      if (q.questionType !== "essay") {
+        if (!q.optionA?.trim() || !q.optionB?.trim()) {
+          notify("error", `السؤال رقم ${i + 1} يحتاج إلى خيارين على الأقل (أ وب)`);
+          return;
+        }
+      }
+    }
+
+    const cleanedQuestions = newQuiz.questions.map((q) => {
+      const isEssay = q.questionType === "essay";
+      const count = q.optionsCount || 4;
+      return {
+        question: q.question.trim(),
+        questionType: isEssay ? "essay" : "mcq",
+        imageUrl: q.imageUrl?.trim() || undefined,
+        optionA: isEssay ? "" : q.optionA.trim(),
+        optionB: isEssay ? "" : q.optionB.trim(),
+        optionC: isEssay || count < 3 ? "" : (q.optionC?.trim() || ""),
+        optionD: isEssay || count < 4 ? "" : (q.optionD?.trim() || ""),
+        correctAnswer: isEssay ? "A" : q.correctAnswer,
+      };
+    });
+
     const res = await fetch(`/api/admin/folders/${newQuiz.folderId}/quizzes`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newQuiz.title, questions: newQuiz.questions, timeLimitMinutes: newQuiz.timeLimitMinutes }),
+      body: JSON.stringify({
+        title: newQuiz.title,
+        questions: cleanedQuestions,
+        timeLimitMinutes: newQuiz.timeLimitMinutes,
+      }),
     });
     const data = await readJson<{ error?: string }>(res);
     if (res.ok) {
-      setNewQuiz({ title: "", folderId: "", timeLimitMinutes: 30, questions: [{ question: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }] });
+      setNewQuiz({
+        title: "",
+        folderId: "",
+        timeLimitMinutes: 30,
+        questions: [{ question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
+      });
       if (selectedCourse) fetchFolders(selectedCourse.id);
       notify("success", "تم إضافة الاختبار بنجاح");
     } else {
@@ -1108,13 +1218,19 @@ export default function TeacherDashboardPage() {
 
         const validQuestions = rawQuestions.map((q, idx) => {
           if (!q || typeof q !== "object") throw new Error(`السؤال ${idx + 1} بتنسيق غير صحيح`);
+          const optA = String(q.optionA || q.a || "").trim();
+          const optB = String(q.optionB || q.b || "").trim();
+          const optC = String(q.optionC || q.c || "").trim();
+          const optD = String(q.optionD || q.d || "").trim();
+          const count: 2 | 3 | 4 = !optC && !optD ? 2 : !optD ? 3 : 4;
           return {
             question: String(q.question || q.title || "").trim(),
             imageUrl: typeof q.imageUrl === "string" ? q.imageUrl.trim() : "",
-            optionA: String(q.optionA || q.a || "").trim(),
-            optionB: String(q.optionB || q.b || "").trim(),
-            optionC: String(q.optionC || q.c || "").trim(),
-            optionD: String(q.optionD || q.d || "").trim(),
+            optionsCount: count,
+            optionA: optA,
+            optionB: optB,
+            optionC: optC,
+            optionD: optD,
             correctAnswer: (["A", "B", "C", "D"].includes(String(q.correctAnswer).toUpperCase()) ? String(q.correctAnswer).toUpperCase() : "A"),
           };
         });
@@ -1154,7 +1270,31 @@ export default function TeacherDashboardPage() {
       payload.codeLanguage = newFolderHomework.codeLanguage;
     }
     if (newFolderHomework.type === "upload") payload.allowedFileTypes = newFolderHomework.allowedFileTypes || undefined;
-    if (newFolderHomework.type === "exam") payload.questions = newFolderHomework.questions;
+    if (newFolderHomework.type === "exam") {
+      for (let i = 0; i < newFolderHomework.questions.length; i++) {
+        const q = newFolderHomework.questions[i];
+        if (!q.question.trim()) {
+          notify("error", `يرجى كتابة نص السؤال ${i + 1}`);
+          return;
+        }
+        if (!q.optionA?.trim() || !q.optionB?.trim()) {
+          notify("error", `السؤال رقم ${i + 1} يحتاج إلى خيارين على الأقل`);
+          return;
+        }
+      }
+      payload.questions = newFolderHomework.questions.map((q) => {
+        const count = (q as any).optionsCount || 4;
+        return {
+          question: q.question.trim(),
+          imageUrl: q.imageUrl?.trim() || undefined,
+          optionA: q.optionA.trim(),
+          optionB: q.optionB.trim(),
+          optionC: count < 3 ? "" : (q.optionC?.trim() || ""),
+          optionD: count < 4 ? "" : (q.optionD?.trim() || ""),
+          correctAnswer: q.correctAnswer,
+        };
+      });
+    }
 
     const res = await fetch("/api/admin/homework", {
       method: "POST",
@@ -1178,7 +1318,7 @@ export default function TeacherDashboardPage() {
         codeTemplate: "",
         codeLanguage: "python",
         allowedFileTypes: "pdf,py,js,zip",
-        questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
+        questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", optionsCount: 4 as 2 | 3 | 4 }],
       });
       if (selectedCourse) fetchFolders(selectedCourse.id);
       notify("success", "تم إضافة الواجب للمحاضرة بنجاح ✅");
@@ -1591,6 +1731,8 @@ export default function TeacherDashboardPage() {
           {/* ════════ MY PAGE (public teacher profile) ════════ */}
           {activeSection === "my-page" && <TeacherPublicProfile />}
 
+          {activeSection === "assistants" && <TeacherAssistantsSection />}
+
           {/* ════════ TEACHER SUBSCRIPTIONS ════════ */}
           {activeSection === "teacher-subscriptions" && <TeacherSubscriptionsSection />}
 
@@ -1758,7 +1900,62 @@ export default function TeacherDashboardPage() {
                                     <div key={video.id} className="flex flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
                                       <div className="flex flex-wrap items-center gap-2">
                                         <span className="shrink-0 text-[var(--ink-muted)]"><IconVideo className="w-4 h-4" /></span>
-                                        <p className="text-sm text-[var(--ink)] font-medium truncate flex-1 min-w-0">{video.title}</p>
+                                        {editingVideoId === video.id ? (
+                                          <div className="flex items-center gap-1.5 flex-1 min-w-[220px]">
+                                            <input
+                                              type="text"
+                                              value={editingVideoTitle}
+                                              onChange={(e) => setEditingVideoTitle(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                  e.preventDefault();
+                                                  handleSaveVideoTitle(video.id);
+                                                } else if (e.key === "Escape") {
+                                                  handleCancelEditingVideoTitle();
+                                                }
+                                              }}
+                                              disabled={savingVideoTitle}
+                                              placeholder="اسم الدرس..."
+                                              autoFocus
+                                              className="flex-1 min-w-0 bg-[var(--surface)] text-[var(--ink)] border border-sky-500 rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-sky-400"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSaveVideoTitle(video.id)}
+                                              disabled={savingVideoTitle}
+                                              className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-all disabled:opacity-50"
+                                              title="حفظ الاسم الجديد (Enter)"
+                                            >
+                                              <IconCheck className="w-3.5 h-3.5" />
+                                              <span>حفظ</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={handleCancelEditingVideoTitle}
+                                              disabled={savingVideoTitle}
+                                              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[var(--ink-muted)] hover:text-[var(--ink)] text-[11px] font-bold transition-all"
+                                              title="إلغاء (Escape)"
+                                            >
+                                              <IconClose className="w-3.5 h-3.5" />
+                                              <span>إلغاء</span>
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                                            <p className="text-sm text-[var(--ink)] font-medium truncate min-w-0" title={video.title}>
+                                              {video.title}
+                                            </p>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleStartEditingVideoTitle(video)}
+                                              title="تعديل اسم الدرس"
+                                              className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--border)] text-[var(--ink-muted)] hover:text-sky-500 hover:border-sky-500/40 hover:bg-sky-500/10 text-[11px] font-semibold transition-colors"
+                                            >
+                                              <IconEdit className="w-3.5 h-3.5" />
+                                              <span>تعديل الاسم</span>
+                                            </button>
+                                          </div>
+                                        )}
                                         <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${provColor}`}>{provLabel}</span>
                                         {video.isFree && (
                                           <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500">مجاني</span>
@@ -2037,6 +2234,15 @@ export default function TeacherDashboardPage() {
                                       <span className="shrink-0 text-sky-500"><IconClipboard className="w-4 h-4" /></span>
                                       <p className="text-sm text-[var(--ink)] font-bold truncate flex-1 min-w-0">{qz.title || "اختبار المحاضرة"}</p>
                                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-500">اختبار</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => exportQuizToJson(qz)}
+                                        aria-label="تحميل وتصدير الاختبار كملف JSON"
+                                        title="تحميل وتصدير الاختبار كملف JSON"
+                                        className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sky-500 hover:bg-sky-500/15 transition-colors cursor-pointer"
+                                      >
+                                        <IconDownload className="w-3.5 h-3.5" />
+                                      </button>
                                       <button onClick={() => deleteQuiz(qz.id)} aria-label="حذف الاختبار" className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[var(--error)] hover:bg-[var(--error)]/10 transition-colors">
                                         <IconTrash className="w-3.5 h-3.5" />
                                       </button>
@@ -2050,6 +2256,17 @@ export default function TeacherDashboardPage() {
                                        <p className="text-[10px] text-[var(--ink-muted)]">{hw.type === "exam" ? "واجب أسئلة" : hw.type === "terminal" ? "كود برمجي" : hw.type === "upload" ? "تسليم ملف" : "رابط"}</p>
                                      </div>
                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-500">واجب</span>
+                                     {hw.type === "exam" && (
+                                       <button
+                                         type="button"
+                                         onClick={() => exportHomeworkToJson(hw)}
+                                         aria-label="تحميل وتصدير الواجب كملف JSON"
+                                         title="تحميل وتصدير الواجب كملف JSON"
+                                         className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-amber-500 hover:bg-amber-500/15 transition-colors cursor-pointer"
+                                       >
+                                         <IconDownload className="w-3.5 h-3.5" />
+                                       </button>
+                                     )}
                                      <button onClick={() => deleteHomeworkFromFolder(hw.id)} aria-label="حذف الواجب" className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[var(--error)] hover:bg-[var(--error)]/10 transition-colors">
                                        <IconTrash className="w-3.5 h-3.5" />
                                      </button>
@@ -2818,43 +3035,89 @@ export default function TeacherDashboardPage() {
                                 <span>يكتب الطالب إجابة نصية حرة وتظهر لك في لوحة المعلم لمراجعتها وتصحيحها ورصد الدرجات.</span>
                               </div>
                             ) : (
-                              <>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                  {(["A", "B", "C", "D"] as const).map((opt) => {
-                                    const optKey = `option${opt}` as "optionA" | "optionB" | "optionC" | "optionD";
-                                    return (
-                                      <div key={opt} className="flex gap-2 items-center">
+                              <div className="space-y-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-bold text-[var(--ink-muted)]">عدد الخيارات:</span>
+                                    <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 bg-[var(--bg)]">
+                                      {([2, 3, 4] as const).map((cnt) => (
                                         <button
+                                          key={cnt}
                                           type="button"
-                                          onClick={() => { const qs = [...newQuiz.questions]; qs[qi].correctAnswer = opt; setNewQuiz({ ...newQuiz, questions: qs }); }}
-                                          aria-label={`تعيين ${opt} كإجابة صحيحة`}
-                                          className={`shrink-0 w-7 h-7 rounded-lg text-xs font-bold transition-colors ${q.correctAnswer === opt ? "bg-emerald-500 text-white" : "bg-[var(--border)] text-[var(--ink-muted)] hover:text-[var(--ink)]"}`}
-                                        >
-                                          {opt}
-                                        </button>
-                                        <input
-                                          type="text"
-                                          value={q[optKey] || ""}
-                                          onChange={(e) => {
+                                          onClick={() => {
                                             const qs = [...newQuiz.questions];
-                                            qs[qi][optKey] = e.target.value;
+                                            qs[qi].optionsCount = cnt;
+                                            if (cnt === 2 && (qs[qi].correctAnswer === "C" || qs[qi].correctAnswer === "D")) qs[qi].correctAnswer = "A";
+                                            if (cnt === 3 && qs[qi].correctAnswer === "D") qs[qi].correctAnswer = "A";
                                             setNewQuiz({ ...newQuiz, questions: qs });
                                           }}
-                                          placeholder={`الخيار ${opt}`}
-                                          className={input}
-                                        />
-                                      </div>
-                                    );
-                                  })}
+                                          className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all ${
+                                            (q.optionsCount || 4) === cnt
+                                              ? "bg-sky-500 text-white shadow-sm"
+                                              : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                                          }`}
+                                        >
+                                          {cnt === 2 ? "خيارين (صح/خطأ)" : cnt === 3 ? "٣ خيارات" : "٤ خيارات"}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  {(q.optionsCount === 2 || (!q.optionsCount && !q.optionC && !q.optionD)) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const qs = [...newQuiz.questions];
+                                        qs[qi].optionsCount = 2;
+                                        qs[qi].optionA = "صح";
+                                        qs[qi].optionB = "خطأ";
+                                        qs[qi].correctAnswer = "A";
+                                        setNewQuiz({ ...newQuiz, questions: qs });
+                                      }}
+                                      className="text-xs font-bold px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition-colors"
+                                    >
+                                      ⚡ ملء تلقائي: صح / خطأ
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {(["A", "B", "C", "D"] as const)
+                                    .slice(0, q.optionsCount || 4)
+                                    .map((opt) => {
+                                      const optKey = `option${opt}` as "optionA" | "optionB" | "optionC" | "optionD";
+                                      return (
+                                        <div key={opt} className="flex gap-2 items-center">
+                                          <button
+                                            type="button"
+                                            onClick={() => { const qs = [...newQuiz.questions]; qs[qi].correctAnswer = opt; setNewQuiz({ ...newQuiz, questions: qs }); }}
+                                            aria-label={`تعيين ${opt} كإجابة صحيحة`}
+                                            className={`shrink-0 w-7 h-7 rounded-lg text-xs font-bold transition-colors ${q.correctAnswer === opt ? "bg-emerald-500 text-white" : "bg-[var(--border)] text-[var(--ink-muted)] hover:text-[var(--ink)]"}`}
+                                          >
+                                            {opt}
+                                          </button>
+                                          <input
+                                            type="text"
+                                            value={q[optKey] || ""}
+                                            onChange={(e) => {
+                                              const qs = [...newQuiz.questions];
+                                              qs[qi][optKey] = e.target.value;
+                                              setNewQuiz({ ...newQuiz, questions: qs });
+                                            }}
+                                            placeholder={`الخيار ${opt}`}
+                                            className={input}
+                                          />
+                                        </div>
+                                      );
+                                    })}
                                 </div>
                                 <p className="text-[11px] text-[var(--ink-muted)]">اضغط على حرف الخيار لتحديده كإجابة صحيحة. الحالي: <span className="font-bold text-emerald-500">{q.correctAnswer}</span></p>
-                              </>
+                              </div>
                             )}
                           </div>
                         ))}
 
                         <div className="flex flex-col sm:flex-row gap-3">
-                          <button type="button" onClick={() => setNewQuiz({ ...newQuiz, questions: [...newQuiz.questions, { question: "", questionType: "mcq", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }] })} className={ghostBtn}>
+                          <button type="button" onClick={() => setNewQuiz({ ...newQuiz, questions: [...newQuiz.questions, { question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }] })} className={ghostBtn}>
                             <IconPlus className="w-4 h-4" /> سؤال جديد
                           </button>
                           <button type="submit" disabled={!newQuiz.folderId || !newQuiz.title} className={`${primaryBtn} flex-1`}>
@@ -2888,6 +3151,13 @@ export default function TeacherDashboardPage() {
                                 }}
                               />
                             </label>
+                            <button
+                              type="button"
+                              onClick={downloadSampleHomeworkJson}
+                              className="px-3 py-1.5 rounded-xl border border-[var(--border)] hover:bg-[var(--bg)] text-[var(--ink-muted)] hover:text-[var(--ink)] text-xs font-bold transition-all"
+                            >
+                              📄 تحميل قالب JSON
+                            </button>
                             <button
                               type="button"
                               onClick={() => setShowJsonGuide(true)}
@@ -2970,42 +3240,91 @@ export default function TeacherDashboardPage() {
                                   placeholder="نص السؤال"
                                   className={input}
                                 />
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                  {(["A", "B", "C", "D"] as const).map((opt) => {
-                                    const optKey = `option${opt}` as "optionA" | "optionB" | "optionC" | "optionD";
-                                    return (
-                                      <div key={opt} className="flex gap-2 items-center">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const qs = [...newFolderHomework.questions];
-                                            qs[qi].correctAnswer = opt;
-                                            setNewFolderHomework({ ...newFolderHomework, questions: qs });
-                                          }}
-                                          className={`shrink-0 w-7 h-7 rounded-lg text-xs font-bold transition-colors ${q.correctAnswer === opt ? "bg-amber-500 text-white" : "bg-[var(--border)] text-[var(--ink-muted)] hover:text-[var(--ink)]"}`}
-                                        >
-                                          {opt}
-                                        </button>
-                                        <input
-                                          type="text"
-                                          value={q[optKey] || ""}
-                                          onChange={(e) => {
-                                            const qs = [...newFolderHomework.questions];
-                                            qs[qi][optKey] = e.target.value;
-                                            setNewFolderHomework({ ...newFolderHomework, questions: qs });
-                                          }}
-                                          placeholder={`الخيار ${opt}`}
-                                          className={input}
-                                        />
+                                <div className="space-y-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-bold text-[var(--ink-muted)]">عدد الخيارات:</span>
+                                      <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 bg-[var(--bg)]">
+                                        {([2, 3, 4] as const).map((cnt) => (
+                                          <button
+                                            key={cnt}
+                                            type="button"
+                                            onClick={() => {
+                                              const qs = [...newFolderHomework.questions];
+                                              (qs[qi] as any).optionsCount = cnt;
+                                              if (cnt === 2 && (qs[qi].correctAnswer === "C" || qs[qi].correctAnswer === "D")) qs[qi].correctAnswer = "A";
+                                              if (cnt === 3 && qs[qi].correctAnswer === "D") qs[qi].correctAnswer = "A";
+                                              setNewFolderHomework({ ...newFolderHomework, questions: qs });
+                                            }}
+                                            className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all ${
+                                              ((q as any).optionsCount || 4) === cnt
+                                                ? "bg-amber-500 text-white shadow-sm"
+                                                : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                                            }`}
+                                          >
+                                            {cnt === 2 ? "خيارين (صح/خطأ)" : cnt === 3 ? "٣ خيارات" : "٤ خيارات"}
+                                          </button>
+                                        ))}
                                       </div>
-                                    );
-                                  })}
+                                    </div>
+                                    {((q as any).optionsCount === 2 || (!(q as any).optionsCount && !q.optionC && !q.optionD)) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const qs = [...newFolderHomework.questions];
+                                          (qs[qi] as any).optionsCount = 2;
+                                          qs[qi].optionA = "صح";
+                                          qs[qi].optionB = "خطأ";
+                                          qs[qi].correctAnswer = "A";
+                                          setNewFolderHomework({ ...newFolderHomework, questions: qs });
+                                        }}
+                                        className="text-xs font-bold px-2 py-1 rounded-md bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition-colors"
+                                      >
+                                        ⚡ ملء تلقائي: صح / خطأ
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {(["A", "B", "C", "D"] as const)
+                                      .slice(0, (q as any).optionsCount || 4)
+                                      .map((opt) => {
+                                        const optKey = `option${opt}` as "optionA" | "optionB" | "optionC" | "optionD";
+                                        return (
+                                          <div key={opt} className="flex gap-2 items-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const qs = [...newFolderHomework.questions];
+                                                qs[qi].correctAnswer = opt;
+                                                setNewFolderHomework({ ...newFolderHomework, questions: qs });
+                                              }}
+                                              className={`shrink-0 w-7 h-7 rounded-lg text-xs font-bold transition-colors ${q.correctAnswer === opt ? "bg-amber-500 text-white" : "bg-[var(--border)] text-[var(--ink-muted)] hover:text-[var(--ink)]"}`}
+                                            >
+                                              {opt}
+                                            </button>
+                                            <input
+                                              type="text"
+                                              value={q[optKey] || ""}
+                                              onChange={(e) => {
+                                                const qs = [...newFolderHomework.questions];
+                                                qs[qi][optKey] = e.target.value;
+                                                setNewFolderHomework({ ...newFolderHomework, questions: qs });
+                                              }}
+                                              placeholder={`الخيار ${opt}`}
+                                              className={input}
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                  </div>
+                                  <p className="text-[11px] text-[var(--ink-muted)]">اضغط على حرف الخيار لتحديده كإجابة صحيحة. الحالي: <span className="font-bold text-amber-500">{q.correctAnswer}</span></p>
                                 </div>
                               </div>
                             ))}
                             <button
                               type="button"
-                              onClick={() => setNewFolderHomework({ ...newFolderHomework, questions: [...newFolderHomework.questions, { question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }] })}
+                              onClick={() => setNewFolderHomework({ ...newFolderHomework, questions: [...newFolderHomework.questions, { question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", optionsCount: 4 as 2 | 3 | 4 }] })}
                               className={ghostBtn}
                             >
                               <IconPlus className="w-4 h-4" /> سؤال جديد للواجب
@@ -3734,7 +4053,14 @@ export default function TeacherDashboardPage() {
                               {codes.map((c) => (
                                 <tr key={c.id}>
                                   <td className="px-4 py-3 font-mono text-sky-500 dark:text-sky-300 text-xs" dir="ltr">{c.code}</td>
-                                  <td className="px-4 py-3 text-[var(--ink)] truncate max-w-[140px]">{c.student?.name || "—"}</td>
+                                  <td className="px-4 py-3 text-[var(--ink)]">
+                                    <p className="truncate max-w-[160px]">{c.student?.name || "—"}</p>
+                                    {c.student?.phone && (
+                                      <div className="mt-2">
+                                        <StudentPhoneActions phone={c.student.phone} compact />
+                                      </div>
+                                    )}
+                                  </td>
                                   <td className="px-4 py-3">
                                     <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${!c.student ? (c.isActive ? "text-emerald-500" : "text-[var(--ink-muted)]") : c.isActive ? "text-emerald-500" : "text-[var(--error)]"}`}>
                                       <span className={`w-1.5 h-1.5 rounded-full ${!c.student ? (c.isActive ? "bg-emerald-500" : "bg-[var(--ink-muted)]") : c.isActive ? "bg-emerald-500" : "bg-[var(--error)]"}`} />
@@ -3896,27 +4222,31 @@ export default function TeacherDashboardPage() {
                   ) : (
                     <ul className="divide-y divide-[var(--border)]">
                       {codes.filter((c) => c.student).map((c) => (
-                        <li key={c.id} className="p-4 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-9 h-9 rounded-xl bg-sky-500/12 text-sky-500 dark:text-sky-300 flex items-center justify-center text-sm font-black shrink-0">
-                              {c.student!.name[0]}
+                        <li key={c.id} className="p-4 space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-11 h-11 rounded-2xl bg-sky-500/12 text-sky-500 dark:text-sky-300 flex items-center justify-center text-sm font-black shrink-0">
+                                {c.student!.name[0]}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-bold text-[var(--ink)] text-sm truncate">{c.student!.name}</p>
+                                <p className="text-xs text-[var(--ink-muted)] truncate">{c.student!.email}</p>
+                              </div>
                             </div>
-                            <div className="min-w-0">
-                              <p className="font-bold text-[var(--ink)] text-sm truncate">{c.student!.name}</p>
-                              <p className="text-xs text-[var(--ink-muted)] truncate">{c.student!.email}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
                             <span className={`text-xs font-semibold px-2 py-1 rounded-full ${c.isActive ? "bg-emerald-500/12 text-emerald-500" : "bg-[var(--error)]/12 text-[var(--error)]"}`}>
                               {c.isActive ? "نشط" : "محظور"}
                             </span>
+                          </div>
+                          <StudentPhoneActions phone={c.student!.phone} />
+                          <StudentDossierButton studentId={c.student!.id} courseId={selectedCourse.id} />
+                          <div className="flex items-center gap-2">
                             <button type="button" onClick={() => resetDevices(c.student!.id, c.student!.name)}
                               title="مسح أجهزة الطالب ليتمكن من الدخول من جهاز جديد"
-                              className="px-2.5 py-1 text-xs font-bold rounded-lg text-sky-500 hover:bg-sky-500/10 transition-colors">
+                              className="flex-1 min-h-11 px-2.5 text-xs font-bold rounded-xl text-sky-500 bg-sky-500/10">
                               تصفير الأجهزة
                             </button>
                             <button type="button" onClick={() => updateStudentAccess(c.student!.id, c.isActive ? "ban" : "unban")}
-                              className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-colors ${c.isActive ? "text-[var(--error)] hover:bg-[var(--error)]/10" : "text-emerald-500 hover:bg-emerald-500/10"}`}>
+                              className={`flex-1 min-h-11 px-2.5 text-xs font-bold rounded-xl ${c.isActive ? "text-[var(--error)] bg-[var(--error)]/10" : "text-emerald-500 bg-emerald-500/10"}`}>
                               {c.isActive ? "حظر" : "إلغاء الحظر"}
                             </button>
                           </div>
@@ -3961,7 +4291,7 @@ export default function TeacherDashboardPage() {
         onCancel={() => { confirmState?.resolve(false); setConfirmState(null); }}
       />
 
-      {showJsonGuide && <JSONGuideModal onClose={() => setShowJsonGuide(false)} notify={notify} />}
+      {showJsonGuide && <TeacherJSONGuideModal isOpen={showJsonGuide} onClose={() => setShowJsonGuide(false)} />}
 
       {/* ── DRM Access Gate Password Modal ── */}
       {drmPasswordModal && (
@@ -4133,112 +4463,6 @@ export default function TeacherDashboardPage() {
         </div>
       )}
     </ClassicAdminShell>
-  );
-}
-
-function JSONGuideModal({ onClose, notify }: { onClose: () => void; notify: (type: "success" | "error", text: string) => void }) {
-  const fullExamSample = {
-    title: "اختبار شهر أكتوبر في الفيزياء",
-    timeLimitMinutes: 30,
-    questions: [
-      {
-        question: "ما هي وحدة قياس القوة في النظام الدولي؟",
-        questionType: "mcq",
-        imageUrl: "https://example.com/image.png",
-        optionA: "النيوتن",
-        optionB: "الجول",
-        optionC: "الفولت",
-        optionD: "الواط",
-        correctAnswer: "A"
-      },
-      {
-        question: "اشرح قانون نيوتن الأول وتطبيقاته باختصار",
-        "questionType": "essay"
-      }
-    ]
-  };
-
-  const arrayQuestionsSample = [
-    {
-      question: "ما الفرق بين السرعة القياسية والسرعة المتجهة؟",
-      optionA: "السرعة المتجهة تتضمن الاتجاه والقياسية لا تتضمنه",
-      optionB: "لا يوجد فرق بينهما",
-      optionC: "السرعة القياسية أسرع دائماً",
-      optionD: "السرعة المتجهة تُقاس بالفولت",
-      correctAnswer: "A"
-    }
-  ];
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl max-w-2xl w-full p-6 space-y-5 text-right max-h-[90vh] overflow-y-auto shadow-2xl">
-        <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-          <h3 className="text-lg font-bold text-[var(--ink)] flex items-center gap-2">
-            <span>💡 دليل وتنسيق صياغة ملف الـ JSON</span>
-          </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200 text-lg font-bold p-1">✕</button>
-        </div>
-
-        <div className="space-y-4 text-xs leading-relaxed text-[var(--ink-muted)]">
-          <p className="text-sm font-semibold text-[var(--ink)]">
-            يمكنك إعداد الأسئلة في أي محرر نصوص أو عبر برامج الذكاء الاصطناعي (مثل ChatGPT) وحفظ الملف بصيغة <code className="bg-sky-500/10 text-sky-400 px-1.5 py-0.5 rounded font-mono">.json</code> بأحد التنسيقين التاليين:
-          </p>
-
-          <div className="bg-[var(--bg)] border border-[var(--border)] rounded-xl p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-sky-400">1️⃣ استيراد اختبار/واجب كامل (عنوان + وقت + أسئلة):</span>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(JSON.stringify(fullExamSample, null, 2));
-                  notify("success", "تم نسخ كود الـ JSON إلى الحافظة 📋");
-                }}
-                className="px-2.5 py-1 rounded bg-sky-500/20 text-sky-400 hover:bg-sky-500/30 text-[11px] font-bold"
-              >
-                📋 نسخ النموذج
-              </button>
-            </div>
-            <pre className="font-mono text-[11px] text-emerald-400 bg-black/40 p-3 rounded-lg overflow-x-auto text-left" dir="ltr">
-{JSON.stringify(fullExamSample, null, 2)}
-            </pre>
-          </div>
-
-          <div className="bg-[var(--bg)] border border-[var(--border)] rounded-xl p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-sky-400">2️⃣ استيراد قائمة أسئلة مباشرة (Array of Questions):</span>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(JSON.stringify(arrayQuestionsSample, null, 2));
-                  notify("success", "تم نسخ كود الـ JSON إلى الحافظة 📋");
-                }}
-                className="px-2.5 py-1 rounded bg-sky-500/20 text-sky-400 hover:bg-sky-500/30 text-[11px] font-bold"
-              >
-                📋 نسخ النموذج
-              </button>
-            </div>
-            <pre className="font-mono text-[11px] text-emerald-400 bg-black/40 p-3 rounded-lg overflow-x-auto text-left" dir="ltr">
-{JSON.stringify(arrayQuestionsSample, null, 2)}
-            </pre>
-          </div>
-
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-amber-500 space-y-1">
-            <p className="font-bold">⚠️ قواعد وإرشادات صياغة الـ JSON:</p>
-            <ul className="list-disc list-inside space-y-1 text-[11px]">
-              <li>حدد الإجابة الصحيحة في <code className="font-mono font-bold">correctAnswer</code> بأحد الحروف: <code className="font-mono">"A"</code> أو <code className="font-mono">"B"</code> أو <code className="font-mono">"C"</code> أو <code className="font-mono">"D"</code>.</li>
-              <li>للأسئلة المقالية (التي تتطلب تصحيحاً كتابياً بدلاً من التلقائي): اجعل <code className="font-mono font-bold">"questionType": "essay"</code>.</li>
-              <li>الصورة التوضيحية <code className="font-mono font-bold">imageUrl</code> اختيارية ويمكن تركها فارغة <code className="font-mono">""</code> أو وضع رابط مباشر <code className="font-mono">"https://..."</code>.</li>
-            </ul>
-          </div>
-        </div>
-
-        <div className="pt-2 text-left">
-          <button type="button" onClick={onClose} className="px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-bold text-xs">
-            فهمت، إغلاق الدليل
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 

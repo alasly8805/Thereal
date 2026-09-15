@@ -60,17 +60,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
-    const { type, videoId, details } = body as {
-      type: string;
+    const body = (await req.json().catch(() => ({}))) as {
+      type?: string;
       videoId?: string;
       details?: string;
     };
 
-    if (!type) {
+    if (!body?.type) {
       return NextResponse.json({ error: "نوع المخالفة مطلوب" }, { status: 400 });
     }
 
+    // Preview mode check: If not a regular student (e.g. teacher previewing or testing),
+    // do not persist violations to the Student table
+    if (session.role && session.role !== "student") {
+      return NextResponse.json({ success: true, preview: true, count: 0 });
+    }
+
+    const { type, videoId, details } = body;
     const userAgent = req.headers.get("user-agent") || undefined;
 
     await prisma.securityViolation.create({
@@ -97,10 +103,10 @@ export async function POST(req: NextRequest) {
     if (recentViolations >= 3 && recentViolations % 3 === 0 && shouldSendParentAlert(session.id)) {
       const student = await prisma.user.findUnique({
         where: { id: session.id },
-        select: { name: true, parentPhone: true },
+        select: { name: true, parentPhone: true, role: true },
       });
 
-      if (student?.parentPhone) {
+      if (student?.role === "student" && student?.parentPhone) {
         const alertMsg = `⚠️ تنبيه أمني عاجل من منصة Code-UP:\n\nنسترعي انتباهكم بأنه تم رصد محاولات متكررة لتصوير الشاشة أو فتح أدوات المطور (DevTools) أثناء مشاهدة الفيديوهات على حساب نجلك (${student.name}).\n\nيرجى التنبيه عليه لمنع حظر الحساب نهائياً من متابعة الدروس.`;
 
         whatsappOrchestrator

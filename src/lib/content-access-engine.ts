@@ -224,7 +224,7 @@ async function loadProgressWithLegacyFallback(
     homeworkItems.length
       ? prisma.homeworkSubmission.findMany({
           where: { studentId, homeworkId: { in: homeworkItems.map((item) => item.sourceId) } },
-          select: { homeworkId: true, score: true },
+          select: { homeworkId: true, score: true, status: true, allowRetake: true },
         })
       : [],
   ]);
@@ -235,7 +235,7 @@ async function loadProgressWithLegacyFallback(
   const quizBySource = new Map<string, { score: number; totalQ: number }>();
   for (const entry of quizResults) quizBySource.set(entry.quizId, entry);
 
-  const homeworkBySource = new Map<string, { score: number | null }>();
+  const homeworkBySource = new Map<string, { score: number | null; status: string; allowRetake: boolean }>();
   for (const entry of homeworkSubmissions) {
     homeworkBySource.set(entry.homeworkId, entry);
   }
@@ -266,7 +266,9 @@ async function loadProgressWithLegacyFallback(
 
     if (item.type === ContentType.HOMEWORK || item.type === ContentType.EXAM) {
       const legacyHomework = homeworkBySource.get(item.sourceId);
-      if (legacyHomework) {
+      // Only a passed (and not-reopened) attempt unlocks the next item.
+      // Rejected / pending / retry-open work must keep the chain closed.
+      if (legacyHomework?.status === "passed" && !legacyHomework.allowRetake) {
         progressByContentId.set(item.id, {
           contentId: item.id,
           status: ContentProgressStatus.COMPLETED,
@@ -279,11 +281,42 @@ async function loadProgressWithLegacyFallback(
   return [...progressByContentId.values()];
 }
 
+/**
+ * True when support has explicitly unlocked this one item for this one student.
+ *
+ * Scoped as narrowly as the panel allows: one student, one item, optionally
+ * time-boxed, revocable. It bypasses the prerequisite graph ONLY — enrollment,
+ * ownership and payment checks live in checkVideoAccess/checkHomeworkAccess and
+ * are untouched, so an override can never hand out content nobody paid for.
+ */
+async function hasSupportOverride(studentId: string, locator: ContentLocator): Promise<boolean> {
+  try {
+    const override = await prisma.contentAccessOverride.findFirst({
+      where: {
+        studentId,
+        sourceId: locator.sourceId,
+        contentType: { in: compatibleContentTypes(locator.type) },
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
+      select: { id: true },
+    });
+    return override !== null;
+  } catch {
+    // Fail closed: a lookup error must not silently open the whole graph.
+    return false;
+  }
+}
+
 /** Authoritative server-side prerequisite gate for every supported content type. */
 export async function canAccessContent(
   studentId: string,
   locator: ContentLocator
 ): Promise<ContentAccessDecision> {
+  if (await hasSupportOverride(studentId, locator)) {
+    return { allowed: true };
+  }
+
   const candidates = await prisma.contentItem.findMany({
     where: {
       sourceId: locator.sourceId,
@@ -305,6 +338,70 @@ export async function canAccessContent(
     prerequisites: graph.prerequisites,
     progress,
   });
+}
+
+/**
+ * Bulk prerequisite evaluation for every content item of a course. Lets the
+ * student course payload show lock state that matches the teacher's content
+ * chain (مسار وفتح المحتوى) exactly — the client previously guessed locks from
+ * display order, which disagreed with the graph whenever the chain crossed
+ * folders, used custom edges, or chained through quizzes/homework.
+ *
+ * Returns active:false when the course has no prerequisite edges at all, so
+ * callers can fall back to their legacy behaviour for untouched courses.
+ */
+export async function getCourseContentLocks(
+  studentId: string,
+  sourceIds: string[]
+): Promise<{ active: boolean; locks: Map<string, RequiredContentItem> }> {
+  const locks = new Map<string, RequiredContentItem>();
+  if (sourceIds.length === 0) return { active: false, locks };
+
+  const items = await prisma.contentItem.findMany({
+    where: { sourceId: { in: sourceIds } },
+    select: { id: true, title: true, type: true, sourceId: true },
+  });
+  if (items.length === 0) return { active: false, locks };
+
+  const itemIds = new Set(items.map((item) => item.id));
+  const prerequisites = await prisma.contentPrerequisite.findMany({
+    where: { targetContentId: { in: [...itemIds] } },
+    select: {
+      targetContentId: true,
+      prerequisiteContentId: true,
+      requiredStatus: true,
+      minScore: true,
+    },
+  });
+  if (prerequisites.length === 0) return { active: false, locks };
+
+  // Edges may point at prerequisite items outside this course's source set
+  // (ContentItem is keyed by source, so cross-course chains are possible) —
+  // pull those in too or the evaluator would fail closed on a missing item.
+  const missingIds = [
+    ...new Set(prerequisites.map((edge) => edge.prerequisiteContentId).filter((id) => !itemIds.has(id))),
+  ];
+  const extraItems = missingIds.length
+    ? await prisma.contentItem.findMany({
+        where: { id: { in: missingIds } },
+        select: { id: true, title: true, type: true, sourceId: true },
+      })
+    : [];
+  const allItems = [...items, ...extraItems];
+
+  const progress = await loadProgressWithLegacyFallback(studentId, allItems);
+
+  for (const item of items) {
+    const decision = evaluateContentAccess({
+      targetContentId: item.id,
+      items: allItems,
+      prerequisites,
+      progress,
+    });
+    if (!decision.allowed) locks.set(item.sourceId, decision.requiredItem);
+  }
+
+  return { active: true, locks };
 }
 
 type ContentProgressDb = Pick<
@@ -383,6 +480,39 @@ export async function recordContentCompleted(
       status: ContentProgressStatus.COMPLETED,
       score: options.score,
       completedAt: options.completedAt ?? new Date(),
+    },
+    db
+  );
+}
+
+/**
+ * Homework only opens the next item when the attempt is passed and not
+ * reopened. Reject / pending / retry-open all keep the chain closed so a
+ * failed file cannot skip the rest of the lecture.
+ */
+export async function syncHomeworkContentProgress(
+  studentId: string,
+  locator: ContentLocator,
+  status: string,
+  options: { score?: number | null; completedAt?: Date; allowRetake?: boolean } = {},
+  db: ContentProgressDb = prisma
+): Promise<void> {
+  const opensNext = status === "passed" && !options.allowRetake;
+  if (opensNext) {
+    await recordContentCompleted(studentId, locator, {
+      score: options.score,
+      completedAt: options.completedAt,
+    }, db);
+    return;
+  }
+
+  await recordContentProgress(
+    studentId,
+    locator,
+    {
+      status: ContentProgressStatus.IN_PROGRESS,
+      score: options.score ?? null,
+      completedAt: null,
     },
     db
   );

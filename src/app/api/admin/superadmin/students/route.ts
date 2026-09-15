@@ -50,9 +50,12 @@ export async function GET(req: NextRequest) {
     const offset = Math.max(parseInt(searchParams.get("offset") ?? "0"), 0);
     const ageNum = ageRaw !== "" && !isNaN(parseInt(ageRaw)) ? parseInt(ageRaw) : undefined;
 
-    const where = buildWhere({ name, stage, ageNum, phone, parentPhone, verification });
+    const where = {
+      ...buildWhere({ name, stage, ageNum, phone, parentPhone, verification }),
+      ...(session.demoTour ? { isDemo: true } : {}),
+    };
 
-    const baseWhere = { role: "student", isDeleted: false };
+    const baseWhere = { role: "student", isDeleted: false, ...(session.demoTour ? { isDemo: true } : {}) };
 
     const [students, total, confirmedCount, pendingCount, rejectedCount] = await Promise.all([
       prisma.user.findMany({

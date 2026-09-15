@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   AXINOM_CONFIG,
+  SAME_ORIGIN_LICENSE_SERVERS,
   type AxinomContentKey,
   type AxinomTokenOptions,
   type AxinomDrmPayload,
@@ -94,12 +95,12 @@ const USAGE_POLICIES = [
     name: HARDWARE_POLICY,
     playready: { min_device_security_level: 3000 },
     widevine: {
-      device_security_level: "HW_SECURE_ALL",
+      device_security_level: "HW_SECURE_DECODE",
     },
   },
   {
     name: SOFTWARE_POLICY,
-    playready: { min_device_security_level: 150 },
+    playready: { min_device_security_level: 2000 },
     widevine: { device_security_level: "SW_SECURE_CRYPTO" },
   },
 ];
@@ -149,9 +150,9 @@ export function createAxinomDrmToken(options: AxinomTokenOptions): AxinomDrmPayl
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ2ZXJzaW9uIjoxLCJjb21fa2V5X2lkIjoiYjMzNjRlYjUtNTFmNi00YWUzLThjOTgtMzNjZWQ1ZTMxYzc4IiwibWVzc2FnZSI6eyJ0eXBlIjoiZW50aXRsZW1lbnRfbWVzc2FnZSIsInZlcnNpb24iOjIsImxpY2Vuc2UiOnsiYWxsb3dfcGVyc2lzdGVuY2UiOnRydWV9LCJjb250ZW50X2tleXNfc291cmNlIjp7ImlubGluZSI6W3siaWQiOiI5ZWI0MDUwZC1lNDRiLTQ4MDItOTMyZS0yN2Q3NTA4M2UyNjYiLCJlbmNyeXB0ZWRfa2V5IjoibEszT2pITFlXMjRjcjJrdFI3NGZudz09IiwidXNhZ2VfcG9saWN5IjoiUG9saWN5IEEifV19LCJjb250ZW50X2tleV91c2FnZV9wb2xpY2llcyI6W3sibmFtZSI6IlBvbGljeSBBIiwicGxheXJlYWR5Ijp7Im1pbl9kZXZpY2Vfc2VjdXJpdHlfbGV2ZWwiOjE1MCwicGxheV9lbmFibGVycyI6WyI3ODY2MjdEOC1DMkE2LTQ0QkUtOEY4OC0wOEFFMjU1QjAxQTciXX19XX19.W2FbPDSDaq-LeeLfOnbpTMa-zCmXh8RLChEVDYvdcVw",
       manifestUrl: "https://media.axprod.net/TestVectors/v7-MultiDRM-SingleKey/Manifest_1080p.mpd",
       licenseServers: {
-        widevine: "https://drm-widevine-licensing.axtest.net/AcquireLicense",
-        playready: "https://drm-playready-licensing.axtest.net/AcquireLicense",
-        fairplay: "https://drm-fairplay-licensing.axtest.net/AcquireLicense",
+        widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+        playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+        fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
       },
       expiresAt,
       expiresInSeconds,
@@ -279,12 +280,41 @@ export function createAxinomDrmToken(options: AxinomTokenOptions): AxinomDrmPayl
     token,
     manifestUrl,
     licenseServers: {
-      widevine: AXINOM_CONFIG.endpoints.widevine,
-      playready: AXINOM_CONFIG.endpoints.playready,
-      fairplay: AXINOM_CONFIG.endpoints.fairplay,
+      widevine: SAME_ORIGIN_LICENSE_SERVERS.widevine,
+      playready: SAME_ORIGIN_LICENSE_SERVERS.playready,
+      fairplay: SAME_ORIGIN_LICENSE_SERVERS.fairplay,
       fairplayCertUrl: AXINOM_CONFIG.endpoints.fairplayCert || undefined,
     },
     expiresAt,
     expiresInSeconds,
   };
 }
+
+/**
+ * Validates an Axinom DRM token (HMAC-SHA256 signature and expiration).
+ */
+export function verifyAxinomToken(token: string): boolean {
+  try {
+    if (!token || typeof token !== "string") return false;
+    const parts = token.trim().split(".");
+    if (parts.length !== 3) return false;
+    const [headerB64, payloadB64, sigB64] = parts;
+    const rawKey = (process.env.AXINOM_COMMUNICATION_KEY || "").trim();
+    if (!rawKey) return false;
+    const keyBuf = getCommunicationKeyBuffer();
+    const expectedSig = crypto
+      .createHmac("sha256", keyBuf)
+      .update(`${headerB64}.${payloadB64}`)
+      .digest();
+    const actualSig = Buffer.from(sigB64.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+    if (actualSig.length !== expectedSig.length) return false;
+    if (!crypto.timingSafeEqual(expectedSig, actualSig)) return false;
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+    const exp = payload?.message?.exp || payload?.exp;
+    if (exp && Math.floor(Date.now() / 1000) > exp) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+

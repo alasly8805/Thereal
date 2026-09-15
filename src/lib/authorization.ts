@@ -7,6 +7,15 @@ import { canBypassPayment } from "./demo";
  * Optional role parameter allows superadmin demo bypass evaluation on denial.
  */
 export async function checkCourseEnrollment(userId: string, courseId: string, role?: string): Promise<boolean> {
+  // 0. Silent course exclusion check (set when Superadmin signs out / removes student from course)
+  const isExcluded = await prisma.appSetting.findUnique({
+    where: { key: `course_excluded_${courseId}_${userId}` },
+    select: { value: true },
+  });
+  if (isExcluded?.value === "true") {
+    return false;
+  }
+
   const directEnrollment = await prisma.courseEnrollment.findUnique({
     where: { studentId_courseId: { studentId: userId, courseId } },
     select: { id: true },
@@ -26,21 +35,44 @@ export async function checkCourseEnrollment(userId: string, courseId: string, ro
 
   const course = await prisma.course.findUnique({
     where: { id: courseId },
-    select: { teacherId: true, isPaid: true, price: true },
+    select: { id: true, title: true, subject: true, description: true, teacherId: true, isPaid: true, price: true },
   });
 
   if (course?.teacherId) {
-    const activeSub = await prisma.teacherSubscription.findFirst({
+    const activeSubs = await prisma.teacherSubscription.findMany({
       where: {
         studentId: userId,
         teacherId: course.teacherId,
         status: "active",
         expiresAt: { gt: new Date() },
       },
-      select: { id: true },
+      select: { id: true, languageTrack: true },
     });
-    if (activeSub) return true;
+
+    if (activeSubs.length > 0) {
+      const { getEffectiveCourseTrack, isSubscriptionTrackMatching } = await import("./course-track");
+      const courseTrack = await getEffectiveCourseTrack(courseId, course);
+      const matches = activeSubs.some((sub) => isSubscriptionTrackMatching(sub.languageTrack, courseTrack));
+      if (matches) return true;
+    }
   }
+
+  // Check if course is linked to any active plan enrollment of the student
+  const planLink = await prisma.planCourseLink.findFirst({
+    where: {
+      courseId,
+      plan: {
+        enrollments: {
+          some: {
+            studentId: userId,
+            expiresAt: { gt: new Date() },
+          },
+        },
+      },
+    },
+    select: { id: true },
+  });
+  if (planLink) return true;
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -133,28 +165,15 @@ export async function checkQuizAccess(userId: string, role: string, quizId: stri
       return true;
     }
 
-    // Active teacher subscription
-    if (teacherId) {
-      const activeSub = await prisma.teacherSubscription.findFirst({
-        where: {
-          studentId: userId,
-          teacherId,
-          status: "active",
-          expiresAt: { gt: new Date() },
-        },
-        select: { id: true },
-      });
-      if (activeSub) return true;
-    }
+    // Course enrollment (AccessCode or direct CourseEnrollment or teacher subscription with track matching)
+    const isEnrolled = await checkCourseEnrollment(userId, courseId, role);
+    if (isEnrolled) return true;
 
     // Free course check
     if (quiz.folder.course && (!quiz.folder.course.isPaid || (quiz.folder.course.price ?? 0) === 0)) {
       return true;
     }
 
-    // Course enrollment (AccessCode or direct CourseEnrollment or teacher subscription)
-    const isEnrolled = await checkCourseEnrollment(userId, courseId, role);
-    if (isEnrolled) return true;
 
     // Folder purchase or folder-level access code
     const hasFolderCode = await prisma.accessCode.findFirst({
@@ -308,16 +327,6 @@ export async function checkHomeworkAccess(userId: string, role: string, homework
   if (studentUser && studentUser.accountMode === "TESTER") return true;
 
   const now = new Date();
-  const activeSub = await prisma.teacherSubscription.findFirst({
-    where: {
-      studentId: userId,
-      teacherId: hw.teacherId,
-      status: "active",
-      expiresAt: { gt: now },
-    },
-    select: { id: true },
-  });
-  if (activeSub) return true;
 
   // 2. Demo bypass check
   if (await canBypassPayment(role, hw.teacherId, studentUser?.accountMode)) return true;

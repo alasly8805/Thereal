@@ -92,14 +92,28 @@ export async function resolveEmbedUrl(
       const safeId = id.replace(/[^a-zA-Z0-9_-]/g, "_");
       const manifestPath = path.resolve(process.cwd(), "uploads", "drm", safeId, "manifest.mpd");
 
-      if ((id.startsWith("gdrive_") || id.startsWith("local_")) && !fs.existsSync(manifestPath)) {
-        console.warn(`[video-provider] DRM manifest not found on disk for ${id}. Falling back to alasly.`);
-        const result = await getAlaslyPlaybackToken({
-          videoId: id,
-          userId: options?.userId,
-          domain: options?.domain,
-        });
-        return { embedUrl: result.embedUrl, provider: "alasly", signed: true, expiresInSeconds: result.expiresInSeconds };
+      if (!fs.existsSync(manifestPath)) {
+        // Either the id is still a raw gdrive_/local_ reference, or it is a
+        // cenc_ asset whose background packaging has not finished (or failed).
+        // Resolve the original source and serve it through the Native engine
+        // so the student never sees Shaka error 1001 (404 manifest).
+        let fallbackId: string | null = null;
+        if (id.startsWith("gdrive_") || id.startsWith("local_")) {
+          fallbackId = id;
+        } else {
+          const { readAssetSource } = await import("./drm-packaging");
+          fallbackId = readAssetSource(safeId);
+        }
+
+        if (fallbackId) {
+          console.warn(`[video-provider] DRM manifest not found for ${id}. Falling back to alasly (${fallbackId}).`);
+          const result = await getAlaslyPlaybackToken({
+            videoId: fallbackId,
+            userId: options?.userId,
+            domain: options?.domain,
+          });
+          return { embedUrl: result.embedUrl, provider: "alasly", signed: true, expiresInSeconds: result.expiresInSeconds };
+        }
       }
 
       const { mintAxinomTokenWithPool } = await import("./axinom-pool");
@@ -136,19 +150,82 @@ export async function resolveEmbedUrl(
     }
     case "vdocipher":
     default: {
-      const result = await getVdoCipherOtp(id, {
-        apiKey: options?.apiKey,
-        playerId: options?.playerId,
-        userId: options?.userId,
-        watermarkText: options?.watermarkText,
-      });
-      return { embedUrl: result.embedUrl, provider: "vdocipher", signed: true, expiresInSeconds: 3600 };
+      try {
+        const result = await getVdoCipherOtp(id, {
+          apiKey: options?.apiKey,
+          playerId: options?.playerId,
+          userId: options?.userId,
+          watermarkText: options?.watermarkText,
+        });
+        return { embedUrl: result.embedUrl, provider: "vdocipher", signed: true, expiresInSeconds: 3600 };
+      } catch (vdoErr) {
+        console.warn(`[video-provider] VdoCipher failed for ${id}. Engaging emergency failover...`, vdoErr);
+
+        // On-request sync: queue migration to best active account in the background
+        const { ensureVideoSyncedToActiveAccount } = await import("./vdocipher-accounts");
+        void ensureVideoSyncedToActiveAccount({ id, ...video }).catch(() => {});
+
+        // Emergency Tier 2: Check if self-hosted Axinom CENC DASH exists for this video
+        const fs = await import("fs");
+        const path = await import("path");
+        const safeId = id.replace(/[^a-zA-Z0-9_-]/g, "_");
+        let axinomAssetId = safeId;
+        const directManifest = path.resolve(process.cwd(), "uploads", "drm", safeId, "manifest.mpd");
+
+        if (!fs.existsSync(directManifest)) {
+          const { prisma } = await import("./prisma");
+          const dbVideo = await prisma.video.findFirst({
+            where: {
+              OR: [{ id: rawId }, { vdoCipherId: rawId }, { providerVideoId: rawId }],
+            },
+            select: { id: true, providerVideoId: true },
+          });
+
+          if (dbVideo?.providerVideoId && fs.existsSync(path.resolve(process.cwd(), "uploads", "drm", dbVideo.providerVideoId, "manifest.mpd"))) {
+            axinomAssetId = dbVideo.providerVideoId;
+          }
+        }
+
+        const finalManifestPath = path.resolve(process.cwd(), "uploads", "drm", axinomAssetId, "manifest.mpd");
+        if (fs.existsSync(finalManifestPath)) {
+          console.info(`[video-provider] Seamless failover: Serving ${axinomAssetId} via Axinom CENC Multi-DRM`);
+          const { mintAxinomTokenWithPool } = await import("./axinom-pool");
+          const axResult = await mintAxinomTokenWithPool({
+            videoId: axinomAssetId,
+            userId: options?.userId,
+          });
+          return {
+            embedUrl: axResult.manifestUrl,
+            provider: "axinom",
+            signed: true,
+            expiresInSeconds: axResult.expiresInSeconds,
+            drm: {
+              token: axResult.token,
+              licenseServers: axResult.licenseServers,
+            },
+          };
+        }
+
+        // Emergency Tier 3: Native High-Performance Stream (Alasly)
+        console.info(`[video-provider] Seamless failover: Serving ${id} via Native Alasly Engine`);
+        const alaslyResult = await getAlaslyPlaybackToken({
+          videoId: id,
+          userId: options?.userId,
+          domain: options?.domain,
+        });
+        return {
+          embedUrl: alaslyResult.embedUrl,
+          provider: "alasly",
+          signed: true,
+          expiresInSeconds: alaslyResult.expiresInSeconds,
+        };
+      }
     }
   }
 }
 
 export const PROVIDER_LABELS: Record<VideoProvider, string> = {
-  axinom: "Axinom DRM (Hardware Multi-DRM)",
+  axinom: "TOPTEIR",
   vdocipher: "VdoCipher",
   bunny: "Bunny Stream",
   youtube: "YouTube Private",

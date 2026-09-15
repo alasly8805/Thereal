@@ -7,12 +7,23 @@ import fs from "fs/promises";
 
 const UPLOAD_BASE = path.join(process.cwd(), "uploads", "homework");
 
+export const maxDuration = 120;
+
 /** POST /api/homework/[id]/upload — secure file upload for homework submissions */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getSession();
+  // This route is excluded from the proxy matcher (body buffering corrupts
+  // FormData), so the global support-view read-only guard never sees it —
+  // the check has to live here.
+  if (session?.supportView) {
+    return NextResponse.json(
+      { error: "جلسة دعم فني للاطّلاع فقط — لا يمكن رفع ملف نيابةً عن الطالب.", code: "SUPPORT_VIEW_READONLY" },
+      { status: 403 }
+    );
+  }
   if (!session || session.role !== "student")
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
 
@@ -103,8 +114,39 @@ export async function POST(
   }
 
   // Return a reference path (NOT a public URL — accessed via /api/homework/[id]/file)
+  const existing = await prisma.homeworkSubmission.findUnique({
+    where: { homeworkId_studentId: { homeworkId, studentId: session.id } },
+    select: { id: true, status: true, allowRetake: true },
+  });
+
+  // A locked attempt (passed/failed/in-review) cannot be overwritten by a
+  // raw upload. The teacher/assistant must reopen it first.
+  if (
+    existing &&
+    existing.status !== "pending" &&
+    !existing.allowRetake
+  ) {
+    return NextResponse.json(
+      { error: "تم تسليم الواجب من قبل. انتظر مراجعة المعلم أو إعادة فتح المحاولة.", alreadySubmitted: true },
+      { status: 409 }
+    );
+  }
+
+  if (existing) {
+    await prisma.homeworkSubmission.update({
+      where: { id: existing.id },
+      data: {
+        fileUrl: fileRef,
+        fileName: file.name,
+        status: "pending",
+        completedAt: new Date(),
+      },
+    });
+  }
+
   return NextResponse.json({
     fileUrl: fileRef,
     fileName: file.name,
+    replaced: Boolean(existing),
   });
 }

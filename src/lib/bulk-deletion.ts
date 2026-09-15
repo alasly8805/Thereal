@@ -82,9 +82,13 @@ export function bulkDeletePasswordConfigured(): boolean {
 // ─── Counting / preview ─────────────────────────────────────────────────────
 
 /** How many live (non-deleted) accounts a scope would affect right now. */
-export async function countScope(scope: BulkScope): Promise<number> {
+export async function countScope(scope: BulkScope, opts?: { demoOnly?: boolean }): Promise<number> {
   return prisma.user.count({
-    where: { role: { in: scopeRoles(scope) }, isDeleted: false },
+    where: {
+      role: { in: scopeRoles(scope) },
+      isDeleted: false,
+      ...(opts?.demoOnly ? { isDemo: true } : {}),
+    },
   });
 }
 

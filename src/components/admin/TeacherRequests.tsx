@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useToast } from "@/components/ui/Toast";
+import { StudentPhoneActions } from "@/components/admin/StudentPhoneActions";
 
 interface VideoViewRequest {
   id: string;
@@ -540,11 +541,7 @@ export function TeacherRequests({
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-slate-900 dark:text-white text-sm">{r.student.name}</span>
-                        {r.student.phone && (
-                          <span className="text-xs text-slate-500 font-mono bg-slate-100 dark:bg-slate-950 px-2 py-0.5 rounded-md border border-slate-200/60 dark:border-slate-800" dir="ltr">
-                            {r.student.phone}
-                          </span>
-                        )}
+                        {r.student.phone && <StudentPhoneActions phone={r.student.phone} compact />}
                         <span
                           className={`px-2.5 py-0.5 text-[11px] rounded-full font-bold border ${
                             r.status === "approved"
@@ -1016,11 +1013,13 @@ export function TeacherRequests({
                         </span>
                       </div>
 
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        الطالب: <strong className="text-slate-800 dark:text-slate-200">{t.student.name}</strong>
-                        {t.student.phone && <span className="mr-1 text-slate-400 font-mono">({t.student.phone})</span>}
-                        {t.course && <span> • الكورس: <strong className="text-amber-600 dark:text-amber-400">{t.course.title}</strong></span>}
-                      </p>
+                      <div className="space-y-2">
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          الطالب: <strong className="text-slate-800 dark:text-slate-200">{t.student.name}</strong>
+                          {t.course && <span> • الكورس: <strong className="text-amber-600 dark:text-amber-400">{t.course.title}</strong></span>}
+                        </p>
+                        {t.student.phone && <StudentPhoneActions phone={t.student.phone} />}
+                      </div>
                     </div>
 
                     <div className="text-left text-xs text-slate-400 shrink-0">

@@ -34,7 +34,15 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    ".next/dev/types/**/*.ts",
+    ".next.new/types/**/*.ts",
+    ".next.new/dev/types/**/*.ts",
+    ".next-aitest/types/**/*.ts",
+    ".next-aitest/dev/types/**/*.ts",
+    ".build-essay-ai/types/**/*.ts",
+    ".build-essay-ai/dev/types/**/*.ts",
+    ".build-drm-s3/types/**/*.ts",
+    ".build-drm-s3/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

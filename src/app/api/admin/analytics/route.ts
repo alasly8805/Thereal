@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -35,7 +36,7 @@ const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 export async function GET(req: NextRequest) {
   try {
   const session = await getSession();
-  if (!session || session.role !== "teacher") {
+  if (!session || !isTeacherLike(session.role)) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
   const teacherId = session.id;
@@ -300,7 +301,7 @@ export async function GET(req: NextRequest) {
   }
   // Surfacing grading queue (Gap 30)
   const teacherLessonIds = (await prisma.planLessonSource.findMany({
-    where: { teacherId: session.id },
+    where: { teacherId: actingTeacherId(session) },
     select: { planLessonId: true }
   })).map(s => s.planLessonId);
 

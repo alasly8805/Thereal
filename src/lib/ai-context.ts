@@ -14,12 +14,16 @@ export interface StudentContext {
     age: number | null;
     educationalStage: string | null;
     phone: string | null;
+    role?: string;
   };
   courses: Array<{
     id: string;
     title: string;
     subject: string;
     teacher: string;
+    isPaid?: boolean;
+    price?: number;
+    category?: string;
     progress: {
       videosWatched: number;
       totalVideos: number;
@@ -86,7 +90,7 @@ export async function buildStudentContext(studentId: string, skipCache = false):
     }
   }
 
-  const student = await prisma.user.findUnique({
+  let student = await prisma.user.findUnique({
     where: { id: studentId },
     select: {
       id: true,
@@ -95,11 +99,91 @@ export async function buildStudentContext(studentId: string, skipCache = false):
       age: true,
       educationalStage: true,
       phone: true,
+      role: true,
     },
   });
 
+  if (!student && studentId === "superadmin") {
+    student = {
+      id: "superadmin",
+      name: "المشرف العام",
+      email: "master-superadmin@code-up.tech",
+      age: null,
+      educationalStage: null,
+      phone: null,
+      role: "superadmin",
+    };
+  }
+
   if (!student) {
     throw new Error("Student not found");
+  }
+
+  // If user is superadmin or admin: give full platform courses context
+  if (student.role === "superadmin" || student.role === "admin") {
+    const allCourses = await prisma.course.findMany({
+      take: 80,
+      orderBy: { createdAt: "desc" },
+      include: {
+        teacher: { select: { name: true } },
+        folders: { include: { videos: { select: { id: true } } } },
+      },
+    });
+
+    const overrides = await prisma.appSetting.findMany({
+      where: { key: { startsWith: "course_cat_" } },
+    });
+    const catMap = new Map(overrides.map((o) => [o.key.replace("course_cat_", ""), o.value]));
+
+    const courseContexts = allCourses.map((c) => {
+      const allVideos = c.folders.flatMap((f) => f.videos);
+      return {
+        id: c.id,
+        title: c.title,
+        subject: c.subject,
+        teacher: c.teacher.name,
+        isPaid: c.isPaid,
+        price: c.price ?? 0,
+        category: catMap.get(c.id) || "auto",
+        progress: {
+          videosWatched: 0,
+          totalVideos: allVideos.length,
+          percentage: 100,
+        },
+        quizResults: [],
+        lastAccessed: null,
+      };
+    });
+
+    const contextData: StudentContext = {
+      profile: {
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        age: student.age,
+        educationalStage: student.educationalStage,
+        phone: student.phone,
+        role: student.role,
+      },
+      courses: courseContexts,
+      overallStats: {
+        totalCourses: allCourses.length,
+        averageScore: 100,
+        totalQuizzesTaken: 0,
+        totalVideosWatched: 0,
+      },
+      weakAreas: [],
+      aiInsights: [],
+      recentFeedback: [],
+      libraryProgress: [],
+    };
+
+    contextCache.set(studentId, {
+      data: contextData,
+      expiresAt: Date.now() + CONTEXT_CACHE_TTL_MS,
+    });
+
+    return contextData;
   }
 
   // Get all courses the student has access to

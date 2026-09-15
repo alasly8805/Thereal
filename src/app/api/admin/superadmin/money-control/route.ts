@@ -12,10 +12,10 @@ export async function GET() {
 
   try {
     const [expenses, percentages, teachers] = await Promise.all([
-      getExpensesFromDb(),
+      session.demoTour ? Promise.resolve([]) : getExpensesFromDb(),
       getTeacherPercentagesFromDb(),
       prisma.user.findMany({
-        where: { role: "teacher", isDeleted: false },
+        where: { role: "teacher", isDeleted: false, ...(session.demoTour ? { isDemo: true } : { isDemo: false }) },
         select: {
           id: true,
           name: true,

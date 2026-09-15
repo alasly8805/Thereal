@@ -1,16 +1,20 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 /** GET — teacher's own homeworks with submission counts & review queue size */
 export async function GET() {
   const session = await getSession();
-  if (!session || session.role !== "teacher")
+  if (!session || !isTeacherLike(session.role))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "manageHomework") && !hasAssistantPermission(session, "gradeHomework")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الواجبات" }, { status: 403 });
+  }
 
   const homeworks = await prisma.homework.findMany({
-    where: { teacherId: session.id },
+    where: { teacherId: actingTeacherId(session) },
     orderBy: { createdAt: "desc" },
     include: {
       video: { select: { id: true, title: true } },
@@ -30,16 +34,34 @@ export async function GET() {
         },
       },
       submissions: {
-        where: { status: "review_requested", student: { accountMode: { not: "TESTER" } } },
+        where: {
+          status: { in: ["review_requested", "pending"] },
+          student: { accountMode: { not: "TESTER" } },
+        },
         select: { id: true },
       },
     },
   });
 
   // Attach review queue count per homework
+  const failedGroups = homeworks.length
+    ? await prisma.homeworkSubmission.groupBy({
+        by: ["homeworkId"],
+        where: {
+          homeworkId: { in: homeworks.map((h) => h.id) },
+          status: "failed",
+          allowRetake: false,
+          student: { accountMode: { not: "TESTER" } },
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const failedByHw = new Map(failedGroups.map((g) => [g.homeworkId, g._count._all]));
+
   const result = homeworks.map((hw) => ({
     ...hw,
     reviewQueueCount: hw.submissions.length,
+    failedCount: failedByHw.get(hw.id) ?? 0,
     submissions: undefined, // don't leak submission list here
   }));
 
@@ -62,8 +84,10 @@ export async function POST(req: NextRequest) {
       });
     } catch { /* ignore */ }
   }
-  if (!session || session.role !== "teacher")
+  if (!session || !isTeacherLike(session.role))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "manageHomework"))
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إدارة الواجبات" }, { status: 403 });
 
   const body = await req.json() as {
     title: string;
@@ -88,8 +112,8 @@ export async function POST(req: NextRequest) {
       imageUrl?: string;
       optionA: string;
       optionB: string;
-      optionC: string;
-      optionD: string;
+      optionC?: string;
+      optionD?: string;
       correctAnswer: string;
     }[];
   };
@@ -106,9 +130,16 @@ export async function POST(req: NextRequest) {
   if (body.type === "terminal" && !body.expectedOutput?.trim())
     return NextResponse.json({ error: "الناتج المتوقع مطلوب للنوع terminal" }, { status: 400 });
 
-  // Validate image URLs — only allow http/https external URLs (no uploads)
+  // Validate questions for exam type
   if (body.type === "exam" && body.questions) {
-    for (const q of body.questions) {
+    for (let i = 0; i < body.questions.length; i++) {
+      const q = body.questions[i];
+      if (!q.question?.trim()) {
+        return NextResponse.json({ error: `السؤال رقم ${i + 1} لا يحتوي على نص` }, { status: 400 });
+      }
+      if (!q.optionA?.trim() || !q.optionB?.trim()) {
+        return NextResponse.json({ error: `السؤال رقم ${i + 1} يجب أن يحتوي على خيارين على الأقل (أ و ب)` }, { status: 400 });
+      }
       if (q.imageUrl && !/^https?:\/\//i.test(q.imageUrl)) {
         return NextResponse.json({ error: "رابط الصورة يجب أن يبدأ بـ https://" }, { status: 400 });
       }
@@ -116,18 +147,19 @@ export async function POST(req: NextRequest) {
   }
 
   // If videoId provided, ensure it belongs to teacher's course
+  let video: any = null;
   if (body.videoId) {
-    const video = await prisma.video.findUnique({
+    video = await prisma.video.findUnique({
       where: { id: body.videoId },
       include: { folder: { include: { course: { select: { teacherId: true } } } } },
     });
-    if (!video || video.folder.course.teacherId !== session.id)
+    if (!video || video.folder.course.teacherId !== actingTeacherId(session))
       return NextResponse.json({ error: "الدرس غير موجود أو لا ينتمي إليك" }, { status: 403 });
   }
 
   const homework = await prisma.homework.create({
     data: {
-      teacherId:        session.id,
+      teacherId: actingTeacherId(session),
       title:            body.title.trim(),
       description:      body.description?.trim() ?? null,
       type:             body.type,
@@ -145,16 +177,29 @@ export async function POST(req: NextRequest) {
       // Upload
       allowedFileTypes: body.allowedFileTypes?.trim() ?? null,
       questions: body.type === "exam" && body.questions ? {
-        create: body.questions.map((q, i) => ({
-          question:      q.question.trim(),
-          imageUrl:      q.imageUrl?.trim() || null,
-          optionA:       q.optionA.trim(),
-          optionB:       q.optionB.trim(),
-          optionC:       q.optionC.trim(),
-          optionD:       q.optionD.trim(),
-          correctAnswer: q.correctAnswer,
-          order:         i,
-        })),
+        create: body.questions.map((q, i) => {
+          const optA = q.optionA?.trim() || "";
+          const optB = q.optionB?.trim() || "";
+          const optC = q.optionC?.trim() || "";
+          const optD = q.optionD?.trim() || "";
+
+          let correct = String(q.correctAnswer || "A").toUpperCase();
+          if (correct === "D" && !optD) correct = "A";
+          if (correct === "C" && !optC) correct = "A";
+          if (correct === "B" && !optB) correct = "A";
+          if (!["A", "B", "C", "D"].includes(correct)) correct = "A";
+
+          return {
+            question:      q.question.trim(),
+            imageUrl:      q.imageUrl?.trim() || null,
+            optionA:       optA,
+            optionB:       optB,
+            optionC:       optC,
+            optionD:       optD,
+            correctAnswer: correct,
+            order:         i,
+          };
+        }),
       } : undefined,
     },
     include: { questions: true, video: { select: { id: true, title: true } } },
@@ -166,8 +211,10 @@ export async function POST(req: NextRequest) {
 /** DELETE — remove a homework */
 export async function DELETE(req: NextRequest) {
   const session = await getSession();
-  if (!session || session.role !== "teacher")
+  if (!session || !isTeacherLike(session.role))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "manageHomework"))
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إدارة الواجبات" }, { status: 403 });
 
   const { homeworkId } = await req.json() as { homeworkId: string };
   if (!homeworkId)
@@ -177,7 +224,7 @@ export async function DELETE(req: NextRequest) {
     where: { id: homeworkId },
     select: { teacherId: true },
   });
-  if (!hw || hw.teacherId !== session.id)
+  if (!hw || hw.teacherId !== actingTeacherId(session))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
 
   await prisma.homework.delete({ where: { id: homeworkId } });
@@ -187,8 +234,10 @@ export async function DELETE(req: NextRequest) {
 /** PATCH — publish/unpublish a homework */
 export async function PATCH(req: NextRequest) {
   const session = await getSession();
-  if (!session || session.role !== "teacher")
+  if (!session || !isTeacherLike(session.role))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "manageHomework"))
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إدارة الواجبات" }, { status: 403 });
 
   const { homeworkId, isPublished } = await req.json() as {
     homeworkId: string;
@@ -199,7 +248,7 @@ export async function PATCH(req: NextRequest) {
     where: { id: homeworkId },
     select: { teacherId: true },
   });
-  if (!hw || hw.teacherId !== session.id)
+  if (!hw || hw.teacherId !== actingTeacherId(session))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
 
   const updated = await prisma.homework.update({

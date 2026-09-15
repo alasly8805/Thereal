@@ -58,6 +58,8 @@ interface QuizResultEntry {
   score: number;
   totalQ: number;
   completedAt: string;
+  pendingEssays?: number;
+  gradingStatus?: "PENDING" | "GRADED";
   quiz: {
     id: string;
     title: string;
@@ -538,17 +540,28 @@ export function StudentDetailModal({ studentId, onClose, onStudentModified, user
                                   <tr key={r.id}>
                                     <td className="px-3 py-2 text-gray-300">{r.quiz.title}</td>
                                     <td className="px-3 py-2">
-                                      <span
-                                        className={`font-bold ${
-                                          r.score >= 50 ? "text-green-400" : "text-red-400"
-                                        }`}
-                                      >
-                                        {r.score.toFixed(0)}%
-                                      </span>
-                                      <span className="text-gray-500">
-                                        {" "}
-                                        ({Math.round((r.score * r.totalQ) / 100)}/{r.totalQ})
-                                      </span>
+                                      {(r.pendingEssays ?? 0) > 0 ? (
+                                        <span
+                                          className="font-bold text-amber-400"
+                                          title={`${r.pendingEssays} سؤال مقالي بانتظار تصحيح المعلم`}
+                                        >
+                                          ⏳ يتم المراجعة
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <span
+                                            className={`font-bold ${
+                                              r.score >= 50 ? "text-green-400" : "text-red-400"
+                                            }`}
+                                          >
+                                            {r.score.toFixed(0)}%
+                                          </span>
+                                          <span className="text-gray-500">
+                                            {" "}
+                                            ({Math.round((r.score * r.totalQ) / 100)}/{r.totalQ})
+                                          </span>
+                                        </>
+                                      )}
                                     </td>
                                     <td className="px-3 py-2 text-gray-400">
                                       {fmtDate(r.completedAt)}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { verifyVdoCipherSecurityPassword, logAdminAction } from "@/lib/admin-auth";
 
 import { isDrmAuthorized } from "@/lib/drm-auth";
@@ -11,7 +12,7 @@ import { isDrmAuthorized } from "@/lib/drm-auth";
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin" && session.role !== "admin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin" && session.role !== "admin")) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 401 });
     }
 

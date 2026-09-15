@@ -93,7 +93,16 @@ export default function CourseProductPage() {
   const [walletModal, setWalletModal] = useState<{ reference: string; instructions: string; methodLabel: string; amount: number } | null>(null);
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   // Free/demo inline player
-  const [demo, setDemo] = useState<{ title: string; embedUrl: string; provider?: string } | null>(null);
+  const [demo, setDemo] = useState<{
+    title: string;
+    embedUrl: string;
+    provider?: string;
+    drm?: {
+      token: string;
+      licenseServers: { widevine: string; playready: string; fairplay: string; fairplayCertUrl?: string };
+      clearKeys?: Record<string, string>;
+    } | null;
+  } | null>(null);
   const [demoLoading, setDemoLoading] = useState<string | null>(null);
   const [isCenterMode] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -122,7 +131,7 @@ export default function CourseProductPage() {
       const res = await fetch(`/api/videos/${video.id}/watch`, { method: "POST", credentials: "include" });
       const data = await res.json();
       if (res.ok && data.embedUrl) {
-        setDemo({ title: video.title, embedUrl: data.embedUrl, provider: data.provider });
+        setDemo({ title: video.title, embedUrl: data.embedUrl, provider: data.provider, drm: data.drm || null });
       } else {
         toastError(clientErrorMessage(res.status, data));
       }
@@ -360,7 +369,13 @@ export default function CourseProductPage() {
             <div className="flex flex-wrap gap-2 mb-4">
               <span className={`text-xs px-3 py-1 rounded-full font-medium ${subjectClass}`}>{course.subject}</span>
               <span className="text-xs px-3 py-1 rounded-full bg-white/10 border border-white/15">{STAGE_LABELS[course.educationalStage] || course.educationalStage}</span>
-              {!course.isPaid && <span className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 font-bold">مجاني</span>}
+              {course.hasAccess ? (
+                <span className="text-xs px-3 py-1 rounded-full bg-emerald-500/25 border border-emerald-400/50 text-emerald-300 font-bold flex items-center gap-1">
+                  ✓ في مكتبتك (لديك صلاحية)
+                </span>
+              ) : !course.isPaid ? (
+                <span className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 font-bold">مجاني</span>
+              ) : null}
             </div>
             <h1 className="text-3xl md:text-4xl font-black leading-tight mb-4">{course.title}</h1>
             {course.description && <p className="text-white/80 text-base leading-relaxed mb-6">{course.description}</p>}
@@ -465,8 +480,18 @@ export default function CourseProductPage() {
               )}
               <div className="p-6 space-y-5">
 
-                {/* Price display */}
-                {isCenterMode || course.deliveryMode === "CENTER" ? (
+                {/* Price display / In-Library status */}
+                {course.hasAccess ? (
+                  <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center shrink-0">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    </div>
+                    <div>
+                      <p className="font-black text-emerald-600 dark:text-emerald-400 text-base">في مكتبتك (لديك صلاحية)</p>
+                      <p className="text-xs text-gray-600 dark:text-gray-300">أنت مشترك بالفعل ولديك صلاحية كاملة للوصول إلى كل محتويات هذا الكورس.</p>
+                    </div>
+                  </div>
+                ) : isCenterMode || course.deliveryMode === "CENTER" ? (
                   <div className="flex items-center gap-2">
                     <span className="text-xl font-black text-amber-500 dark:text-amber-400">🏛️ حصة سنتر حضوري</span>
                     <span className="text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-bold">تفعيل بالكود فقط</span>
@@ -501,12 +526,22 @@ export default function CourseProductPage() {
                   <div className="space-y-2">
                     <button
                       onClick={() => router.push(`/courses/${course.id}/learn`)}
-                      className={`w-full py-3 rounded-xl text-white font-bold text-base transition-colors ${
-                        course.isOwnerTeacher ? "bg-sky-600 hover:bg-sky-500" : "bg-emerald-600 hover:bg-emerald-700"
+                      className={`w-full py-3.5 rounded-xl text-white font-bold text-base transition-all shadow-md flex items-center justify-center gap-2 ${
+                        course.isOwnerTeacher
+                          ? "bg-sky-600 hover:bg-sky-500 shadow-sky-600/20"
+                          : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20"
                       }`}
                     >
-                      {course.isOwnerTeacher ? "👁️ معاينة الكورس كمعلّم ←" : "ادخل الكورس الآن ←"}
+                      {course.isOwnerTeacher ? "👁️ معاينة الكورس كمعلّم ←" : "الدخول ومتابعة التعلم (في مكتبتك) ←"}
                     </button>
+                    {user?.role === "student" && !course.isOwnerTeacher && (
+                      <button
+                        onClick={() => router.push(`/courses/${course.id}/progress`)}
+                        className="w-full py-2.5 rounded-xl text-sm font-bold border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 transition-colors"
+                      >
+                        📊 متابعة تقدمي مع {course.teacher.name}
+                      </button>
+                    )}
                     {course.isOwnerTeacher && (
                       <p className="text-xs text-center text-sky-500 font-bold bg-sky-500/10 py-1.5 px-2 rounded-lg">
                         أنت أستاذ هذا الكورس — يمكنك معاينته ودخوله مباشرة مجاناً دون الحاجة للدفع.
@@ -886,7 +921,13 @@ export default function CourseProductPage() {
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M18 6L6 18M6 6l12 12" /></svg>
               </button>
             </div>
-            <SecurePlayer embedUrl={demo.embedUrl} title={demo.title} watermark={user?.phone || user?.name || ""} provider={demo.provider} />
+            <SecurePlayer
+              embedUrl={demo.embedUrl}
+              title={demo.title}
+              watermark={user?.phone || user?.name || ""}
+              provider={demo.provider}
+              drm={demo.drm || undefined}
+            />
           </div>
         </div>
       )}

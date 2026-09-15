@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { ContentProgressStatus, ContentType } from "@/generated/prisma";
 
@@ -11,12 +12,12 @@ export async function GET(
     const { id: courseId } = await params;
     const session = await getSession();
 
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 401 });
     }
 
     const course = await prisma.course.findFirst({
-      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: session.id },
+      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: actingTeacherId(session) },
       include: {
         folders: {
           orderBy: { order: "asc" },
@@ -240,8 +241,15 @@ export async function GET(
       finalSortedItems.push(...folderSorted);
     }
 
+    // Courses saved before contentFlowMode existed fall back to the old
+    // derivation: no sequential flag + no edges => free, otherwise per-folder.
+    const contentFlowMode =
+      course.contentFlowMode ??
+      (!course.sequentialAccess && prerequisites.length === 0 ? "free" : "per_folder");
+
     return NextResponse.json({
       sequentialAccess: course.sequentialAccess,
+      contentFlowMode,
       folders: folderList,
       items: finalSortedItems,
       prerequisites: prerequisites.map((p) => ({
@@ -268,12 +276,12 @@ export async function PUT(
     const { id: courseId } = await params;
     const session = await getSession();
 
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 401 });
     }
 
     const course = await prisma.course.findFirst({
-      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: session.id },
+      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: actingTeacherId(session) },
       include: {
         folders: {
           include: {
@@ -314,7 +322,13 @@ export async function PUT(
 
     await prisma.course.update({
       where: { id: courseId },
-      data: { sequentialAccess: targetSequentialAccess },
+      data: {
+        sequentialAccess: targetSequentialAccess,
+        // Persist the chosen unlock style so the admin panel can restore it
+        // after reload (previously only the boolean + edges were stored, so
+        // "custom" could never be told apart from "per_folder").
+        contentFlowMode: mode ?? (targetSequentialAccess ? "per_folder" : "free"),
+      },
     });
 
     // Gather all sourceIds for this course
@@ -463,12 +477,12 @@ export async function DELETE(
     const { id: courseId } = await params;
     const session = await getSession();
 
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 401 });
     }
 
     const course = await prisma.course.findFirst({
-      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: session.id },
+      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: actingTeacherId(session) },
       include: {
         folders: {
           include: {

@@ -1,12 +1,25 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { fromInstanceMetadata } from "@smithy/credential-provider-imds";
 
 export const S3_BUCKET_NAME = process.env.AWS_S3_STORAGE_BUCKET || "codeup-storage-687374520011";
 export const AWS_REGION = process.env.AWS_REGION || "eu-north-1";
 
-// Credentials automatically discovered from the EC2 environment / IAM role
+// Credential resolution.
+//
+// The SDK's default chain reads ~/.aws/config before the EC2 instance role. On
+// this box that file carries a human `aws login` session, so once it expires
+// every S3 call fails with "Your session has expired" even though the instance
+// role is valid — the login provider aborts the chain instead of falling
+// through. Explicit static keys (AWS_ACCESS_KEY_ID) still win for local dev;
+// otherwise go straight to the instance role and never consult the ini file.
+const credentials = process.env.AWS_ACCESS_KEY_ID
+  ? undefined
+  : fromInstanceMetadata({ timeout: 2000, maxRetries: 3 });
+
 export const s3Client = new S3Client({
   region: AWS_REGION,
+  credentials,
 });
 
 /**

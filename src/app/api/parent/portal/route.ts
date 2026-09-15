@@ -62,7 +62,11 @@ export async function GET(req: NextRequest) {
     // 3. Fetch Full Academic & Financial Report (only reached if verified or feature flag disabled)
     const quizResults = await prisma.quizResult.findMany({
       where: { studentId },
-      include: { quiz: { select: { title: true } } },
+      include: {
+        quiz: { select: { title: true } },
+        // Essay answers awaiting teacher review — no final grade yet.
+        answers: { where: { status: "PENDING" }, select: { id: true } },
+      },
       orderBy: { completedAt: "desc" },
       take: 10,
     });
@@ -95,13 +99,16 @@ export async function GET(req: NextRequest) {
     });
 
     const validQuizResults = quizResults.filter((q) => typeof q.totalQ === "number" && q.totalQ > 0);
+    // Results with pending essays have no final grade — they are listed as
+    // "under review" but must not drag the average down as 0%.
+    const gradedQuizResults = validQuizResults.filter((q) => q.answers.length === 0);
     const validExamResults = dailyExamResults.filter((e) => typeof e.totalQ === "number" && e.totalQ > 0);
 
     // QuizResult.score is already a percentage while DailyExamResult.score is a
     // raw correct-count, so the previous "sum scores / sum totalQ" mixed units:
     // a quiz scored 85 with 3 questions contributed 85/3 = 2833%, which made
     // every student read as ممتاز regardless of how they were actually doing.
-    const overallAveragePercent = averagePercent(validQuizResults, validExamResults);
+    const overallAveragePercent = averagePercent(gradedQuizResults, validExamResults);
 
     let overallStatusBadge: { label: string; color: string; text: string } | null = null;
     if (overallAveragePercent !== null) {
@@ -120,6 +127,19 @@ export async function GET(req: NextRequest) {
     const recentExams = [
       ...validQuizResults.map((q) => {
         const pct = Math.round(quizResultPercent(q));
+        const pendingEssays = q.answers.length;
+        if (pendingEssays > 0) {
+          return {
+            title: q.quiz?.title || "اختبار تفاعلي",
+            score: null,
+            maxScore: 100,
+            percent: null,
+            status: "⏳",
+            statusLabel: "يتم المراجعة",
+            pendingEssays,
+            date: q.completedAt.toISOString().split("T")[0],
+          };
+        }
         return {
           title: q.quiz?.title || "اختبار تفاعلي",
           // Reported out of 100 because the stored score is a percentage;

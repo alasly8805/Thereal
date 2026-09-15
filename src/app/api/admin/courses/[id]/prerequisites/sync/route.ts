@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { ContentType } from "@/generated/prisma";
 
@@ -11,12 +12,12 @@ export async function POST(
     const { id: courseId } = await params;
     const session = await getSession();
 
-    if (!session || (session.role !== "teacher" && session.role !== "superadmin")) {
+    if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
       return NextResponse.json({ error: "غير مصرح لك بالوصول" }, { status: 401 });
     }
 
     const course = await prisma.course.findFirst({
-      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: session.id },
+      where: session.role === "superadmin" ? { id: courseId } : { id: courseId, teacherId: actingTeacherId(session) },
       include: {
         folders: {
           orderBy: { order: "asc" },

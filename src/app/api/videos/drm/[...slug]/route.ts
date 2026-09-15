@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkVideoAccess } from "@/lib/authorization";
+import { verifyAxinomToken } from "@/lib/axinom";
+import { PREVIEW_COOKIE_NAME, isAuthorizedPreview } from "@/lib/preview-auth";
 import fs from "fs";
 import path from "path";
 
@@ -82,45 +84,60 @@ export async function GET(
     const subPath = subSegments.length > 0 ? subSegments.join(path.sep) : "manifest.mpd";
 
     // ── Authorization ──────────────────────────────────────────────────────────
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
-    }
+    const tokenParam =
+      req.nextUrl.searchParams.get("token") ||
+      req.headers.get("x-axdrm-message") ||
+      (req.headers.get("authorization")?.startsWith("Bearer ")
+        ? req.headers.get("authorization")?.slice(7)
+        : null);
 
-    // Video must exist in database — never fall open
-    const video = await prisma.video.findFirst({
-      where: {
-        OR: [
-          { providerVideoId: videoAssetId },
-          { vdoCipherId: videoAssetId },
-          { id: videoAssetId },
-        ],
-      },
-      select: {
-        id: true,
-        isFree: true,
-        folder: {
-          select: {
-            course: { select: { teacherId: true } },
+    const isTokenAuthorized = tokenParam ? verifyAxinomToken(tokenParam) : false;
+
+    const session = await getSession();
+    const previewCookie = req.cookies.get(PREVIEW_COOKIE_NAME)?.value;
+    const isPreviewAuthorized = isAuthorizedPreview(session, previewCookie);
+
+    // If authenticated via valid signed Axinom token or preview authority, allow streaming encrypted segments
+    if (!isTokenAuthorized && !isPreviewAuthorized) {
+      if (!session) {
+        return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+      }
+
+      // Video must exist in database — never fall open
+      const video = await prisma.video.findFirst({
+        where: {
+          OR: [
+            { providerVideoId: videoAssetId },
+            { vdoCipherId: videoAssetId },
+            { id: videoAssetId },
+          ],
+        },
+        select: {
+          id: true,
+          isFree: true,
+          folder: {
+            select: {
+              course: { select: { teacherId: true } },
+            },
           },
         },
-      },
-    });
+      });
 
-    if (video) {
-      const isOwner = session.role === "teacher" && video.folder?.course?.teacherId === session.id;
-      const isStaff = session.role === "admin" || session.role === "superadmin" || isOwner;
-      if (!video.isFree && !isStaff) {
-        const hasAccess = await checkVideoAccess(session.id, session.role, video.id);
-        if (!hasAccess) {
-          return NextResponse.json({ error: "لا يوجد صلاحية للوصول لهذا المحتوى المحمي" }, { status: 403 });
+      if (video) {
+        const isOwner = session.role === "teacher" && video.folder?.course?.teacherId === session.id;
+        const isStaff = session.role === "admin" || session.role === "superadmin" || isOwner;
+        if (!video.isFree && !isStaff) {
+          const hasAccess = await checkVideoAccess(session.id, session.role, video.id);
+          if (!hasAccess) {
+            return NextResponse.json({ error: "لا يوجد صلاحية للوصول لهذا المحتوى المحمي" }, { status: 403 });
+          }
         }
-      }
-    } else {
-      // If video is newly uploaded and not yet saved in a lecture folder: only allow teacher/staff preview
-      const isStaff = session.role === "teacher" || session.role === "admin" || session.role === "superadmin";
-      if (!isStaff) {
-        return NextResponse.json({ error: "المحتوى غير موجود" }, { status: 404 });
+      } else {
+        // If video is newly uploaded and not yet saved in a lecture folder: only allow teacher/staff preview
+        const isStaff = session.role === "teacher" || session.role === "admin" || session.role === "superadmin";
+        if (!isStaff) {
+          return NextResponse.json({ error: "المحتوى غير موجود" }, { status: 404 });
+        }
       }
     }
 
@@ -137,6 +154,32 @@ export async function GET(
     }
 
     if (!fs.existsSync(resolvedPath)) {
+      // Local disk is only a cache: the encrypted package's origin is S3.
+      // Authorization and path containment above have already run.
+      const { objectSizeInS3, streamObjectFromS3, drmObjectKey } = await import("@/lib/video-storage");
+      const key = drmObjectKey(videoAssetId, subSegments.length > 0 ? subSegments.join("/") : "manifest.mpd");
+      if ((await objectSizeInS3(key)) !== null) {
+        const extToType: Record<string, string> = {
+          ".mpd": "application/dash+xml",
+          ".m3u8": "application/vnd.apple.mpegurl",
+          ".m4s": "video/iso.segment",
+          ".mp4": "video/mp4",
+          ".ts": "video/mp2t",
+        };
+        try {
+          return await streamObjectFromS3(key, req.headers.get("range"), {
+            "Content-Type": extToType[ext] ?? "application/octet-stream",
+            ...getDrmCorsHeaders(req),
+            "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          });
+        } catch (err: unknown) {
+          const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+          if (status === 416) {
+            return new Response(null, { status: 416, headers: getDrmCorsHeaders(req) });
+          }
+          throw err;
+        }
+      }
       return NextResponse.json({ error: "الملف المشفر غير موجود" }, { status: 404 });
     }
 

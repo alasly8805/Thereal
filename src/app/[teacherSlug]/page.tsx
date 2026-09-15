@@ -9,6 +9,7 @@ import { safeJsonLd } from "@/lib/jsonld";
 import { BookingButton } from "@/components/teacher/BookingModal";
 import { SubscriptionStatusBadge } from "@/components/teacher/SubscriptionStatusBadge";
 import { SetTeacherRefCookie } from "@/components/teacher/SetTeacherRefCookie";
+import { TeacherCoursesSection } from "@/components/teacher/TeacherCoursesSection";
 
 export const revalidate = 60; // Cache page for 60s for lightning fast <10ms loads
 
@@ -97,6 +98,14 @@ export default async function TeacherPage({ params }: { params: Promise<{ teache
   const demo = courses
     .flatMap((c) => c.folders.flatMap((f) => f.videos.map((v) => ({ ...v, courseId: c.id }))))
     .find((v) => v.isFree);
+
+  const overrides = await prisma.appSetting.findMany({
+    where: { key: { startsWith: "course_cat_" } },
+  });
+  const categoryMap: Record<string, string> = {};
+  for (const o of overrides) {
+    categoryMap[o.key.replace("course_cat_", "")] = o.value;
+  }
 
   let socials: { facebook?: string; youtube?: string; tiktok?: string } = {};
   try { socials = p.socials ? JSON.parse(p.socials) : {}; } catch { socials = {}; }
@@ -219,51 +228,13 @@ export default async function TeacherPage({ params }: { params: Promise<{ teache
         )}
       </header>
 
-      {/* Courses */}
-      <section className="max-w-6xl mx-auto px-6 pb-20">
-        <h2 className="text-lg font-bold mb-5">الكورسات</h2>
-        {ordered.length === 0 ? (
-          <p className="text-center text-[var(--ink-muted)] py-12">لا توجد كورسات منشورة بعد.</p>
-        ) : (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {ordered.map((c) => {
-              const featured = c.id === p.featuredCourseId;
-              const vCount = c.folders.reduce((b, f) => b + f.videos.length, 0);
-              return (
-                <Link key={c.id} href={`/courses/${c.id}`}
-                      className="group relative flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden hover:shadow-xl transition-shadow">
-                  {featured && (
-                    <span className="absolute top-3 end-3 z-10 px-2.5 py-1 rounded-full text-[10px] font-bold text-white" style={{ background: "var(--accent)" }}>مميّز</span>
-                  )}
-                  <div className="relative h-40 bg-[var(--bg)] overflow-hidden">
-                    {isSafe(c.thumbnailUrl) ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={c.thumbnailUrl!} alt={c.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-[var(--ink-muted)]">
-                        <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.4} aria-hidden><path d="M4 4h5l2 3h9a2 2 0 012 2v9a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-4 flex flex-col flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      {c.subject && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--border)] text-[var(--ink-muted)]">{c.subject}</span>}
-                      <span className="text-[11px] text-[var(--ink-muted)]">{STAGE_LABELS[c.educationalStage] ?? c.educationalStage}</span>
-                    </div>
-                    <h3 className="font-bold text-[var(--ink)] leading-snug line-clamp-2 flex-1">{c.title}</h3>
-                    <div className="flex items-center justify-between mt-3">
-                      <span className="text-xs text-[var(--ink-muted)]">{vCount} محاضرة</span>
-                      <span className="text-sm font-black" style={{ color: "var(--accent)" }}>
-                        {!c.isPaid ? "مجاني" : `${c.price ?? 0} جنيه`}
-                      </span>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      {/* Courses Section with interactive filters, search, and strict priority ordering */}
+      <TeacherCoursesSection
+        courses={courses}
+        featuredCourseId={p.featuredCourseId}
+        categoryMap={categoryMap}
+        accentColor={p.accentColor ?? "#6366f1"}
+      />
 
       <footer className="border-t border-[var(--border)] py-6 text-center">
         <Link href="/" className="text-xs font-bold text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors">مدعوم من Code-UP</Link>
