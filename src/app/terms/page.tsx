@@ -1,175 +1,222 @@
-import { Navbar } from "@/components/ui/Navbar";
-import { Footer } from "@/components/ui/Footer";
-import { ShieldCheck, Scale, Wallet, RotateCcw, AlertTriangle, CheckCircle2, Lock } from "lucide-react";
+import type { Metadata } from "next";
+import Link from "next/link";
+import {
+  Scale,
+  UserCheck,
+  ShieldAlert,
+  Lock,
+  Wallet,
+  RotateCcw,
+  AlertTriangle,
+  Ban,
+  Gavel,
+  CheckCircle2,
+} from "lucide-react";
+import { LegalCallout, LegalPage, LegalSection } from "@/components/legal/LegalPage";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "الشروط والأحكام | منصة Code-UP",
-  description: "اتفاقية الشروط والأحكام وسياسة الخصوصية وحقوق الملكية الفكرية",
+  description:
+    "اتفاقية استخدام منصة Code-UP: الحساب، حقوق المحتوى، الرصيد والمدفوعات، إلغاء الاشتراك، والقانون الواجب التطبيق.",
+  alternates: { canonical: "https://code-up.tech/terms" },
+  openGraph: {
+    title: "الشروط والأحكام — منصة Code-UP",
+    description: "قواعد الحساب والمحتوى والدفع والإلغاء على منصة كود اب.",
+    url: "https://code-up.tech/terms",
+    siteName: "منصة Code-UP",
+    locale: "ar_EG",
+    type: "article",
+  },
 };
 
 export default function TermsPage() {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-sky-500/30 selection:text-sky-200" dir="rtl">
-      <Navbar />
-
-      <main className="flex-1 py-16 sm:py-24 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto">
-          {/* Header */}
-          <div className="text-center mb-12">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-300 text-sm font-bold mb-4 shadow-sm">
-              <Scale className="w-4 h-4 text-sky-400" />
-              <span>الاتفاقية الرسمية والشروط القانونية</span>
-            </div>
-            <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight mb-4 leading-tight">
-              الشروط والأحكام
-            </h1>
-            <p className="text-slate-400 text-sm sm:text-base max-w-2xl mx-auto leading-relaxed">
-              يرجى قراءة البنود التالية بعناية. بالضغط على زر «أوافق على الشروط والأحكام» فإنك تقر بأنك قد قرأت هذه الاتفاقية وفهمتها وتوافق على الالتزام بجميع بنودها.
+    <LegalPage
+      badge={
+        <>
+          <Scale className="w-4 h-4 text-sky-400" />
+          <span>الاتفاقية الرسمية لاستخدام المنصة</span>
+        </>
+      }
+      title="الشروط والأحكام"
+      intro="يرجى قراءة هذه البنود بعناية قبل إنشاء الحساب أو الاشتراك. بالمتابعة أو بإنشاء الحساب فإنك توافق على هذه الشروط وعلى سياسة الخصوصية."
+      updated="٢٠ سبتمبر ٢٠٢٦"
+      siblingHref="/privacy"
+      siblingLabel="اقرأ أيضًا: سياسة الخصوصية"
+    >
+      <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-sky-950/60 via-slate-900/90 to-sky-950/60 border border-sky-500/40 shadow-xl">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 rounded-2xl bg-sky-500/20 text-sky-300 flex items-center justify-center shrink-0 mt-0.5 border border-sky-400/30">
+            <Scale className="w-5 h-5" />
+          </div>
+          <div className="leading-relaxed">
+            <h2 className="text-base sm:text-lg font-black text-white mb-1.5">نطاق الاتفاقية</h2>
+            <p className="text-xs sm:text-sm text-slate-300 font-medium">
+              تسري هذه الشروط على استخدام موقع{" "}
+              <span dir="ltr">code-up.tech</span> والخدمات التعليمية المرتبطة به. سياسة التعامل مع البيانات موضّحة في{" "}
+              <Link href="/privacy" className="text-sky-300 underline underline-offset-2">
+                سياسة الخصوصية
+              </Link>
+              ، وتُعد جزءًا مكمّلًا لهذه الاتفاقية.
             </p>
           </div>
-
-          {/* Important Notice Banner */}
-          <div className="mb-10 p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-sky-950/60 via-slate-900/90 to-sky-950/60 border border-sky-500/40 shadow-xl backdrop-blur-md">
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-2xl bg-sky-500/20 text-sky-300 flex items-center justify-center shrink-0 mt-0.5 border border-sky-400/30">
-                <ShieldCheck className="w-5 h-5" />
-              </div>
-              <div className="leading-relaxed">
-                <h2 className="text-base sm:text-lg font-black text-white mb-1.5">
-                  إقرار الموافقة والالتزام
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-300 font-medium">
-                  يرجى قراءة البنود التالية بعناية. بالضغط على زر «أوافق على الشروط والأحكام» فإنك تقر بأنك قد قرأت هذه الاتفاقية وفهمتها وتوافق على الالتزام بجميع بنودها.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Policy Sections */}
-          <div className="space-y-6 sm:space-y-8">
-            {/* أولًا: حقوق الملكية الفكرية */}
-            <section className="p-6 sm:p-8 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-9 h-9 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center font-black text-sm border border-purple-500/30">
-                  <Lock className="w-4 h-4" />
-                </div>
-                <h2 className="text-lg sm:text-xl font-black text-white">
-                  أولًا: حقوق الملكية الفكرية
-                </h2>
-              </div>
-              <div className="space-y-3.5 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                <p>
-                  جميع المحتويات التعليمية المعروضة على منصة Code-UP، بما في ذلك الفيديوهات، والملفات، والملخصات، والاختبارات، والتسجيلات الصوتية، والصور، وأي مواد تعليمية أخرى، هي ملك لمنصة Code-UP أو للجهات وأصحاب الحقوق الذين منحوا المنصة حق نشرها واستخدامها.
-                </p>
-                <div className="p-4 rounded-2xl bg-slate-950/60 border border-rose-500/30 text-rose-200">
-                  <p className="font-bold mb-1 flex items-center gap-1.5 text-xs sm:text-sm">
-                    <span>⚠️</span>
-                    <span>حظر النسخ وإعادة النشر:</span>
-                  </p>
-                  <p className="text-xs sm:text-sm text-rose-300/90">
-                    يحظر نسخ أو تصوير أو تسجيل أو إعادة نشر أو توزيع أو بيع أو مشاركة أي جزء من المحتوى بأي وسيلة دون موافقة كتابية مسبقة من منصة Code-UP أو صاحب الحق.
-                  </p>
-                </div>
-                <p className="text-slate-400 font-semibold text-xs">
-                  • تحتفظ المنصة بحق اتخاذ الإجراءات القانونية اللازمة في حالة انتهاك حقوق الملكية الفكرية.
-                </p>
-              </div>
-            </section>
-
-            {/* ثانيًا: سياسة الرصيد والمدفوعات */}
-            <section className="p-6 sm:p-8 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center font-black text-sm border border-emerald-500/30">
-                  <Wallet className="w-4 h-4" />
-                </div>
-                <h2 className="text-lg sm:text-xl font-black text-white">
-                  ثانيًا: سياسة الرصيد والمدفوعات
-                </h2>
-              </div>
-              <ul className="space-y-3 text-xs sm:text-sm text-slate-300 leading-relaxed list-disc list-inside">
-                <li>
-                  جميع المبالغ التي يتم شحنها إلى محفظة الطالب داخل منصة Code-UP <strong className="text-white">لا يمكن استردادها نقدًا أو تحويلها إلى أموال خارج المنصة</strong> بعد إتمام عملية الشحن.
-                </li>
-                <li>
-                  يحق للطالب استخدام الرصيد المشحون بالكامل في شراء أي من الكورسات أو الخدمات التعليمية المتاحة داخل المنصة.
-                </li>
-              </ul>
-            </section>
-
-            {/* ثالثًا: إلغاء الاشتراك في الكورس */}
-            <section className="p-6 sm:p-8 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-9 h-9 rounded-xl bg-sky-500/15 text-sky-400 flex items-center justify-center font-black text-sm border border-sky-500/30">
-                  <RotateCcw className="w-4 h-4" />
-                </div>
-                <h2 className="text-lg sm:text-xl font-black text-white">
-                  ثالثًا: إلغاء الاشتراك في الكورس
-                </h2>
-              </div>
-              <div className="space-y-3 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                <p>
-                  • يحق للطالب طلب إلغاء الاشتراك في الكورس خلال مدة أقصاها <strong className="text-sky-300">٢٤ ساعة</strong> من تاريخ الاشتراك.
-                </p>
-                <p>
-                  • في حال قبول طلب الإلغاء وفقًا لسياسة المنصة، يتم إعادة قيمة الكورس إلى <strong className="text-white">محفظة الطالب داخل المنصة فقط</strong>، ولا يتم ردها نقدًا أو تحويلها إلى أي وسيلة دفع خارجية.
-                </p>
-                <p>
-                  • يمكن للطالب استخدام الرصيد المسترد للاشتراك في أي كورس آخر داخل المنصة، سواء كان في نفس المادة أو في مادة مختلفة.
-                </p>
-              </div>
-            </section>
-
-            {/* رابعًا: الظروف القاهرة الخاصة بالمعلم */}
-            <section className="p-6 sm:p-8 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-lg hover:border-slate-700 transition-all">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center font-black text-sm border border-amber-500/30">
-                  <AlertTriangle className="w-4 h-4" />
-                </div>
-                <h2 className="text-lg sm:text-xl font-black text-white">
-                  رابعًا: الظروف القاهرة الخاصة بالمعلم
-                </h2>
-              </div>
-              <div className="space-y-3.5 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                <p>
-                  في حال تعرض أحد المعلمين لظرف قهري، مثل الوفاة أو المرض الشديد — لا قدر الله — أو أي ظرف قهري آخر يمنعه من استكمال تقديم الكورس، تلتزم منصة Code-UP باستمرار تقديم الخدمة التعليمية للطلاب عن طريق معلمين آخرين.
-                </p>
-                <p>
-                  يجوز للمنصة الاستعانة بالمحتوى التعليمي الذي سبق أن قام المعلم بتسجيله، بشرط أن يكون مطابقًا للمنهج الدراسي المعتمد بنسبة كاملة، وألا يترتب على استخدامه أي نقص أو تغيير في المحتوى العلمي.
-                </p>
-              </div>
-            </section>
-
-            {/* خامسًا: الموافقة */}
-            <section className="p-6 sm:p-8 rounded-3xl bg-gradient-to-br from-slate-900 via-sky-950/40 to-slate-900 border border-sky-500/40 shadow-xl">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center font-black text-sm border border-emerald-500/30">
-                  <CheckCircle2 className="w-5 h-5" />
-                </div>
-                <h2 className="text-lg sm:text-xl font-black text-white">
-                  خامسًا: الموافقة
-                </h2>
-              </div>
-              <p className="text-xs sm:text-sm text-slate-300 mb-4 font-medium">
-                بالضغط على زر «أوافق على الشروط والأحكام»، فإن الطالب يقر بأنه:
-              </p>
-              <div className="space-y-2.5">
-                {[
-                  "اطلعت على جميع البنود السابقة وفهمتها.",
-                  "أوافق على الالتزام بها.",
-                  "أقر بأن موافقتي الإلكترونية تُعد موافقة ملزمة وفقًا للأنظمة والقوانين المعمول بها.",
-                ].map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-3 p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 text-slate-200 text-xs sm:text-sm font-semibold">
-                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs shrink-0">✓</span>
-                    <span>{item}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </div>
         </div>
-      </main>
+      </div>
 
-      <Footer />
-    </div>
+      <LegalSection
+        icon={<UserCheck className="w-4 h-4" />}
+        iconClass="bg-sky-500/15 text-sky-400 border-sky-500/30"
+        title="أولًا: الأهلية والحساب"
+      >
+        <ul className="space-y-2 list-disc list-inside">
+          <li>المنصة خدمة تعليمية خاصة لطلاب البكالوريا والثانوية، وللمعلمين وأولياء الأمور المرتبطين بهم.</li>
+          <li>يجب إدخال بيانات صحيحة، بما في ذلك رقم هاتف الطالب ورقم ولي الأمر.</li>
+          <li>إذا كان المستخدم قاصرًا، يُنشأ الحساب بموافقة ولي الأمر الذي يتحمّل متابعة الاستخدام.</li>
+          <li>الحساب شخصي. يُحظر إعارته أو بيعه أو مشاركة بيانات الدخول مع الغير.</li>
+          <li>المنصة ليست تابعة لوزارة التربية والتعليم، وليست بديلًا لحساب الطالب على كيريو.</li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection
+        icon={<Lock className="w-4 h-4" />}
+        iconClass="bg-purple-500/15 text-purple-400 border-purple-500/30"
+        title="ثانيًا: حقوق الملكية الفكرية"
+      >
+        <p>
+          جميع المحتويات التعليمية على منصة Code-UP — بما في ذلك الفيديوهات والملفات والملخصات والاختبارات والتسجيلات الصوتية والصور وأي مواد أخرى — ملك للمنصة أو لأصحاب الحقوق الذين صرّحوا لها بنشرها.
+        </p>
+        <LegalCallout tone="warning" title="حظر النسخ وإعادة النشر">
+          يُحظر نسخ المحتوى أو تصويره أو تسجيله أو إعادة نشره أو توزيعه أو بيعه أو مشاركته بأي وسيلة، دون موافقة كتابية مسبقة من منصة Code-UP أو صاحب الحق.
+        </LegalCallout>
+        <p className="text-slate-400 font-semibold text-xs">
+          تحتفظ المنصة بحق إيقاف الحساب واتخاذ الإجراءات القانونية عند انتهاك حقوق الملكية الفكرية أو محاولة كسر حماية الفيديو.
+        </p>
+      </LegalSection>
+
+      <LegalSection
+        icon={<ShieldAlert className="w-4 h-4" />}
+        iconClass="bg-rose-500/15 text-rose-400 border-rose-500/30"
+        title="ثالثًا: الاستخدام المقبول وحماية المشاهدة"
+      >
+        <ul className="space-y-2 list-disc list-inside">
+          <li>يُستخدم الحساب للدراسة فقط، وليس لإعادة بيع المحتوى أو بثّه خارج المنصة.</li>
+          <li>يُحظر استخدام برامج تسجيل الشاشة أو تعطيل حماية الفيديو أو محاولة اختراق المنصة.</li>
+          <li>قد نقيّد عدد الأجهزة المرتبطة بالحساب. تجاوز الحد قد يوقف المشاهدة حتى تُدار الأجهزة أو يتواصل الدعم.</li>
+          <li>السلوك المسيء أو الغش في الاختبارات أو إساءة استخدام الدعم قد يؤدي إلى إيقاف الحساب دون إعادة الرصيد نقدًا.</li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection
+        icon={<Wallet className="w-4 h-4" />}
+        iconClass="bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+        title="رابعًا: سياسة الرصيد والمدفوعات"
+      >
+        <ul className="space-y-2 list-disc list-inside">
+          <li>
+            المبالغ التي تُشحن إلى محفظة الطالب داخل منصة Code-UP{" "}
+            <strong className="text-white">لا تُسترد نقدًا ولا تُحوَّل إلى أموال خارج المنصة</strong> بعد إتمام الشحن.
+          </li>
+          <li>يحق للطالب استخدام الرصيد المشحون بالكامل في شراء الكورسات أو الخدمات التعليمية المتاحة داخل المنصة.</li>
+          <li>
+            رسوم وسائل الدفع تظهر قبل التأكيد في صفحة{" "}
+            <Link href="/payment-methods" className="text-sky-400 underline underline-offset-2">
+              طرق الدفع
+            </Link>
+            .
+          </li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection
+        icon={<RotateCcw className="w-4 h-4" />}
+        iconClass="bg-sky-500/15 text-sky-400 border-sky-500/30"
+        title="خامسًا: إلغاء الاشتراك في الكورس"
+      >
+        <ul className="space-y-2 list-disc list-inside">
+          <li>
+            يحق للطالب طلب إلغاء الاشتراك خلال مدة أقصاها{" "}
+            <strong className="text-sky-300">٢٤ ساعة</strong> من تاريخ الاشتراك.
+          </li>
+          <li>
+            إذا قُبل طلب الإلغاء وفق سياسة المنصة، تُعاد قيمة الكورس إلى{" "}
+            <strong className="text-white">محفظة الطالب داخل المنصة فقط</strong>، ولا تُرد نقدًا ولا تُحوَّل إلى أي وسيلة دفع خارجية.
+          </li>
+          <li>يمكن استخدام الرصيد المعاد للاشتراك في أي كورس آخر داخل المنصة، في المادة نفسها أو في مادة مختلفة.</li>
+          <li>بعد انقضاء ٢٤ ساعة، أو بعد استهلاك قدر جوهري من المحتوى، لا يُقبل الإلغاء إلا في الحالات الاستثنائية التي تقدرها المنصة.</li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection
+        icon={<AlertTriangle className="w-4 h-4" />}
+        iconClass="bg-amber-500/15 text-amber-400 border-amber-500/30"
+        title="سادسًا: الظروف القاهرة الخاصة بالمعلم"
+      >
+        <p>
+          إذا تعرّض أحد المعلمين لظرف قاهر — مثل الوفاة أو المرض الشديد، لا قدر الله — أو أي ظرف يمنعه من استكمال تقديم الكورس، تلتزم منصة Code-UP بمواصلة الخدمة التعليمية للطلاب عبر معلمين آخرين.
+        </p>
+        <p>
+          يجوز للمنصة الاستعانة بالمحتوى الذي سبق أن سجّله المعلم، بشرط أن يطابق المنهج الدراسي المعتمد، وألا ينقص ذلك المحتوى العلمي المقدَّم للطالب.
+        </p>
+      </LegalSection>
+
+      <LegalSection
+        icon={<Ban className="w-4 h-4" />}
+        iconClass="bg-slate-500/15 text-slate-300 border-slate-500/30"
+        title="سابعًا: إخلاء المسؤولية وتعديل الخدمة"
+      >
+        <ul className="space-y-2 list-disc list-inside">
+          <li>المنصة وسيلة شرح وتدريب خاصة، ولا تضمن درجة معيّنة في الامتحان الرسمي.</li>
+          <li>قد تتوقف الخدمة مؤقتًا للصيانة أو لعطل خارج عن الإرادة. نسعى لإعادة التشغيل في أقرب وقت ممكن.</li>
+          <li>يجوز تعديل المحتوى أو المواعيد أو طريقة الإتاحة بما لا يُسقط حق الطالب في المدة المدفوعة قدر الإمكان.</li>
+        </ul>
+      </LegalSection>
+
+      <LegalSection
+        icon={<Gavel className="w-4 h-4" />}
+        iconClass="bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+        title="ثامنًا: القانون الواجب التطبيق"
+      >
+        <p>
+          تخضع هذه الاتفاقية لقوانين جمهورية مصر العربية. أي نزاع ينشأ عن استخدام المنصة يُسعى أولًا إلى حلّه وديًا عبر الدعم، فإن تعذّر ذلك تكون المحاكم المصرية صاحبة الاختصاص.
+        </p>
+        <p>
+          للاستفسار:{" "}
+          <a href="mailto:contact@code-up.tech" className="text-sky-400 underline underline-offset-2" dir="ltr">
+            contact@code-up.tech
+          </a>
+          {" "}أو واتساب{" "}
+          <span dir="ltr" className="font-mono text-white">
+            01118802621
+          </span>
+          .
+        </p>
+      </LegalSection>
+
+      <LegalSection
+        icon={<CheckCircle2 className="w-5 h-5" />}
+        iconClass="bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+        title="تاسعًا: الموافقة"
+        featured
+      >
+        <p className="font-medium">بالمتابعة أو بإنشاء الحساب، يقر المستخدم بأنه:</p>
+        <div className="space-y-2.5">
+          {[
+            "اطّلع على جميع البنود السابقة وعلى سياسة الخصوصية وفهمها.",
+            "يوافق على الالتزام بها أثناء استخدام المنصة.",
+            "يقر بأن موافقته الإلكترونية موافقة ملزمة وفق الأنظمة المعمول بها في جمهورية مصر العربية.",
+          ].map((item) => (
+            <div
+              key={item}
+              className="flex items-center gap-3 p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 text-slate-200 text-xs sm:text-sm font-semibold"
+            >
+              <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs shrink-0">
+                ✓
+              </span>
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+      </LegalSection>
+    </LegalPage>
   );
 }

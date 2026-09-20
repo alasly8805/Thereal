@@ -16,7 +16,7 @@ export function Footer() {
             <BrandLogo size={28} showText={true} showTagline={true} />
           </div>
           <p className="text-sm leading-relaxed max-w-[300px]" style={{ color: "#8295A8" }}>
-            منصة كورسات مصرية تهدف إلى تمكين المتعلمين من المحتوى عالي الجودة وأدوات المتابعة الذكية.
+            منصة كورسات مصرية لشرح البرمجة والذكاء الاصطناعي، مع أدوات متابعة ذكية لأولياء الأمور.
           </p>
         </div>
 
@@ -25,7 +25,11 @@ export function Footer() {
           <h3 className="text-xs font-bold mb-4 tracking-wider" style={{ color: "#94A3B8" }}>المنصة</h3>
           <ul className="space-y-3">
             {[
-              { href: "/curriculum",  label: "دليل المنهج والبرمجة 🚀" },
+              { href: "/about",       label: "عن المنصة" },
+              { href: "/qureo",       label: "Code-UP وكيريو" },
+              { href: "/teachers",    label: "المعلمون" },
+              { href: "/curriculum",  label: "دليل المنهج والبرمجة" },
+              { href: "/faq",         label: "الأسئلة الشائعة" },
               { href: "/courses",     label: "الكورسات" },
               { href: "/library",     label: "مكتبتي" },
               { href: "/environments", label: "بيئات التعلم" },
@@ -49,6 +53,11 @@ export function Footer() {
             <li>
               <Link href="/terms" className="text-sm no-underline hover:text-white transition-colors" style={{ color: "#CBD5E1" }}>
                 الشروط والأحكام
+              </Link>
+            </li>
+            <li>
+              <Link href="/privacy" className="text-sm no-underline hover:text-white transition-colors" style={{ color: "#CBD5E1" }}>
+                سياسة الخصوصية
               </Link>
             </li>
           </ul>
