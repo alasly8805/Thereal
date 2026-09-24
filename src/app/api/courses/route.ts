@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { canBypassPayment } from "@/lib/demo";
 import { isCenterRequest, deliveryModeFilter } from "@/lib/center-mode";
+import { getCenterPassGrant } from "@/lib/center-pass";
 
 export async function GET(req: NextRequest) {
   try {
@@ -16,6 +17,7 @@ export async function GET(req: NextRequest) {
     const isSuperadmin = session?.role === "superadmin";
     const isTesterUser = session?.accountMode === "TESTER";
     const canSeeDemo = isSuperadmin || isTesterUser;
+    const centerGrant = session?.role === "student" ? await getCenterPassGrant(session.id) : null;
 
     const isCenterMode = isCenterRequest(req);
 
@@ -129,10 +131,10 @@ export async function GET(req: NextRequest) {
         where: {
           studentId: session.id,
           status: "active",
-          expiresAt: { gt: new Date() },
           teacherId: { in: teacherIds },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         },
-        select: { teacherId: true, languageTrack: true },
+        select: { teacherId: true, languageTrack: true, amount: true, status: true },
       }),
       prisma.planCourseLink.findMany({
         where: {
@@ -151,6 +153,7 @@ export async function GET(req: NextRequest) {
     ]);
 
     const { getCourseLanguageTrack, isSubscriptionTrackMatching } = await import("@/lib/course-track");
+    const { teacherSubscriptionCoversCourse } = await import("@/lib/standalone-lessons");
 
     const accessCodeSet = new Set(accessCodes.map((code) => code.courseId));
     const directEnrollSet = new Set(directEnrollments.map((e) => e.courseId));
@@ -162,22 +165,15 @@ export async function GET(req: NextRequest) {
         const isAdminPreview = session.role === "admin" || session.role === "superadmin";
         const isDemoBypass = await canBypassPayment(session.role, course.teacherId, session.accountMode);
 
-        const isStandaloneLesson =
-          course.id === "cmtqbw41d005qqwobfcrfg07c" ||
-          course.id === "cmtr54unr00wfqwwvtbvaxy8q" ||
-          course.id === "cmta9me5r0007qxmwnnsq1cez" ||
-          course.id === "cmt45qxsf001oqx3e9jtlwny8" ||
-          (course.title || "").toLowerCase().includes("شرح الدرس الأول") ||
-          (course.title || "").toLowerCase().includes("اول حصة في الشهر") ||
-          (course.title || "").toLowerCase().includes("first section");
-
-        const matchesTeacherSub = !isStandaloneLesson && course.teacherId
-          ? teacherSubs.some(
-              (s) =>
-                s.teacherId === course.teacherId &&
-                isSubscriptionTrackMatching(s.languageTrack, getCourseLanguageTrack(course))
-            )
-          : false;
+        const matchesTeacherSub =
+          course.teacherId &&
+          teacherSubs.some(
+            (s) =>
+              s.teacherId === course.teacherId &&
+              (teacherSubscriptionCoversCourse(course) ||
+                (course.deliveryMode || "").toUpperCase() === "CENTER") &&
+              isSubscriptionTrackMatching(s.languageTrack, getCourseLanguageTrack(course))
+          );
 
         const inLibrary =
           accessCodeSet.has(course.id) ||
@@ -185,7 +181,13 @@ export async function GET(req: NextRequest) {
           planCourseSet.has(course.id) ||
           matchesTeacherSub;
 
-        const hasAccess = inLibrary || isOwnerTeacher || isAdminPreview || isDemoBypass || isTesterUser;
+        const hasAccess =
+          inLibrary ||
+          isOwnerTeacher ||
+          isAdminPreview ||
+          isDemoBypass ||
+          isTesterUser ||
+          (centerGrant?.isActive === true && centerGrant.courseIds.has(course.id));
 
         return {
           ...withLessons(course),

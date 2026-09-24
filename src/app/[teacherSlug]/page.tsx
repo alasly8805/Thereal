@@ -2,8 +2,10 @@ import { cache } from "react";
 import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { isCenterHost, deliveryModeFilter } from "@/lib/center-mode";
 import { RESERVED_SLUGS } from "@/lib/slug";
 import { safeJsonLd } from "@/lib/jsonld";
 import { BookingButton } from "@/components/teacher/BookingModal";
@@ -11,7 +13,11 @@ import { SubscriptionStatusBadge } from "@/components/teacher/SubscriptionStatus
 import { SetTeacherRefCookie } from "@/components/teacher/SetTeacherRefCookie";
 import { TeacherCoursesSection } from "@/components/teacher/TeacherCoursesSection";
 
-export const revalidate = 60; // Cache page for 60s for lightning fast <10ms loads
+// Rendered per request rather than ISR-cached: the course list depends on which
+// site (code-up.tech vs center.code-up.tech) is being viewed, and Next keys the
+// ISR cache by path only — a cached centre render would otherwise be served to
+// online students. Correctness beats the cached <10ms load here.
+export const dynamic = "force-dynamic";
 
 import { getSession } from "@/lib/auth";
 
@@ -21,6 +27,7 @@ const getProfile = cache(async (slug: string) => {
   const isSuperadmin = session?.role === "superadmin";
   const isTester = session?.accountMode === "TESTER";
   const canSeeDemo = isSuperadmin || isTester;
+  const isCenter = isCenterHost(await headers());
   return prisma.teacherProfile.findFirst({
     where: {
       slug,
@@ -31,6 +38,11 @@ const getProfile = cache(async (slug: string) => {
       teacher: {
         include: {
           courses: {
+            // This profile renders on both code-up.tech and center.code-up.tech,
+            // so it must only list the courses belonging to the site being
+            // viewed — otherwise a CENTER course shows to online students here
+            // even though it is correctly hidden from the browse listing.
+            where: { deliveryMode: deliveryModeFilter(isCenter) },
             orderBy: { createdAt: "desc" },
             include: {
               folders: { include: { videos: { select: { id: true, isFree: true } } } },
@@ -47,7 +59,9 @@ export async function generateMetadata({ params }: { params: Promise<{ teacherSl
   const p = await getProfile(teacherSlug);
   if (!p) return { title: "صفحة غير موجودة — Code-UP" };
   const name = p.displayName ?? p.teacher.name;
-  const description = p.bio ?? `كورسات وشروحات الأستاذ ${name} على منصة Code-UP التعليمية`;
+  const description = p.bio
+    ? `${p.bio} — معلم على منصة Code-UP لشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا في مصر.`
+    : `شروحات الأستاذ ${name} على منصة Code-UP لمادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية في مصر.`;
   const url = `https://code-up.tech/${p.slug}`;
   const avatar = isSafe(p.photoUrl) ? p.photoUrl! : "https://code-up.tech/logo.jpeg";
 
@@ -130,7 +144,7 @@ export default async function TeacherPage({ params }: { params: Promise<{ teache
         "@type": "BreadcrumbList",
         "itemListElement": [
           { "@type": "ListItem", "position": 1, "name": "الرئيسية", "item": "https://code-up.tech" },
-          { "@type": "ListItem", "position": 2, "name": "المعلمون", "item": "https://code-up.tech/courses" },
+          { "@type": "ListItem", "position": 2, "name": "المعلمون", "item": "https://code-up.tech/teachers" },
           { "@type": "ListItem", "position": 3, "name": name, "item": `https://code-up.tech/${p.slug}` }
         ]
       }
@@ -159,7 +173,7 @@ export default async function TeacherPage({ params }: { params: Promise<{ teache
           )}
           <span className="font-black text-white">{name}</span>
         </div>
-        <Link href="/courses" className="text-xs font-semibold text-white/70 hover:text-white transition-colors">كل الكورسات ←</Link>
+        <Link href="/teachers" className="text-xs font-semibold text-white/70 hover:text-white transition-colors">كل المعلمين ←</Link>
       </nav>
 
       {/* Banner */}
@@ -177,6 +191,9 @@ export default async function TeacherPage({ params }: { params: Promise<{ teache
         )}
         <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-balance">{name}</h1>
         {p.bio && <p className="text-[var(--ink-muted)] mt-3 leading-relaxed max-w-2xl mx-auto text-pretty">{p.bio}</p>}
+        <p className="text-[var(--ink-muted)] mt-3 text-sm leading-relaxed max-w-2xl mx-auto" data-geo-quote>
+          يقدّم الأستاذ {name} شروحه على منصة Code-UP لمادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية في مصر.
+        </p>
 
         {/* Social proof */}
         <div className="mt-5 flex items-center justify-center gap-2 flex-wrap">

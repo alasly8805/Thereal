@@ -23,6 +23,48 @@ import {
   sampleHomeworkData,
 } from "./TeacherJSONGuideModal";
 
+export function TimedCloseFields({
+  enableAutoClose,
+  closeAt,
+  onEnableChange,
+  onCloseAtChange,
+}: {
+  enableAutoClose: boolean;
+  closeAt: string;
+  onEnableChange: (value: boolean) => void;
+  onCloseAtChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2 rounded-2xl border border-rose-200/80 dark:border-rose-900/40 bg-rose-50/40 dark:bg-rose-950/20 p-3">
+      <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={enableAutoClose}
+          onChange={(e) => onEnableChange(e.target.checked)}
+          className="w-4 h-4 rounded"
+        />
+        إغلاق تلقائي بعد الوقت المحدد
+      </label>
+      <div>
+        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+          وقت الإغلاق (close_at)
+        </label>
+        <input
+          type="datetime-local"
+          value={closeAt}
+          onChange={(e) => onCloseAtChange(e.target.value)}
+          disabled={!enableAutoClose}
+          className="w-full px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-mono text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-white disabled:opacity-50"
+          dir="ltr"
+        />
+        <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+          بعد هذا الوقت يُغلق الاختبار/الواجب. الدعم الفني يمكنه إعادة الفتح لطالب أو للجميع.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. ADD QUIZ MODAL
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +79,8 @@ export interface QuizQuestion {
   correctAnswer: string;
   questionType?: "mcq" | "essay";
   optionsCount?: 2 | 3 | 4;
+  /** Points this question is worth. Default 1. */
+  degree?: number;
 }
 
 export function exportQuizToJson(quiz: { title?: string; timeLimitMinutes?: number; questions?: any[] }) {
@@ -57,6 +101,7 @@ export function exportQuizToJson(quiz: { title?: string; timeLimitMinutes?: numb
         if (q.optionD?.trim()) item.optionD = q.optionD.trim();
         item.correctAnswer = q.correctAnswer || "A";
       }
+      if (typeof q.degree === "number" && q.degree !== 1) item.degree = q.degree;
       return item;
     }),
   };
@@ -80,6 +125,7 @@ export function exportHomeworkToJson(hw: { title?: string; description?: string 
       if (q.optionC?.trim()) item.optionC = q.optionC.trim();
       if (q.optionD?.trim()) item.optionD = q.optionD.trim();
       item.correctAnswer = q.correctAnswer || "A";
+      if (typeof q.degree === "number" && q.degree !== 1) item.degree = q.degree;
       return item;
     }),
   };
@@ -107,6 +153,8 @@ export function AddQuizModal({
 
   const [title, setTitle] = useState("");
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(30);
+  const [enableAutoClose, setEnableAutoClose] = useState(false);
+  const [closeAt, setCloseAt] = useState("");
   const [showGuide, setShowGuide] = useState(false);
   const [questions, setQuestions] = useState<QuizQuestion[]>([
     {
@@ -119,6 +167,7 @@ export function AddQuizModal({
       optionC: "",
       optionD: "",
       correctAnswer: "A",
+      degree: 1,
     },
   ]);
   const [submitting, setSubmitting] = useState(false);
@@ -138,6 +187,7 @@ export function AddQuizModal({
         optionC: "",
         optionD: "",
         correctAnswer: "A",
+        degree: 1,
       },
     ]);
   };
@@ -243,6 +293,7 @@ export function AddQuizModal({
             optionC: optC,
             optionD: optD,
             correctAnswer: isEssay ? "A" : correct,
+            degree: Number(row.degree) > 0 ? Math.round(Number(row.degree)) : 1,
           };
         });
 
@@ -304,6 +355,7 @@ export function AddQuizModal({
           optionC: isEssay || count < 3 ? "" : q.optionC.trim(),
           optionD: isEssay || count < 4 ? "" : q.optionD.trim(),
           correctAnswer: isEssay ? "A" : q.correctAnswer,
+          degree: Number(q.degree) > 0 ? Math.round(Number(q.degree)) : 1,
         };
       });
 
@@ -314,6 +366,8 @@ export function AddQuizModal({
         body: JSON.stringify({
           title: title.trim(),
           timeLimitMinutes: Number(timeLimitMinutes) || 30,
+          enableAutoClose,
+          closeAt: enableAutoClose ? closeAt : closeAt || undefined,
           questions: formattedQuestions,
         }),
       });
@@ -393,6 +447,13 @@ export function AddQuizModal({
                 />
               </div>
             </div>
+
+            <TimedCloseFields
+              enableAutoClose={enableAutoClose}
+              closeAt={closeAt}
+              onEnableChange={setEnableAutoClose}
+              onCloseAtChange={setCloseAt}
+            />
 
             {/* JSON Bulk Import Banner */}
             <div className="p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
@@ -485,6 +546,17 @@ export function AddQuizModal({
                           <option value="mcq">اختيار من متعدد (MCQ)</option>
                           <option value="essay">سؤال مقالي (تصحيح يدوي)</option>
                         </select>
+                        <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                          <span>الدرجة</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={q.degree ?? 1}
+                            onChange={(e) => handleQuestionChange(idx, "degree", Number(e.target.value) || 1)}
+                            className="w-14 px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] font-mono font-bold dark:border-slate-800 dark:bg-slate-900"
+                          />
+                        </label>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -710,6 +782,8 @@ export function AddHomeworkModal({
   const [linkUrl, setLinkUrl] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(30);
+  const [enableAutoClose, setEnableAutoClose] = useState(false);
+  const [closeAt, setCloseAt] = useState("");
   const [isPublished, setIsPublished] = useState(true);
   const [showGuide, setShowGuide] = useState(false);
 
@@ -885,6 +959,8 @@ export function AddHomeworkModal({
       folderId,
       dueAt: dueAt || undefined,
       timeLimitMinutes: Number(timeLimitMinutes) || 30,
+      enableAutoClose,
+      closeAt: closeAt || undefined,
       isPublished,
     };
 
@@ -941,6 +1017,7 @@ export function AddHomeworkModal({
           optionC: count < 3 ? "" : q.optionC.trim(),
           optionD: count < 4 ? "" : q.optionD.trim(),
           correctAnswer: q.correctAnswer,
+          degree: Number(q.degree) > 0 ? Math.round(Number(q.degree)) : 1,
         };
       });
     }
@@ -1043,6 +1120,13 @@ export function AddHomeworkModal({
                 className="w-full px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-900 outline-none focus:border-amber-500 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-white"
               />
             </div>
+
+            <TimedCloseFields
+              enableAutoClose={enableAutoClose}
+              closeAt={closeAt}
+              onEnableChange={setEnableAutoClose}
+              onCloseAtChange={setCloseAt}
+            />
 
             {/* Type-Specific Fields */}
             {type === "link" && (

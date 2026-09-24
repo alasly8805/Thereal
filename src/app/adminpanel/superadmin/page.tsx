@@ -29,8 +29,13 @@ import type { OverviewData } from "@/components/admin/superadmin/overview/types"
 import dynamic from "next/dynamic";
 
 import { UnifiedAIStudio } from "@/components/admin/superadmin/ai/UnifiedAIStudio";
+import { SuperadminCopilot } from "@/components/admin/superadmin/SuperadminCopilot";
 const TestersSection = dynamic(
   () => import("@/components/admin/superadmin/TestersSection").then((m) => m.TestersSection),
+  { ssr: false }
+);
+const CenterPassesSection = dynamic(
+  () => import("@/components/admin/superadmin/CenterPassesSection").then((m) => m.CenterPassesSection),
   { ssr: false }
 );
 
@@ -120,7 +125,9 @@ export default function SuperadminPage() {
   const fetchOverview = async (silent = false) => {
     if (!silent) setOverviewLoading(true);
     try {
-      const res = await fetch(`/api/admin/superadmin/overview?_t=${Date.now()}`, { credentials: "include" });
+      const qs = new URLSearchParams({ _t: String(Date.now()) });
+      if (!silent) qs.set("remember", "1");
+      const res = await fetch(`/api/admin/superadmin/overview?${qs}`, { credentials: "include" });
       const data = await readJson<OverviewData>(res);
       if (data) setOverview(data);
     } catch {
@@ -265,6 +272,8 @@ export default function SuperadminPage() {
             setExpandedTeacher={setExpandedTeacher}
             onDeleteTeacher={(t) => setDeleteTargetTeacher(t)}
             onOpenCourseStudents={handleOpenCourseStudents}
+            onRefreshOverview={() => { void fetchOverview(true); }}
+            onOpenCopilot={userRole === "superadmin" ? () => setActiveSection("ai-copilot") : undefined}
           />
         )}
 
@@ -295,6 +304,8 @@ export default function SuperadminPage() {
 
           {activeSection === "testers" && <TestersSection />}
 
+          {activeSection === "center-passes" && <CenterPassesSection />}
+
           {activeSection === "site-text" && <SiteTextSection />}
 
           {activeSection === "advanced-settings" && <AdvancedSettingsSection />}
@@ -313,8 +324,17 @@ export default function SuperadminPage() {
             </AccessGate>
           )}
 
+          {/* ── Superadmin HQ Copilot (DeepSeek / Gemini) — superadmin only ── */}
+          {activeSection === "ai-copilot" && userRole === "superadmin" && <SuperadminCopilot />}
+          {activeSection === "ai-copilot" && userRole !== "superadmin" && (
+            <div className="rounded-2xl p-8 text-center" dir="rtl" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <p className="font-black" style={{ color: "var(--ink)" }}>هذا المساعد للمشرف العام فقط</p>
+              <p className="text-sm mt-2" style={{ color: "var(--ink-2)" }}>لا يصل إليه المشرفون أو الموظفون. اطلب من المالك إن كنت تحتاج الأرقام.</p>
+            </div>
+          )}
+
           {/* ── Unified AI Studio Hub ── */}
-          {(activeSection === "ai-studio" || activeSection.startsWith("ai-")) && (
+          {(activeSection === "ai-studio" || (activeSection.startsWith("ai-") && activeSection !== "ai-copilot")) && (
             <UnifiedAIStudio />
           )}
 

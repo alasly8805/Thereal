@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useToast } from "@/components/ui/Toast";
+import { homeworkUploadNetworkMessage, uploadHomeworkFile } from "@/lib/student-homework-upload";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -230,21 +231,13 @@ function UploadForm({ hw, onSuccess }: { hw: HomeworkItem; onSuccess: (sub: HWSu
     }
     setUploading(true);
     try {
-      // Step 1: upload file
-      const fd = new FormData();
-      fd.append("file", file);
-      const upRes = await fetch(`/api/homework/${hw.id}/upload`, {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-      });
-      const upText = await upRes.text();
-      let upData: { error?: string; fileUrl?: string; fileName?: string } = {};
-      try { upData = upText ? JSON.parse(upText) : {}; } catch {
-        toastError("استجابة غير متوقعة من الخادم، يرجى المحاولة مرة أخرى");
+      let upData: { fileUrl: string; fileName: string };
+      try {
+        upData = await uploadHomeworkFile(hw.id, file);
+      } catch (err: unknown) {
+        toastError(homeworkUploadNetworkMessage(err));
         return;
       }
-      if (!upRes.ok) { toastError(upData.error || "فشل رفع الملف"); return; }
 
       // Step 2: create submission
       const subRes = await fetch(`/api/homework/${hw.id}/submit`, {

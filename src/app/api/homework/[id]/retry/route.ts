@@ -10,7 +10,8 @@ import { ContentType, syncHomeworkContentProgress } from "@/lib/content-access-e
  * Body: { submissionId: string, allowRetake: boolean }
  *
  * Rejecting a homework still closes the next item — that is intentional.
- * This is the only control that lets the student upload/solve again.
+ * Rejected PDF uploads can be replaced without this toggle; other types
+ * still need the teacher to reopen the attempt here.
  */
 export async function POST(
   req: NextRequest,

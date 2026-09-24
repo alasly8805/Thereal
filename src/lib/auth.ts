@@ -365,7 +365,10 @@ async function getJwtSession(): Promise<SessionUser | null> {
     assistantOfTeacherId: (user as { assistantOfTeacherId?: string | null }).assistantOfTeacherId ?? null,
     assistantPermissions:
       user.role === "assistant"
-        ? parseAssistantPermissions((user as { assistantPermissions?: string | null }).assistantPermissions)
+        ? parseAssistantPermissions(
+            (user as { assistantPermissions?: string | null }).assistantPermissions,
+            (user as { canViewStudents?: boolean }).canViewStudents
+          )
         : null,
   };
 }

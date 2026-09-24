@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, DoorOpen, GraduationCap, Search, Trash2, Users } from "lucide-react";
 import type { OverviewData, OverviewTeacher } from "./types";
-import { Card, CardHeader, EmptyState, PaymentSourcePill, Pill, StackedBar, ar, egp, fmtDate, fmtTime, tone } from "./primitives";
+import { Card, CardHeader, EmptyState, Pill, StackedBar, ar, egp, fmtDate, tone } from "./primitives";
+import { PaymentsPanel } from "./PaymentsPanel";
 
 type SortKey = "revenue" | "students" | "name" | "newest";
 
@@ -214,70 +215,12 @@ function TeacherRow({
             ))}
           </div>
 
-          {/* Subscriptions */}
-          <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <div className="px-3 py-2 flex items-center justify-between" style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
-              <h3 className="text-xs font-bold" style={{ color: "var(--ink)" }}>🎟️ حجوزات الباقات — ما دفعه كل طالب</h3>
-              <span className="text-[11px] font-bold tabular-nums" style={{ color: tone.green }}>{ar(paidSubs)} مدفوع · {egp(subsRevenue)}</span>
-            </div>
-            {t.subscriptions.length === 0 ? (
-              <p className="p-4 text-xs text-center" style={{ color: "var(--ink-3)" }}>لا توجد حجوزات باقات لهذا المعلم بعد.</p>
-            ) : (
-              <div className="overflow-x-auto max-h-64 overflow-y-auto">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0" style={{ background: "var(--surface-2)" }}>
-                    <tr className="text-[10px]" style={{ color: "var(--ink-3)" }}>
-                      <th className="px-3 py-2 text-right font-medium">الطالب</th>
-                      <th className="px-3 py-2 text-center font-medium">الباقة</th>
-                      <th className="px-3 py-2 text-center font-medium">المرحلة · المسار</th>
-                      <th className="px-3 py-2 text-center font-medium">طريقة الدفع</th>
-                      <th className="px-3 py-2 text-center font-medium">المبلغ</th>
-                      <th className="px-3 py-2 text-center font-medium">التاريخ</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border)]">
-                    {t.subscriptions.map((s) => (
-                      <tr key={s.id} className="hover:bg-[var(--surface-2)]/50">
-                        <td className="px-3 py-2">
-                          <div className="font-bold" style={{ color: "var(--ink)" }}>{s.studentName}</div>
-                          <div className="font-mono text-[10px]" style={{ color: "var(--ink-3)" }} dir="ltr">{s.studentPhone}</div>
-                        </td>
-                        <td className="px-3 py-2 text-center"><Pill color="brand">{s.planLabel}</Pill></td>
-                        <td className="px-3 py-2 text-center text-[11px]" style={{ color: "var(--ink-2)" }}>
-                          {s.educationalStage} · {s.languageTrack === "languages" ? "لغات" : "عربي"}
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          <div className="flex flex-col items-center gap-1">
-                            <PaymentSourcePill source={s.paymentSource} registeredBy={s.registeredBy} />
-                            {s.paymentRef && (
-                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded" dir="ltr" style={{ background: "var(--surface-2)", color: "var(--ink-2)" }} title="الرقم المرجعي">
-                                {s.gatewayProvider ? `${s.gatewayProvider}: ` : ""}{s.paymentRef}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-center whitespace-nowrap">
-                          {s.amount > 0 ? (
-                            <span className="font-black tabular-nums" style={{ color: tone.green }}>{egp(s.amount)}</span>
-                          ) : (
-                            <span className="text-[11px]" style={{ color: "var(--ink-3)" }}>مجاني</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-center text-[10px] whitespace-nowrap tabular-nums" style={{ color: "var(--ink-2)" }}>
-                          {fmtDate(s.createdAt)}<br /><span style={{ color: "var(--ink-3)" }}>{fmtTime(s.createdAt)}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <PaymentsPanel teacher={t} />
 
-          {/* Courses */}
+          {/* Courses — manage enrollments */}
           <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <div className="px-3 py-2 flex items-center justify-between" style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
-              <h3 className="text-xs font-bold" style={{ color: "var(--ink)" }}>📚 الكورسات — المدفوع فقط يدخل في الإيراد</h3>
+              <h3 className="text-xs font-bold" style={{ color: "var(--ink)" }}>إدارة الكورسات — فتح قائمة الطلاب</h3>
               <span className="text-[11px] font-bold tabular-nums" style={{ color: tone.gold }}>{ar(t.courses.length)} كورس · {egp(coursesRevenue)}</span>
             </div>
             {t.courses.length === 0 ? (

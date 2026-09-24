@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import { FolderContentType } from "@/generated/prisma";
+import { removeFolderContent } from "@/lib/folder-content-order";
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -59,6 +61,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     await prisma.videoWatchSession.deleteMany({ where: { videoId } });
     await prisma.progress.deleteMany({ where: { videoId } });
     await prisma.video.delete({ where: { id: videoId } });
+    await removeFolderContent(FolderContentType.VIDEO, videoId);
 
     return NextResponse.json({ success: true, message: "تم حذف الفيديو بنجاح" });
   } catch (error) {

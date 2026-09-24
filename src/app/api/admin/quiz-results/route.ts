@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
         orderBy: { completedAt: "desc" },
         include: {
           student: { select: { id: true, name: true, email: true, phone: true } },
-          answers: { select: { questionType: true, isCorrect: true, status: true } },
+          answers: { select: { questionType: true, isCorrect: true, status: true, degree: true } },
           quiz: {
             select: {
               id: true,
@@ -166,6 +166,8 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: "لا يمكن تعديل اختبارات الخطط إلا للمشرف العام" }, { status: 403 });
       }
 
+      // Flag only. Never clear completedAt here — the student starts a new
+      // attempt from the review page with «بدء محاولة جديدة».
       const updated = await prisma.quizResult.update({
         where: { id: resultId },
         data: { allowRetake },
@@ -173,7 +175,9 @@ export async function PATCH(req: NextRequest) {
 
       return NextResponse.json({
         result: updated,
-        message: allowRetake ? "تم السماح بإعادة الاختبار" : "تم إلغاء إعادة الاختبار",
+        message: allowRetake
+          ? "تم السماح بإعادة الاختبار. المحاولة القديمة تبقى ظاهرة للطالب حتى يضغط «بدء محاولة جديدة»."
+          : "تم إلغاء إعادة الاختبار",
       });
     } catch (error) {
         console.error("[admin/quiz-results] error:", error);

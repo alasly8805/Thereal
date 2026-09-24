@@ -4,6 +4,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import {
+  ContentType,
+  parseCloseSchedule,
+  syncContentCloseSchedule,
+} from "@/lib/content-access-engine";
+import { parseDegree } from "@/lib/quiz-grading";
+import { FolderContentType } from "@/generated/prisma";
+import { appendFolderContent } from "@/lib/folder-content-order";
 
 // Validation constants
 const MIN_QUESTIONS = 1;
@@ -117,7 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const { id: folderId } = await params;
-    const { title, questions, timeLimitMinutes } = await req.json();
+    const { title, questions, timeLimitMinutes, closeAt, enableAutoClose } = await req.json();
 
     // Validate quiz data
     const validation = validateQuizData(title, questions);
@@ -144,12 +152,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ? Math.min(Math.round(parsedLimit), MAX_TIME_LIMIT)
         : 30;
 
+    const closeSchedule = parseCloseSchedule({ closeAt, enableAutoClose });
+    if (closeSchedule.error) {
+      return NextResponse.json({ error: closeSchedule.error }, { status: 400 });
+    }
+
     // Create quiz with validated data
     const quiz = await prisma.quiz.create({
       data: {
         title: title.trim(),
         folderId,
         timeLimitMinutes: normalizedLimit,
+        closeAt: closeSchedule.closeAt,
+        enableAutoClose: closeSchedule.enableAutoClose,
         questions: {
           create: questions.map(
             (
@@ -173,6 +188,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               optionC: q.questionType === "essay" ? "" : (q.optionC?.trim() || ""),
               optionD: q.questionType === "essay" ? "" : (q.optionD?.trim() || ""),
               correctAnswer: q.questionType === "essay" ? "A" : (q.correctAnswer || "A"),
+              degree: parseDegree((q as { degree?: unknown }).degree),
               order: i,
             })
           ),
@@ -182,26 +198,69 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     // Auto-create ContentItem graph node for the new quiz
-    await prisma.contentItem.upsert({
-      where: {
-        type_sourceId: {
-          type: "QUIZ",
-          sourceId: quiz.id,
-        },
-      },
-      create: {
-        type: "QUIZ",
-        sourceId: quiz.id,
-        title: quiz.title,
-      },
-      update: {
-        title: quiz.title,
-      },
-    }).catch(console.error);
+    await syncContentCloseSchedule({
+      type: ContentType.QUIZ,
+      sourceId: quiz.id,
+      title: quiz.title,
+      closeAt: quiz.closeAt,
+      enableAutoClose: quiz.enableAutoClose,
+    });
+
+    await appendFolderContent(folderId, FolderContentType.EXAM, quiz.id);
 
     return NextResponse.json({ quiz }, { status: 201 });
   } catch (error) {
     console.error("Failed to create quiz:", error);
     return NextResponse.json({ error: "تعذر إنشاء الاختبار" }, { status: 500 });
   }
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getSession();
+  if (!session || !isTeacherLike(session.role)) {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+  if (!hasAssistantPermission(session, "editCourses")) {
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
+  }
+
+  const { id: folderId } = await params;
+  const body = await req.json() as {
+    quizId?: string;
+    closeAt?: string | null;
+    enableAutoClose?: boolean;
+  };
+  if (!body.quizId) return NextResponse.json({ error: "quizId مطلوب" }, { status: 400 });
+
+  const quiz = await prisma.quiz.findFirst({
+    where: { id: body.quizId, folderId, folder: { course: { teacherId: actingTeacherId(session) } } },
+    select: { id: true, title: true },
+  });
+  if (!quiz) return NextResponse.json({ error: "الاختبار غير موجود" }, { status: 404 });
+
+  const closeSchedule = parseCloseSchedule({
+    closeAt: body.closeAt,
+    enableAutoClose: body.enableAutoClose,
+  });
+  if (closeSchedule.error) {
+    return NextResponse.json({ error: closeSchedule.error }, { status: 400 });
+  }
+
+  const updated = await prisma.quiz.update({
+    where: { id: quiz.id },
+    data: {
+      closeAt: closeSchedule.closeAt,
+      enableAutoClose: closeSchedule.enableAutoClose,
+    },
+  });
+
+  await syncContentCloseSchedule({
+    type: ContentType.QUIZ,
+    sourceId: updated.id,
+    title: updated.title,
+    closeAt: updated.closeAt,
+    enableAutoClose: updated.enableAutoClose,
+  });
+
+  return NextResponse.json({ quiz: updated });
 }

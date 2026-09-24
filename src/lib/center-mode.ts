@@ -12,12 +12,26 @@ export type DeliveryMode = "ONLINE" | "CENTER" | "BOTH";
  * and every public course read/write path has to apply it.
  */
 export function isCenterRequest(req: NextRequest): boolean {
-  const host = req.headers.get("host") || "";
   return (
-    req.headers.get("x-center-mode") === "1" ||
-    host.startsWith("center.") ||
+    isCenterHost(req.headers) ||
     req.nextUrl.searchParams.get("mode") === "center" ||
     req.cookies.get("center_mode")?.value === "1"
+  );
+}
+
+/**
+ * Header-only variant for Server Components, which have no NextRequest.
+ * src/proxy.ts sets x-center-mode on centre traffic; Host is the fallback.
+ *
+ * Calling this from a page opts that page into dynamic rendering. That is
+ * required for correctness here regardless: Next keys the ISR cache by path,
+ * not by host, so a cached render made for one site can otherwise be served
+ * to the other.
+ */
+export function isCenterHost(headerList: { get(name: string): string | null }): boolean {
+  return (
+    headerList.get("x-center-mode") === "1" ||
+    (headerList.get("host") || "").startsWith("center.")
   );
 }
 

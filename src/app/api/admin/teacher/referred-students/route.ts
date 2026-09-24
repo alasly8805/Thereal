@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -9,9 +9,12 @@ export async function GET() {
     if (!session || !isTeacherLike(session.role)) {
       return NextResponse.json({ error: "غير مصرح — للمعلمين فقط" }, { status: 403 });
     }
+    if (session.role === "assistant" && !hasAssistantPermission(session, "canViewStudents")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية عرض الطلاب والتقارير" }, { status: 403 });
+    }
 
     const teacher = await prisma.user.findUnique({
-      where: { id: session.id },
+      where: { id: actingTeacherId(session) },
       select: {
         id: true,
         promoProgramEnabled: true,
@@ -46,7 +49,7 @@ export async function GET() {
 
     // Also get all students directly referred by signup (in case they haven't bought anything yet)
     const directReferredStudents = await prisma.user.findMany({
-      where: { referredByTeacherId: session.id, ...studentScope },
+      where: { referredByTeacherId: actingTeacherId(session), ...studentScope },
       select: { id: true, name: true, email: true, createdAt: true },
       orderBy: { createdAt: "desc" },
     });

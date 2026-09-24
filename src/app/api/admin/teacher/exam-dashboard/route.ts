@@ -3,6 +3,9 @@ import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { logAdminAction } from "@/lib/admin-auth";
+import { ContentType, parseCloseSchedule, syncContentCloseSchedule } from "@/lib/content-access-engine";
+import { FolderContentType } from "@/generated/prisma";
+import { removeFolderContent } from "@/lib/folder-content-order";
 
 /**
  * API route for the Teacher Exam Dashboard.
@@ -90,9 +93,12 @@ export async function GET(req: NextRequest) {
       id: q.id,
       title: q.title,
       timeLimitMinutes: q.timeLimitMinutes,
+      closeAt: q.closeAt,
+      enableAutoClose: q.enableAutoClose,
       createdAt: q.createdAt,
       courseId: q.folder?.course?.id || "",
       courseTitle: q.folder?.course?.title || "كورس غير معرف",
+      folderId: q.folder?.id || "",
       folderName: q.folder?.name || "",
       totalQuestions,
       mcqCount,
@@ -172,6 +178,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   await prisma.quiz.delete({ where: { id: quizId } });
+  await removeFolderContent(FolderContentType.EXAM, quizId);
   return NextResponse.json({ success: true });
 }
 
@@ -181,9 +188,14 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
-  const { quizId, action } = await req.json().catch(() => ({}));
-
-  if (!quizId || action !== "allow_all_retakes") {
+  const body = (await req.json().catch(() => ({}))) as {
+    quizId?: string;
+    action?: string;
+    closeAt?: string | null;
+    enableAutoClose?: boolean;
+  };
+  const quizId = String(body.quizId || "").trim();
+  if (!quizId) {
     return NextResponse.json({ error: "بيانات الإجراء غير صالحة" }, { status: 400 });
   }
 
@@ -200,10 +212,40 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "الاختبار غير موجود" }, { status: 404 });
   }
 
-  const updated = await prisma.quizResult.updateMany({
-    where: { quizId },
-    data: { allowRetake: true },
-  });
+  if (body.action === "allow_all_retakes") {
+    // Flag only — students still see their old sheet until they press
+    // "بدء محاولة جديدة" on the quiz page.
+    const updated = await prisma.quizResult.updateMany({
+      where: { quizId },
+      data: { allowRetake: true },
+    });
+    return NextResponse.json({ success: true, updatedCount: updated.count });
+  }
 
-  return NextResponse.json({ success: true, updatedCount: updated.count });
+  if (body.closeAt !== undefined || body.enableAutoClose !== undefined) {
+    const closeSchedule = parseCloseSchedule({
+      closeAt: body.closeAt,
+      enableAutoClose: body.enableAutoClose,
+    });
+    if (closeSchedule.error) {
+      return NextResponse.json({ error: closeSchedule.error }, { status: 400 });
+    }
+    const updated = await prisma.quiz.update({
+      where: { id: quizId },
+      data: {
+        closeAt: closeSchedule.closeAt,
+        enableAutoClose: closeSchedule.enableAutoClose,
+      },
+    });
+    await syncContentCloseSchedule({
+      type: ContentType.QUIZ,
+      sourceId: updated.id,
+      title: updated.title,
+      closeAt: updated.closeAt,
+      enableAutoClose: updated.enableAutoClose,
+    });
+    return NextResponse.json({ success: true, quiz: updated });
+  }
+
+  return NextResponse.json({ error: "بيانات الإجراء غير صالحة" }, { status: 400 });
 }

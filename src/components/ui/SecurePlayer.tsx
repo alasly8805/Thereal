@@ -10,6 +10,7 @@ import { useFullscreen } from "./useFullscreen";
 import { extractYouTubeVideoId } from "@/lib/youtube";
 import {
   type VideoQualityOption,
+  DEFAULT_QUALITY_OPTIONS,
   readStoredQuality,
   storeQuality,
   connectionLooksSlow,
@@ -290,12 +291,20 @@ function DirectVideoEmbed({
   // because changing `src` resets the element's playbackRate to 1.
   const [playbackRate, setPlaybackRate] = usePlaybackRate();
   useApplyPlaybackRate(videoRef, playbackRate);
-  const [qualities, setQualities] = useState<VideoQualityOption[]>([]);
-  const [quality, setQuality] = useState<number | null>(null);
+  // Native Drive / alasly always shows Auto · 360p · 480p · 720p. The /qualities
+  // probe fills in file sizes once renditions exist; the button must not wait.
+  const isNativeStream = embedUrl.startsWith("/api/videos/stream/");
+  const [qualities, setQualities] = useState<VideoQualityOption[]>(
+    isNativeStream ? DEFAULT_QUALITY_OPTIONS : []
+  );
+  const [quality, setQuality] = useState<number | null>(() => {
+    if (!embedUrl.startsWith("/api/videos/stream/")) return null;
+    const stored = readStoredQuality();
+    return stored === undefined ? null : stored;
+  });
   // Position + play state to restore on the other side of a quality switch.
   const resumeRef = useRef<{ time: number; playing: boolean } | null>(null);
 
-  const isNativeStream = embedUrl.startsWith("/api/videos/stream/");
   const streamPath = isNativeStream ? embedUrl.split("?")[0] : "";
 
   useEffect(() => {
@@ -303,12 +312,14 @@ function DirectVideoEmbed({
       setQualities([]);
       return;
     }
+    setQualities(DEFAULT_QUALITY_OPTIONS);
     let cancelled = false;
     fetch(`${streamPath}/qualities`, { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { qualities?: VideoQualityOption[] } | null) => {
-        if (cancelled || !data?.qualities?.length) return;
-        const list = data.qualities;
+        if (cancelled) return;
+        const list =
+          data?.qualities && data.qualities.length >= 2 ? data.qualities : DEFAULT_QUALITY_OPTIONS;
         setQualities(list);
 
         const stored = readStoredQuality();
@@ -323,11 +334,15 @@ function DirectVideoEmbed({
           const lightest = list
             .filter((o) => o.height !== null)
             .sort((a, b) => (a.height as number) - (b.height as number))[0];
-          if (lightest) setQuality(lightest.height);
+          if (lightest) {
+            const v = videoRef.current;
+            resumeRef.current = v ? { time: v.currentTime, playing: !v.paused } : null;
+            setQuality(lightest.height);
+          }
         }
       })
       .catch(() => {
-        // A player that cannot list qualities still plays the original.
+        // A player that cannot list qualities still offers the default ladder.
       });
     return () => {
       cancelled = true;
@@ -425,7 +440,7 @@ function DirectVideoEmbed({
         onPlaybackRateChange={setPlaybackRate}
         qualities={qualities}
         quality={quality}
-        onQualityChange={changeQuality}
+        onQualityChange={isNativeStream ? changeQuality : undefined}
         isFullscreen={isFullscreen}
         onToggleFullscreen={onToggleFullscreen}
       />

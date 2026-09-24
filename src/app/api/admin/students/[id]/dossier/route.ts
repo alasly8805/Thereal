@@ -34,7 +34,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const gate = await requireTeacherContext("viewStudents");
+  const gate = await requireTeacherContext("canViewStudents");
   if (!gate.ok) return gate.response;
 
   const { ctx } = gate;

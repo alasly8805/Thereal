@@ -54,6 +54,7 @@ prisma/backups/
 
 # WhatsApp Baileys Auth & Logs
 whatsapp-auth/
+whatsapp-auth-fallback/
 logs/
 
 
@@ -82,3 +83,5 @@ scratch/
 /.next.restoring/
 /.next.broken/
 /.next.prev/
+/.next.previous/
+*.bak-*

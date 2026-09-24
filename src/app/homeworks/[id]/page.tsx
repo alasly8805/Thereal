@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { useToast } from "@/components/ui/Toast";
+import { homeworkUploadNetworkMessage, uploadHomeworkFile } from "@/lib/student-homework-upload";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -160,7 +161,8 @@ export default function HomeworkDetailPage() {
   const answeredCount = useMemo(() => Object.keys(answers).length, [answers]);
   const isAllAnswered = questions.length > 0 && answeredCount === questions.length;
   const mySub = homework?.mySubmission;
-  const canSubmit = !mySub || !!mySub.allowRetake;
+  const canResubmitRejectedPdf = homework?.type === "upload" && mySub?.status === "failed";
+  const canSubmit = !mySub || !!mySub.allowRetake || !!canResubmitRejectedPdf;
 
   // Parsed past answers if any
   const parsedPastAnswers = useMemo(() => {
@@ -262,14 +264,6 @@ export default function HomeworkDetailPage() {
     }
   };
 
-  const uploadErrorMessage = (err: unknown) => {
-    if (!(err instanceof Error)) return "تعذر رفع الملف";
-    if (/failed to fetch|networkerror|load failed/i.test(err.message)) {
-      return "تعذر الاتصال بالخادم أثناء رفع الملف. تحقق من اتصال الإنترنت وحجم الملف (حد أقصى 10 ميجابايت) ثم أعد المحاولة";
-    }
-    return err.message;
-  };
-
   // Handle Upload Submit
   const handleUploadSubmit = async () => {
     if (!homework || !uploadFile) {
@@ -284,22 +278,8 @@ export default function HomeworkDetailPage() {
 
     setSubmitting(true);
     try {
-      // 1. Upload file
-      const formData = new FormData();
-      formData.append("file", uploadFile);
+      const upData = await uploadHomeworkFile(homework.id, uploadFile);
 
-      const upRes = await fetch(`/api/homework/${homework.id}/upload`, {
-        method: "POST",
-        credentials: "include",
-        body: formData,
-      });
-      const upData = await parseJsonResponse(upRes);
-
-      if (!upRes.ok) {
-        throw new Error(upData.error || "فشل رفع الملف");
-      }
-
-      // 2. Submit record
       const subRes = await fetch(`/api/homework/${homework.id}/submit`, {
         method: "POST",
         credentials: "include",
@@ -315,7 +295,7 @@ export default function HomeworkDetailPage() {
       toastSuccess("تم رفع الملف وتسليم الواجب بنجاح!");
       setHomework((prev) => (prev ? { ...prev, mySubmission: subData.submission } : prev));
     } catch (err: unknown) {
-      toastError(uploadErrorMessage(err));
+      toastError(homeworkUploadNetworkMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -691,12 +671,16 @@ export default function HomeworkDetailPage() {
                   SECTION B: SOLVING FORMS (NOT SUBMITTED YET)
                  ───────────────────────────────────────────────────────────── */
               <div className="space-y-6">
-                {mySub?.allowRetake && (
+                {(mySub?.allowRetake || canResubmitRejectedPdf) && (
                   <div className="rounded-3xl border border-sky-500/40 bg-sky-950/30 p-5 sm:p-6 text-center space-y-2">
-                    <p className="text-lg font-black text-white">🔓 المعلم فتح لك محاولة تانية</p>
+                    <p className="text-lg font-black text-white">
+                      {canResubmitRejectedPdf && !mySub?.allowRetake
+                        ? "❌ الملف اترفض — ارفع نسخة جديدة"
+                        : "🔓 المعلم فتح لك محاولة تانية"}
+                    </p>
                     <p className="text-sm text-sky-200">
                       {homework.type === "upload"
-                        ? "ارفع نسخة جديدة من الملف. اللي بعده هيفضل مقفول لحد ما الواجب يتقبل."
+                        ? "ارفع نسخة جديدة من الملف. المحتوى التالي يبقى مقفول لحد ما المعلم يقبل الواجب."
                         : "حل من تاني وسلّم. اللي بعده هيفضل مقفول لحد ما الواجب يتقبل."}
                     </p>
                     {mySub.review?.note && (

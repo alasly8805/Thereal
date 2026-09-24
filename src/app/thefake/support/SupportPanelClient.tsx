@@ -41,9 +41,35 @@ type HomeworkRow = {
   id: string;
   title: string;
   dueAt: string | null;
+  closeAt: string | null;
+  enableAutoClose: boolean;
+  timedClosed: boolean;
   videoId: string | null;
   submitted: boolean;
   overdue: boolean;
+};
+
+type QuizRow = {
+  id: string;
+  title: string;
+  closeAt: string | null;
+  enableAutoClose: boolean;
+  timedClosed: boolean;
+};
+
+type ExtensionRow = {
+  id: string;
+  contentId: string;
+  studentId: string | null;
+  extendedUntil: string;
+  reason: string | null;
+  supportId: string;
+  createdAt: string;
+  title: string | null;
+  sourceId: string | null;
+  contentType: string | null;
+  studentName: string | null;
+  scope: "student" | "all";
 };
 
 type OverrideRow = {
@@ -111,6 +137,7 @@ type Dossier = {
   student: StudentFull;
   videos: VideoRow[];
   homework: HomeworkRow[];
+  quizzes?: QuizRow[];
   overrides: OverrideRow[];
   courses: CourseRow[];
   devices: DeviceRow[];
@@ -438,7 +465,12 @@ export default function SupportPanelClient({
 
         {tab === "students" && <StudentsTab say={say} />}
         {tab === "discounts" && <DiscountsTab say={say} />}
-        {tab === "settings" && <SettingsTab say={say} />}
+        {tab === "settings" && (
+          <div className="space-y-5">
+            <SettingsTab say={say} />
+            <ReopenClosedContentSection say={say} />
+          </div>
+        )}
       </div>
 
       {toast && (
@@ -693,6 +725,12 @@ function StudentDetail({
       <ExtraViewsSection student={s} videos={dossier.videos} say={say} reload={reload} />
       <GrantAccessSection student={s} say={say} reload={reload} />
       <UnlockSection dossier={dossier} say={say} reload={reload} />
+      <ReopenClosedContentSection
+        say={say}
+        defaultStudent={{ id: s.id, name: s.name }}
+        homework={dossier.homework}
+        quizzes={dossier.quizzes ?? []}
+      />
       <BypassSection dossier={dossier} say={say} reload={reload} />
       <NotifySection student={s} say={say} />
       <PasswordSection student={s} say={say} />
@@ -1901,7 +1939,370 @@ function UnlockSection({
   );
 }
 
+// ─── Reopen after close_at ────────────────────────────────────────────────────
+
+function ReopenClosedContentSection({
+  say,
+  defaultStudent,
+  homework = [],
+  quizzes = [],
+}: {
+  say: (k: "ok" | "err", t: string) => void;
+  defaultStudent?: { id: string; name: string };
+  homework?: HomeworkRow[];
+  quizzes?: QuizRow[];
+}) {
+  const [contentType, setContentType] = useState<"QUIZ" | "HOMEWORK">("QUIZ");
+  const [picked, setPicked] = useState<SearchResult | null>(null);
+  const [scope, setScope] = useState<"student" | "all">(defaultStudent ? "student" : "all");
+  const [pickedStudent, setPickedStudent] = useState<{ id: string; name: string } | null>(
+    defaultStudent ?? null
+  );
+  const [studentQuery, setStudentQuery] = useState("");
+  const [studentHits, setStudentHits] = useState<Student[]>([]);
+  const [extendedUntil, setExtendedUntil] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [extensions, setExtensions] = useState<ExtensionRow[]>([]);
+
+  const loadExtensions = useCallback(async () => {
+    try {
+      const qs = defaultStudent?.id
+        ? `?studentId=${encodeURIComponent(defaultStudent.id)}`
+        : "";
+      const res = await fetch(`/api/thefake/support/extend-content${qs}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setExtensions(data.extensions ?? []);
+    } catch (e) {
+      say("err", e instanceof Error ? e.message : "تعذر تحميل التمديدات");
+    }
+  }, [defaultStudent?.id, say]);
+
+  useEffect(() => {
+    void loadExtensions();
+  }, [loadExtensions]);
+
+  const searchStudent = async () => {
+    if (studentQuery.trim().length < 2) return say("err", "اكتب حرفين للبحث عن الطالب");
+    try {
+      const res = await fetch(`/api/support/students?q=${encodeURIComponent(studentQuery.trim())}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setStudentHits(data.students ?? []);
+      if ((data.students ?? []).length === 0) say("err", "لا يوجد طالب بهذا الاسم");
+    } catch (e) {
+      say("err", e instanceof Error ? e.message : "فشل بحث الطالب");
+    }
+  };
+
+  const submit = async () => {
+    if (!picked) return say("err", "اختر اختباراً أو واجباً");
+    if (scope === "student" && !pickedStudent) return say("err", "اختر طالباً أو «كل الطلاب»");
+    if (!extendedUntil) return say("err", "حدد وقت التمديد");
+    if (!reason.trim()) return say("err", "سبب إعادة الفتح مطلوب");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/thefake/support/extend-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceId: picked.id,
+          contentType,
+          studentId: scope === "all" ? "ALL" : pickedStudent?.id,
+          extendedUntil: new Date(extendedUntil).toISOString(),
+          reason: reason.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      say("ok", "تم فتح المحتوى بعد الإغلاق");
+      setReason("");
+      setPicked(null);
+      void loadExtensions();
+    } catch (e) {
+      say("err", e instanceof Error ? e.message : "تعذر إنشاء التمديد");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (id: string) => {
+    try {
+      const res = await fetch(`/api/thefake/support/extend-content?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      say("ok", "تم إلغاء التمديد");
+      void loadExtensions();
+    } catch (e) {
+      say("err", e instanceof Error ? e.message : "تعذر إلغاء التمديد");
+    }
+  };
+
+  const closedHomework = homework.filter((h) => h.enableAutoClose && h.closeAt);
+  const closedQuizzes = quizzes.filter((q) => q.enableAutoClose && q.closeAt);
+
+  return (
+    <section className={`${card} sup-anim`} style={cardStyle}>
+      <SectionHead
+        icon="⏱️"
+        tint={C.roseSoft}
+        title="فتح بعد الإغلاق"
+        hint="يعيد فتح اختبار أو واجب بعد close_at لطالب واحد أو لكل الطلاب حتى الوقت المحدد"
+      />
+
+      {(closedQuizzes.length > 0 || closedHomework.length > 0) && (
+        <div className="mb-4 space-y-2">
+          <p className="text-xs font-bold" style={{ color: C.ink }}>
+            محتوى له وقت إغلاق
+          </p>
+          <ul className="space-y-2">
+            {closedQuizzes.map((q) => (
+              <li
+                key={`q:${q.id}`}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-2.5"
+                style={{ borderColor: C.borderSoft, background: "rgba(10,14,26,.4)" }}
+              >
+                <span>
+                  <span className="block text-sm font-bold" style={{ color: C.ink }}>
+                    {q.title}
+                  </span>
+                  <span className="block text-xs" style={{ color: q.timedClosed ? C.rose : C.ink2 }}>
+                    {q.timedClosed ? "مغلق الآن" : "مفتوح"} · يغلق {fmtDateTime(q.closeAt)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className={`${btn} text-xs`}
+                  style={btnPrimary}
+                  onClick={() => {
+                    setContentType("QUIZ");
+                    setPicked({ id: q.id, title: q.title, subtitle: "اختبار", type: "QUIZ" });
+                  }}
+                >
+                  فتح بعد الإغلاق
+                </button>
+              </li>
+            ))}
+            {closedHomework.map((h) => (
+              <li
+                key={`h:${h.id}`}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-2.5"
+                style={{ borderColor: C.borderSoft, background: "rgba(10,14,26,.4)" }}
+              >
+                <span>
+                  <span className="block text-sm font-bold" style={{ color: C.ink }}>
+                    {h.title}
+                  </span>
+                  <span className="block text-xs" style={{ color: h.timedClosed ? C.rose : C.ink2 }}>
+                    {h.timedClosed ? "مغلق الآن" : "مفتوح"} · يغلق {fmtDateTime(h.closeAt)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className={`${btn} text-xs`}
+                  style={btnPrimary}
+                  onClick={() => {
+                    setContentType("HOMEWORK");
+                    setPicked({ id: h.id, title: h.title, subtitle: "واجب", type: "HOMEWORK" });
+                  }}
+                >
+                  فتح بعد الإغلاق
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mb-2 flex gap-2">
+        {(
+          [
+            ["QUIZ", "اختبار"],
+            ["HOMEWORK", "واجب"],
+          ] as const
+        ).map(([t, label]) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => {
+              setContentType(t);
+              setPicked(null);
+            }}
+            className={`${btn} border text-xs`}
+            style={
+              contentType === t
+                ? { ...btnPrimary, border: "1px solid transparent" }
+                : { ...btnGhost, color: C.ink2 }
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <ContentPicker type={contentType} onPick={setPicked} say={say} />
+
+      {picked && (
+        <p className="mt-2 text-sm font-bold" style={{ color: C.ink }}>
+          المحتوى: {picked.title}
+        </p>
+      )}
+
+      <div className="mt-3 mb-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setScope("student")}
+          className={`${btn} border text-xs`}
+          style={
+            scope === "student"
+              ? { ...btnPrimary, border: "1px solid transparent" }
+              : { ...btnGhost, color: C.ink2 }
+          }
+        >
+          طالب محدد
+        </button>
+        <button
+          type="button"
+          onClick={() => setScope("all")}
+          className={`${btn} border text-xs`}
+          style={
+            scope === "all"
+              ? { ...btnPrimary, border: "1px solid transparent" }
+              : { ...btnGhost, color: C.ink2 }
+          }
+        >
+          كل الطلاب
+        </button>
+      </div>
+
+      {scope === "student" && (
+        <div className="mb-3 space-y-2">
+          {pickedStudent ? (
+            <p className="text-xs" style={{ color: C.ink2 }}>
+              الطالب: <strong style={{ color: C.ink }}>{pickedStudent.name}</strong>
+            </p>
+          ) : (
+            <p className="text-xs" style={{ color: C.ink3 }}>
+              ابحث عن الطالب أو اختر «كل الطلاب»
+            </p>
+          )}
+          {!defaultStudent && (
+            <div className="flex flex-wrap gap-2">
+              <input
+                className={`${input} min-w-[180px] flex-1`}
+                style={inputStyle}
+                placeholder="بحث عن طالب"
+                value={studentQuery}
+                onChange={(e) => setStudentQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && searchStudent()}
+              />
+              <button type="button" onClick={searchStudent} className={`${btn} border`} style={btnGhost}>
+                بحث
+              </button>
+            </div>
+          )}
+          {studentHits.length > 0 && (
+            <ul className="space-y-1">
+              {studentHits.map((st) => (
+                <li key={st.id}>
+                  <button
+                    type="button"
+                    className="w-full rounded-lg border px-3 py-2 text-right text-xs"
+                    style={{ borderColor: C.borderSoft, color: C.ink, background: "rgba(10,14,26,.4)" }}
+                    onClick={() => {
+                      setPickedStudent({ id: st.id, name: st.name });
+                      setStudentHits([]);
+                    }}
+                  >
+                    {st.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-[11px] font-bold" style={{ color: C.ink2 }}>
+            التمديد حتى
+          </label>
+          <input
+            type="datetime-local"
+            className={input}
+            style={inputStyle}
+            value={extendedUntil}
+            onChange={(e) => setExtendedUntil(e.target.value)}
+            dir="ltr"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-bold" style={{ color: C.ink2 }}>
+            السبب
+          </label>
+          <input
+            className={input}
+            style={inputStyle}
+            placeholder="سبب إعادة الفتح"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <button
+        type="button"
+        disabled={busy}
+        onClick={submit}
+        className={`${btn} mt-3`}
+        style={btnPrimary}
+      >
+        {busy ? "..." : "فتح بعد الإغلاق"}
+      </button>
+
+      {extensions.length > 0 && (
+        <div className="mt-5 border-t pt-4" style={{ borderColor: C.borderSoft }}>
+          <p className="mb-2 text-xs font-bold" style={{ color: C.ink }}>
+            التمديدات النشطة
+          </p>
+          <ul className="space-y-2">
+            {extensions.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-2.5"
+                style={{ borderColor: C.borderSoft, background: "rgba(10,14,26,.4)" }}
+              >
+                <span className="text-xs" style={{ color: C.ink2 }}>
+                  <strong style={{ color: C.ink }}>{row.title || row.contentId}</strong>
+                  {" · "}
+                  {row.scope === "all" ? "كل الطلاب" : row.studentName || "طالب"}
+                  {" · حتى "}
+                  {fmtDateTime(row.extendedUntil)}
+                  {row.reason ? ` · ${row.reason}` : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => revoke(row.id)}
+                  className={`${btn} border text-xs`}
+                  style={{ borderColor: "rgba(251,113,133,.4)", color: C.rose }}
+                >
+                  إلغاء
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Bypass quiz / homework ───────────────────────────────────────────────────
+
 
 function BypassSection({
   dossier,

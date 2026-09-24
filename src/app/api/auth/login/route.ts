@@ -56,6 +56,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "استخدم لوحة الإدارة لتسجيل الدخول" }, { status: 403 });
     }
 
+    if (user.accountMode === "CENTER_ID") {
+      return NextResponse.json(
+        {
+          error: "هذا حساب رقم تعريفي. سجّل الدخول من center.code-up.tech عبر Get by ID.",
+          code: "CENTER_ID_LOGIN",
+        },
+        { status: 403 }
+      );
+    }
+
     await clearFailedLogins(user.id);
 
     // ── Device lock: bind the account to a limited number of devices ──────────

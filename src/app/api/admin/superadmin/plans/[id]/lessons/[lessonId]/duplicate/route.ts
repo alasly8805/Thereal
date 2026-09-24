@@ -76,6 +76,7 @@ export async function POST(
               optionC: q.optionC,
               optionD: q.optionD,
               correctAnswer: q.correctAnswer,
+              degree: q.degree,
               order: q.order
             }))
           }

@@ -13,8 +13,10 @@ import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import { verifyToken } from "@/lib/auth";
 import { getMaintenanceMode, getMaintenanceMessage } from "@/lib/settings";
 import { getOverloadProtectionState } from "@/lib/overload-protection";
-import { SEO_KEYWORD_MATRIX } from "@/lib/seo-keywords";
+import { TOP_META_KEYWORDS } from "@/lib/seo-keywords";
 import { safeJsonLd } from "@/lib/jsonld";
+import { SponsorMetaPixel } from "@/components/analytics/SponsorMetaPixel";
+import { META_PIXEL_ID } from "@/lib/meta-pixel";
 import "./globals.css";
 
 interface GateResult {
@@ -83,11 +85,11 @@ async function resolveGatedState(): Promise<GateResult> {
 export const metadata: Metadata = {
   metadataBase: new URL("https://code-up.tech"),
   title: {
-    default: "منصة Code-UP | المنصة الأولى لشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية",
+    default: "منصة Code-UP | شرح البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية",
     template: "%s | منصة Code-UP التعليمية",
   },
-  description: "المنصة الرقمية الأولى المتخصصة في تدريس وشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة (نظري وعملي). محرر أكواد مدمج، تعدد المعلمين، بنك أسئلة شامل، ونظام مكافآت تفاعلي ومتابعة ولي الأمر بالواتساب.",
-  keywords: SEO_KEYWORD_MATRIX.slice(0, 3000),
+  description: "منصة تعليمية لشرح البرمجة النظري والعملي لطلاب البكالوريا والثانوية العامة. محرر أكواد مدمج، تعدد المعلمين، بنك أسئلة، ومتابعة ولي الأمر.",
+  keywords: [...TOP_META_KEYWORDS],
   alternates: {
     canonical: "https://code-up.tech",
   },
@@ -95,8 +97,8 @@ export const metadata: Metadata = {
     icon: "/logo.jpeg",
   },
   openGraph: {
-    title: "منصة Code-UP | المنصة الأولى لشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا",
-    description: "المنصة التعليمية الرائدة في مصر لتدريس البرمجة النظري والعملي، محرر أكواد مدمج، بنك أسئلة، وتعدد المعلمين.",
+    title: "منصة Code-UP | شرح البرمجة والذكاء الاصطناعي للبكالوريا",
+    description: "شرح البرمجة النظري والعملي لطلاب البكالوريا والثانوية، مع محرر أكواد مدمج وتعدد المعلمين.",
     url: "https://code-up.tech",
     siteName: "منصة Code-UP",
     locale: "ar_EG",
@@ -112,7 +114,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "منصة Code-UP | المنصة الأولى لشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا",
+    title: "منصة Code-UP | شرح البرمجة والذكاء الاصطناعي للبكالوريا",
     description: "شرح شامل للبرمجة النظري والعملي مع محرر أكواد مدمج، تعدد المعلمين، ونظام تحفيز ذكي.",
     images: ["https://code-up.tech/og-image.jpeg"],
   },
@@ -148,23 +150,54 @@ const jsonLd = {
         "CodeUp",
         "منصة كود اب",
         "كود اب",
-        "CodeUp Academy",
-        "منصة البرمجة والذكاء الاصطناعي الأولى",
-        "أفضل منصة متابعة تعليمية",
-        "أقوى منصة برمجة للبكالوريا"
+        "كوداب",
+        "منصة كوداب"
       ],
       "url": "https://code-up.tech",
       "logo": "https://code-up.tech/logo.jpeg",
       "image": "https://code-up.tech/og-image.jpeg",
-      "description": "المنصة الرقمية الأولى المتخصصة في تدريس وشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة بشقيها النظري والعملي، مع توفير محرر أكواد مدمج، تعدد المعلمين، وبنك أسئلة ونظام مكافآت تفاعلي ومتابعة ولي الأمر بالواتساب.",
-      "knowsAbout": SEO_KEYWORD_MATRIX.slice(0, 1000),
+      "email": "contact@code-up.tech",
+      "telephone": "+20-111-880-2621",
+      "description": "منصة تعليم إلكتروني مصرية خاصة لشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة. ليست منصة وزارة التربية والتعليم وليست كيريو QUREO.",
+      "knowsAbout": [
+        "برمجة ثانوية عامة",
+        "برمجة بكالوريا",
+        "البرمجة النظري",
+        "البرمجة العملي",
+        "Python",
+        "JavaScript",
+        "خرائط التدفق",
+        "الخوارزميات",
+        "ذكاء اصطناعي",
+        "متابعة ولي الأمر",
+        "فودافون كاش",
+        "إنستاباي",
+        "فوري",
+        "محرر أكواد مدمج",
+        "QUREO",
+        "كيريو"
+      ],
       "areaServed": {
         "@type": "Country",
         "name": "Egypt"
       },
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "KemetCraft Engineering",
+        "url": "https://kemetcraft.me/"
+      },
       "sameAs": [
-        "https://www.facebook.com/CodeUpAcad"
-      ]
+        "https://www.facebook.com/CodeUpAcad",
+        "https://kemetcraft.me/"
+      ],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "telephone": "+20-111-880-2621",
+        "email": "contact@code-up.tech",
+        "contactType": "customer service",
+        "areaServed": "EG",
+        "availableLanguage": ["ar", "en"]
+      }
     },
     {
       "@type": "WebSite",
@@ -177,34 +210,15 @@ const jsonLd = {
       "inLanguage": "ar"
     },
     {
-      "@type": "FAQPage",
-      "@id": "https://code-up.tech/#faq",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "ما هي المنصة الرقمية الأولى المتخصصة في شرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا؟",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "تعتبر منصة Code-UP المنصة الرقمية الأولى المتخصصة في تدريس وشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة. تتميز بتغطية شاملة للبرمجة النظري للامتحانات الورقية والتطبيق العملي عبر محرر أكواد مدمج (In-App Compiler)، مع ميزة تعدد المدرسين ونظام النقاط والمكافآت التفاعلي."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "كيف تساعد منصة Code-UP الطلاب في البرمجة النظري والتطبيقي؟",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "تقدم Code-UP شروحات تفكك المصطلحات المعقدة والخوارزميات وخرائط التدفق للامتحانات الورقية، وتتيح للطالب كتابة وتجربة الأكواد بلغات Python و JavaScript مباشرة داخل المنصة دون برامج خارجية."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "ما هي ميزة تعدد المدرسين في منصة Code-UP؟",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "تتيح Code-UP للطالب حرية اختيار المعلم الذي يتناسب مع طريقة استيعابه وفهمه لكل درس ونقل المعرفة بأساليب تعليمية متنوعة تضمن التفوق الأكاديمي."
-          }
-        }
-      ]
+      "@type": "WebPage",
+      "@id": "https://code-up.tech/#webpage",
+      "url": "https://code-up.tech",
+      "name": "منصة Code-UP",
+      "inLanguage": "ar",
+      "speakable": {
+        "@type": "SpeakableSpecification",
+        "cssSelector": ["h1", "[data-geo-quote]"]
+      }
     }
   ]
 };
@@ -236,6 +250,8 @@ export default async function RootLayout({
           href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Tajawal:wght@500;700;800;900&display=swap"
         />
         <meta name="facebook-domain-verification" content="fagzmwahaw0vng7nfk8xm6izl2upf4" />
+        <link rel="alternate" type="text/plain" href="https://code-up.tech/llms.txt" title="llms.txt" />
+        <link rel="alternate" type="text/plain" href="https://code-up.tech/llms-full.txt" title="llms-full.txt" />
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#0E6E62" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -248,6 +264,15 @@ export default async function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: safeJsonLd(jsonLd) }}
         />
+        <noscript>
+          <img
+            height={1}
+            width={1}
+            style={{ display: "none" }}
+            src={`https://www.facebook.com/tr?id=${META_PIXEL_ID}&ev=PageView&noscript=1`}
+            alt=""
+          />
+        </noscript>
       </head>
       <body suppressHydrationWarning>
         <ThemeProvider>
@@ -269,6 +294,7 @@ export default async function RootLayout({
                 {children}
                 {!hideAppChrome && <AIAssistant />}
                 {!hideAppChrome && <MobileTabBar />}
+                {!hideAppChrome && <SponsorMetaPixel />}
               </ToastProvider>
             </>
           )}

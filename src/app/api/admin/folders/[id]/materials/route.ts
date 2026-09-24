@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import { FolderContentType } from "@/generated/prisma";
+import { appendFolderContent } from "@/lib/folder-content-order";
 
 export async function POST(
   req: NextRequest,
@@ -64,6 +66,8 @@ export async function POST(
         order: materialCount,
       },
     });
+
+    await appendFolderContent(folderId, FolderContentType.ATTACHMENT, material.id);
 
     return NextResponse.json({ success: true, material });
   } catch (error) {

@@ -8,10 +8,11 @@ import { acquireAdvisoryLock } from "@/lib/distributed-lock";
 import { blockSupportView } from "@/lib/support-auth";
 import {
   canAccessContent,
+  contentDeniedPayload,
   ContentType,
   recordContentCompleted,
 } from "@/lib/content-access-engine";
-import { PASS_MARK, summarizeAnswers } from "@/lib/quiz-grading";
+import { PASS_MARK, summarizeAnswers, parseDegree } from "@/lib/quiz-grading";
 import { enqueueEssayGrading, kickEssayGrading } from "@/lib/essay-ai-grading";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -48,16 +49,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       sourceId: quizId,
       title: quiz.title,
     });
-    if ("requiredItem" in access) {
-      return NextResponse.json(
-        {
-          error: `يجب إكمال «${access.requiredItem.title}» أولًا.`,
-          code: access.code,
-          requiredItem: access.requiredItem,
-        },
-        { status: 403 }
-      );
-    }
+    const denied = contentDeniedPayload(access);
+    if (denied) return NextResponse.json(denied.body, { status: denied.status });
   }
 
   let planEnrollmentId: string | null = null;
@@ -90,11 +83,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     );
   }
 
-  // One graded attempt: any completed result is final, including 0%.
-  // Time expiry is a separate switch; it must not be what locks a retake.
-  if (existingResult.completedAt && !existingResult.allowRetake) {
+  // A completed sheet stays frozen until the student explicitly starts a
+  // retake (POST /start-retake). allowRetake alone must not accept a submit
+  // that would delete the old answers behind a review page.
+  if (existingResult.completedAt) {
     return NextResponse.json(
-      { error: "تم احتساب درجتك مرة واحدة. لا يمكن إعادة الاختبار.", alreadySubmitted: true, result: existingResult },
+      {
+        error: existingResult.allowRetake
+          ? "ابدأ المحاولة الجديدة من زر «بدء محاولة جديدة» أولاً."
+          : "تم احتساب درجتك مرة واحدة. لا يمكن إعادة الاختبار.",
+        alreadySubmitted: true,
+        allowRetake: !!existingResult.allowRetake,
+        result: existingResult,
+      },
       { status: 409 }
     );
   }
@@ -135,14 +136,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       correctAnswer: isEssay ? "" : (question.correctAnswer || "A"),
       isCorrect,
       status: isEssay ? "PENDING" : "APPROVED",
+      degree: parseDegree(question.degree),
     };
   });
 
   // Essay answers are PENDING until a teacher/assistant grades them. The stored
-  // score is `correct / totalQ`, so while essays are pending it is a partial
-  // (MCQ-only) score — never a final grade. `passed` is therefore unknown (null)
-  // until every essay has been decided; grading finalises it (see
-  // recomputeQuizResult in lib/quiz-grading).
+  // score is earnedDegree / totalDegree (equal-weight when every question is 1),
+  // so while essays are pending it is a partial (MCQ-only) score — never a final
+  // grade. `passed` is therefore unknown (null) until every essay has been
+  // decided; grading finalises it (see recomputeQuizResult in lib/quiz-grading).
   const summary = summarizeAnswers(breakdown);
   const { correct, score, pendingCount } = summary;
   const hasPendingEssays = pendingCount > 0;
@@ -153,13 +155,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     result = await prisma.$transaction(async (tx: any) => {
       await acquireAdvisoryLock(`quiz-submit:${session.id}:${quizId}`, tx);
       const locked = await tx.quizResult.findUnique({ where: { studentId_quizId: { studentId: session.id, quizId } } });
-      if (locked?.completedAt && !locked.allowRetake) {
+      if (locked?.completedAt) {
         throw new Error("QUIZ_ALREADY_SUBMITTED");
       }
       const completedAt = new Date();
       const savedResult = await tx.quizResult.upsert({
         where: { studentId_quizId: { studentId: session.id, quizId } },
-        update: { score, totalQ, completedAt, allowRetake: false, startedAt: dbStartedAt },
+        update: { score, totalQ, completedAt, allowRetake: false, startedAt: dbStartedAt, draftAnswers: null },
         create: { studentId: session.id, quizId, score, totalQ, startedAt: dbStartedAt },
       });
       if (session.role === "student") {
@@ -201,6 +203,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         optionB:        b.optionB,
         optionC:        b.optionC,
         optionD:        b.optionD,
+        degree:         b.degree,
       })),
     });
   }

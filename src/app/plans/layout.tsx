@@ -1,8 +1,8 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "الخطط والمسارات الدراسية | منصة Code-UP التعليمية | CodeUp Academy",
-  description: "تصفح الخطط والمسارات الدراسية المتاحة لتطوير مهاراتك بشكل منظم مع نخبة من أفضل المعلمين على منصة Code-UP.",
+  title: "الخطط والمسارات الدراسية | منصة Code-UP",
+  description: "تصفح الخطط والمسارات الدراسية المتاحة على منصة Code-UP لطلاب البرمجة والذكاء الاصطناعي.",
   alternates: {
     canonical: "https://code-up.tech/plans",
   },

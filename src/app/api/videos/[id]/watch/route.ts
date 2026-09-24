@@ -437,8 +437,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Verify access via centralized checkVideoAccess
   const hasAccess = await checkVideoAccess(session.id, session.role, videoId);
+  console.log("[center-video-access]", JSON.stringify({
+    event: "watch_play",
+    phone: session.phone,
+    studentId: session.id,
+    videoId,
+    courseId: course.id,
+    courseTitle: course.title,
+    allowed: hasAccess,
+  }));
   if (!hasAccess) {
-    return NextResponse.json({ error: "لا يوجد صلاحية للوصول لهذا الكورس" }, { status: 403 });
+    return NextResponse.json({ error: "لا يوجد صلاحية للوصول لهذا الكورس", code: "NOT_ENROLLED" }, { status: 403 });
   }
 
   // Reuse an existing active session for this student + video

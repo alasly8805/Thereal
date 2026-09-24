@@ -39,6 +39,12 @@ export async function checkSequentialAccess(
 ): Promise<SequentialLock | null> {
   if (!(await getConfigBool("sequential_access_enforced"))) return null;
 
+  const student = await prisma.user.findUnique({
+    where: { id: studentId },
+    select: { accountMode: true },
+  });
+  if (student?.accountMode === "CENTER_ID") return null;
+
   const video = await prisma.video.findUnique({
     where: { id: videoId },
     select: {

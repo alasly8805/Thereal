@@ -108,19 +108,23 @@ model User {
 
   isDemo Boolean @default(false)
 
-  accountMode        String                   @default("NORMAL") // "NORMAL" | "TESTER"
+  accountMode        String                   @default("NORMAL") // "NORMAL" | "TESTER" | "CENTER_ID"
   testerCapabilities String? // JSON string of boolean capability flags
   testerNotes        String? // Internal notes by superadmin
   testerActivityLogs TesterActivityLog[]
   courseEnrollments  CourseEnrollment[]
   contentProgress    StudentContentProgress[]
   contentOverrides   ContentAccessOverride[]
+  contentExtensions  ContentExtension[]
+  centerPass         CenterPass?
 
   // Teacher-created assistant accounts (role = "assistant")
   assistantOfTeacherId String?
   assistantOfTeacher   User?   @relation("TeacherAssistants", fields: [assistantOfTeacherId], references: [id], onDelete: Cascade)
   teacherAssistants    User[]  @relation("TeacherAssistants")
   assistantPermissions String?
+  /// When true, the assistant can open the students page, dossiers, and reports.
+  canViewStudents      Boolean @default(false)
 
   @@index([role])
   @@index([assistantOfTeacherId])
@@ -334,8 +338,24 @@ model Folder {
   homeworks          Homework[]
   folderPurchases    FolderPurchase[]
   accessCodes        AccessCode[]
+  /// Unified student/admin display order for videos, homework, attachments, and exams.
+  contents           FolderContent[]
 
   @@index([courseId])
+}
+
+/// One sequence per folder. Admin path order is stored here so the student
+/// learn page can list every content type in that same order.
+model FolderContent {
+  id          String            @id @default(cuid())
+  folderId    String
+  contentType FolderContentType
+  contentId   String
+  order       Int               @default(0)
+  folder      Folder            @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([folderId, contentType, contentId])
+  @@index([folderId, order])
 }
 
 model Video {
@@ -427,6 +447,9 @@ model Quiz {
   title               String
   timeLimitMinutes    Int                      @default(30)
   retakeCooldownHours Int                      @default(0)
+  /// Hard close window for the exam/quiz. Enforced only when enableAutoClose is true.
+  closeAt             DateTime?
+  enableAutoClose     Boolean                  @default(false)
   folderId            String?
   planLessonId        String?
   createdAt           DateTime                 @default(now())
@@ -464,6 +487,9 @@ model QuizQuestion {
   optionC       String                    @default("")
   optionD       String                    @default("")
   correctAnswer String                    @default("A")
+  /// Points this question contributes toward the quiz total. Default 1 keeps
+  /// existing equal-weight scoring (`correct / totalQ * 100`).
+  degree        Int                       @default(1)
   order         Int                       @default(0)
   quiz          Quiz                      @relation(fields: [quizId], references: [id], onDelete: Cascade)
   gradingGuide  QuizQuestionGradingGuide?
@@ -553,11 +579,14 @@ model ContentItem {
   type            ContentType
   sourceId        String
   title           String
+  closeAt         DateTime?
+  enableAutoClose Boolean                  @default(false)
   createdAt       DateTime                 @default(now())
   updatedAt       DateTime                 @updatedAt
   prerequisites   ContentPrerequisite[]    @relation("TargetContentPrerequisites")
   requiredBy      ContentPrerequisite[]    @relation("PrerequisiteContent")
   studentProgress StudentContentProgress[]
+  extensions      ContentExtension[]
 
   @@unique([type, sourceId])
   @@index([sourceId])
@@ -627,6 +656,65 @@ model ContentAccessOverride {
   @@index([revokedAt])
 }
 
+/// Support-granted extra time after closeAt. studentId null = every student.
+model ContentExtension {
+  id             String      @id @default(cuid())
+  contentId      String      @map("content_id")
+  studentId      String?     @map("student_id")
+  extendedUntil  DateTime    @map("extended_until")
+  reason         String?
+  supportId      String      @map("support_id")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  revokedAt      DateTime?   @map("revoked_at")
+  content        ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  student        User?       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([contentId])
+  @@index([studentId])
+  @@index([extendedUntil])
+  @@map("content_extensions")
+}
+
+/// Hall-PC student minted by superadmin: unique public ID + password, no phone.
+/// Works only on center.code-up.tech. Access is the cherry-picked item list,
+/// not a full course enrollment (so unselected videos/HW/quizzes stay hidden).
+model CenterPass {
+  id          String          @id @default(cuid())
+  publicId    String          @unique
+  studentId   String          @unique
+  student     User            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  createdById String
+  title       String          @default("باقة السنتر")
+  notes       String?
+  isActive    Boolean         @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  items       CenterPassItem[]
+
+  @@index([createdById])
+  @@index([isActive])
+}
+
+model CenterPassItem {
+  id        String     @id @default(cuid())
+  passId    String
+  pass      CenterPass @relation(fields: [passId], references: [id], onDelete: Cascade)
+  /// VIDEO | HOMEWORK | QUIZ | MATERIAL
+  kind      String
+  sourceId  String
+  courseId  String
+  folderId  String?
+  title     String     @default("")
+  sortOrder Int        @default(0)
+  createdAt DateTime   @default(now())
+
+  @@unique([passId, kind, sourceId])
+  @@index([passId])
+  @@index([courseId])
+  @@index([sourceId])
+}
+
 model QuizResult {
   id          String       @id @default(cuid())
   studentId   String
@@ -634,6 +722,9 @@ model QuizResult {
   score       Float
   totalQ      Int
   allowRetake Boolean      @default(false)
+  /// In-progress draft (JSON object of questionId -> answer). Cleared on submit.
+  /// Never used for grading — teacher lists require completedAt.
+  draftAnswers String?
   startedAt   DateTime?
   /// NULL while the attempt is in progress (row is created when the student
   /// opens the quiz). Set only by the submit route. Must NOT default to now():
@@ -671,6 +762,8 @@ model QuizAnswer {
   optionB        String        @default("")
   optionC        String        @default("")
   optionD        String        @default("")
+  /// Snapshot of the question's point value at submit / last regrade.
+  degree         Int           @default(1)
   createdAt      DateTime      @default(now())
   result         QuizResult    @relation(fields: [resultId], references: [id], onDelete: Cascade)
   aiGrade        EssayAIGrade?
@@ -1153,6 +1246,8 @@ model Homework {
   // Upload type
   allowedFileTypes String? // comma-separated: "pdf,py,js,zip" — null = any
   dueAt            DateTime?
+  closeAt          DateTime?
+  enableAutoClose  Boolean              @default(false)
   isPublished      Boolean              @default(false)
   timeLimitMinutes Int                  @default(30)
   createdAt        DateTime             @default(now())
@@ -1180,6 +1275,9 @@ model HomeworkQuestion {
   optionC       String
   optionD       String
   correctAnswer String // "A" | "B" | "C" | "D"
+  /// Points this question contributes toward the homework total. Default 1
+  /// keeps existing equal-weight scoring (`correct / totalQ * 100`).
+  degree        Int      @default(1)
   order         Int      @default(0)
   homework      Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
 
@@ -1200,9 +1298,13 @@ model HomeworkSubmission {
   fileUrl         String?
   fileName        String?
   /// pending | passed | failed | review_requested
+  /// PDF uploads write review_requested (قيد المراجعة) and COMPLETED progress,
+  /// which unlocks the next content-chain item until a teacher reject.
   status          String          @default("pending")
   /// Teacher/assistant granted another attempt after a lock (reject or pass).
-  /// Submit is otherwise one-shot; this is the only way back in.
+  /// Auto-graded types are otherwise one-shot. Rejected PDF uploads can be
+  /// replaced without this flag; the next item locks on reject and unlocks
+  /// again on the replacement قيد المراجعة upload (accept keeps it open).
   allowRetake     Boolean         @default(false)
   completedAt     DateTime        @default(now())
   homework        Homework        @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
@@ -1803,6 +1905,15 @@ enum ContentType {
   EXAM
   SOLUTION_VIDEO
   PDF
+}
+
+/// Display order kinds for FolderContent. QUIZ rows are stored as EXAM and
+/// PDF/material rows as ATTACHMENT so the student list has one order space.
+enum FolderContentType {
+  VIDEO
+  HOMEWORK
+  ATTACHMENT
+  EXAM
 }
 
 enum ContentProgressStatus {

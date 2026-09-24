@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
-import { ContentProgressStatus, ContentType } from "@/generated/prisma";
+import { ContentProgressStatus, ContentType, FolderContentType } from "@/generated/prisma";
+import { persistFolderContentOrders, slotsFromContentItems, toFolderContentType } from "@/lib/folder-content-order";
 
 export async function GET(
   req: NextRequest,
@@ -169,6 +170,23 @@ export async function GET(
     }
 
     const itemIds = enrichedItems.map((i) => i.id);
+    const realFolderIds = folderList.map((folder) => folder.id).filter((id) => id !== "course-root");
+    const savedOrders = realFolderIds.length
+      ? await prisma.folderContent.findMany({
+          where: { folderId: { in: realFolderIds } },
+          orderBy: { order: "asc" },
+        })
+      : [];
+    const savedRank = new Map<string, number>();
+    for (const row of savedOrders) {
+      savedRank.set(`${row.folderId}:${row.contentType}:${row.contentId}`, row.order);
+    }
+    const rankOf = (item: (typeof enrichedItems)[number]) => {
+      const kind = toFolderContentType(item.type);
+      if (!kind) return null;
+      const rank = savedRank.get(`${item.folderId}:${kind}:${item.sourceId}`);
+      return rank ?? null;
+    };
 
     // Find all prerequisites between these items
     const prerequisites = await prisma.contentPrerequisite.findMany({
@@ -191,8 +209,23 @@ export async function GET(
       itemsGroupedByFolder.set(fid, list);
     });
 
-    // Sort items within each folder based on prerequisite chain
+    // Sort items within each folder based on the saved FolderContent.order.
+    // Folders that have never been seeded still fall back to the prerequisite
+    // chain so older courses keep the sequence the admin last saved as edges.
     for (const [, fItems] of itemsGroupedByFolder.entries()) {
+      if (fItems.some((item) => rankOf(item) !== null)) {
+        const sorted = [...fItems].sort((a, b) => {
+          const rankA = rankOf(a);
+          const rankB = rankOf(b);
+          if (rankA !== null && rankB !== null) return rankA - rankB;
+          if (rankA !== null) return -1;
+          if (rankB !== null) return 1;
+          return a.initialOrder - b.initialOrder;
+        });
+        finalSortedItems.push(...sorted);
+        continue;
+      }
+
       const itemMap = new Map(fItems.map((i) => [i.id, i]));
       const inDegree = new Map<string, number>();
       const adj = new Map<string, string[]>();
@@ -304,12 +337,14 @@ export async function PUT(
       sequentialAccess,
       folderChains,
       orderedItemIds,
+      contentOrders,
       customEdges,
     } = body as {
       mode?: "free" | "per_folder" | "course" | "custom";
       sequentialAccess?: boolean;
       folderChains?: Record<string, string[]>;
       orderedItemIds?: string[];
+      contentOrders?: Record<string, string[]>;
       customEdges?: Array<{
         targetContentId: string;
         prerequisiteContentId: string;
@@ -345,6 +380,17 @@ export async function PUT(
     });
     const allCourseItemIds = courseItems.map((i) => i.id);
     const itemMapById = new Map(courseItems.map((i) => [i.id, i]));
+
+    // Display order is independent of the lock mode. Free mode used to return
+    // before any order was written, so the student page fell back to
+    // type-grouped lists.
+    await saveSubmittedFolderOrder({
+      courseFolders: course.folders,
+      contentOrders,
+      folderChains,
+      orderedItemIds,
+      itemMapById,
+    });
 
     // If free mode, delete all prerequisites
     if (mode === "free" || (!targetSequentialAccess && (!customEdges || customEdges.length === 0))) {
@@ -532,4 +578,73 @@ export async function DELETE(
     console.error("Prerequisites DELETE error:", error);
     return NextResponse.json({ error: "حدث خطأ أثناء إلغاء الأقفال" }, { status: 500 });
   }
+}
+
+async function saveSubmittedFolderOrder(input: {
+  courseFolders: Array<{
+    id: string;
+    videos: Array<{ id: string }>;
+    homeworks: Array<{ id: string }>;
+    quizzes: Array<{ id: string }>;
+    materials: Array<{ id: string }>;
+  }>;
+  contentOrders?: Record<string, string[]>;
+  folderChains?: Record<string, string[]>;
+  orderedItemIds?: string[];
+  itemMapById: { get(id: string): { type: ContentType | string; sourceId: string } | undefined };
+}) {
+  const lists: Array<{ folderId: string; itemIds: string[] }> = [];
+
+  if (input.contentOrders && typeof input.contentOrders === "object") {
+    for (const [folderId, itemIds] of Object.entries(input.contentOrders)) {
+      if (Array.isArray(itemIds)) lists.push({ folderId, itemIds });
+    }
+  } else if (input.folderChains && typeof input.folderChains === "object") {
+    for (const [folderId, itemIds] of Object.entries(input.folderChains)) {
+      if (Array.isArray(itemIds)) lists.push({ folderId, itemIds });
+    }
+  } else if (Array.isArray(input.orderedItemIds)) {
+    const folderOf = new Map<string, string>();
+    for (const folder of input.courseFolders) {
+      for (const video of folder.videos) folderOf.set(video.id, folder.id);
+      for (const homework of folder.homeworks) folderOf.set(homework.id, folder.id);
+      for (const quiz of folder.quizzes) folderOf.set(quiz.id, folder.id);
+      for (const material of folder.materials) folderOf.set(material.id, folder.id);
+    }
+    const grouped = new Map<string, string[]>();
+    for (const itemId of input.orderedItemIds) {
+      const item = input.itemMapById.get(itemId);
+      const folderId = item ? folderOf.get(item.sourceId) : undefined;
+      if (!folderId) continue;
+      const list = grouped.get(folderId) ?? [];
+      list.push(itemId);
+      grouped.set(folderId, list);
+    }
+    for (const [folderId, itemIds] of grouped) lists.push({ folderId, itemIds });
+  }
+
+  if (lists.length === 0) return;
+
+  const foldersById = new Map(input.courseFolders.map((folder) => [folder.id, folder]));
+  const byFolder = new Map<string, Array<{ contentType: FolderContentType; contentId: string }>>();
+
+  for (const list of lists) {
+    const folder = foldersById.get(list.folderId);
+    if (!folder) continue;
+    const rows = slotsFromContentItems(list.itemIds, input.itemMapById);
+    const seen = new Set(rows.map((row) => `${row.contentType}:${row.contentId}`));
+    const append = (contentType: FolderContentType, contentId: string) => {
+      const key = `${contentType}:${contentId}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({ contentType, contentId });
+    };
+    for (const video of folder.videos) append(FolderContentType.VIDEO, video.id);
+    for (const homework of folder.homeworks) append(FolderContentType.HOMEWORK, homework.id);
+    for (const quiz of folder.quizzes) append(FolderContentType.EXAM, quiz.id);
+    for (const material of folder.materials) append(FolderContentType.ATTACHMENT, material.id);
+    byFolder.set(folder.id, rows);
+  }
+
+  await persistFolderContentOrders(byFolder);
 }

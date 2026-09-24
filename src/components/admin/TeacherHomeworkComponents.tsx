@@ -1,6 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { EditHomeworkModal } from "@/components/admin/teacher/EditHomeworkModal";
+
+function toDatetimeLocal(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,7 +80,7 @@ function statusLabel(status: string, allowRetake?: boolean) {
   if (allowRetake) return { text: "مسموح إعادة المحاولة", cls: "bg-sky-500/15 text-sky-500" };
   if (status === "passed") return { text: "تمت الموافقة", cls: "bg-emerald-500/15 text-emerald-500" };
   if (status === "failed") return { text: "مرفوض", cls: "bg-rose-500/15 text-rose-500" };
-  if (status === "review_requested") return { text: "طلب مراجعة", cls: "bg-amber-500/15 text-amber-500" };
+  if (status === "review_requested") return { text: "قيد المراجعة", cls: "bg-amber-500/15 text-amber-500" };
   return { text: "معلق — رفع ملف", cls: "bg-sky-500/15 text-sky-500" };
 }
 
@@ -731,6 +740,8 @@ export function HomeworkManagerSection({
     videoId: "",
     dueAt: "",
     timeLimitMinutes: 30,
+    enableAutoClose: false,
+    closeAt: "",
     isPublished: false,
     // terminal
     expectedOutput: "",
@@ -744,6 +755,22 @@ export function HomeworkManagerSection({
 
   const [showGuide, setShowGuide] = useState(false);
   const [listType, setListType] = useState<"all" | "upload" | "exam" | "terminal" | "link">("all");
+  const [closeDrafts, setCloseDrafts] = useState<Record<string, { enableAutoClose: boolean; closeAt: string }>>({});
+  const [editHomework, setEditHomework] = useState<{
+    id: string;
+    title: string;
+    questions: Array<{
+      id: string;
+      question: string;
+      imageUrl?: string | null;
+      optionA?: string;
+      optionB?: string;
+      optionC?: string;
+      optionD?: string;
+      correctAnswer?: string;
+      degree?: number;
+    }>;
+  } | null>(null);
   const input = "w-full px-3.5 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--ink)] text-sm focus:outline-none focus:border-sky-400/60 transition-all";
   const label = "block text-xs font-semibold text-[var(--ink-muted)] mb-1.5";
   const btn = "inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold transition-colors disabled:opacity-50";
@@ -803,6 +830,8 @@ export function HomeworkManagerSection({
         videoId: form.videoId || undefined,
         dueAt: form.dueAt || undefined,
         timeLimitMinutes: form.timeLimitMinutes,
+        enableAutoClose: form.enableAutoClose,
+        closeAt: form.closeAt || undefined,
         isPublished: form.isPublished,
       };
       if (form.type === "link") payload.linkUrl = form.linkUrl;
@@ -852,6 +881,30 @@ export function HomeworkManagerSection({
     });
     if (res.ok) { notify("success", hw.isPublished ? "تم إخفاء الواجب" : "تم نشر الواجب ✅"); void fetchHomeworks(); }
     else notify("error", "تعذر تحديث حالة الواجب");
+  };
+
+  const saveClose = async (hw: any) => {
+    const draft = closeDrafts[hw.id] ?? {
+      enableAutoClose: !!hw.enableAutoClose,
+      closeAt: toDatetimeLocal(hw.closeAt),
+    };
+    const res = await fetch("/api/admin/homework", {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        homeworkId: hw.id,
+        enableAutoClose: draft.enableAutoClose,
+        closeAt: draft.enableAutoClose ? draft.closeAt : null,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      notify("success", "تم حفظ وقت الإغلاق");
+      void fetchHomeworks();
+    } else {
+      notify("error", data.error || "تعذر حفظ وقت الإغلاق");
+    }
   };
 
   const downloadSampleHwJson = () => {
@@ -1096,6 +1149,27 @@ export function HomeworkManagerSection({
             </div>
           </div>
 
+          <div className="rounded-xl border border-rose-400/30 bg-rose-500/5 p-3 space-y-2">
+            <label className="flex items-center gap-2 text-xs font-bold text-[var(--ink)]">
+              <input
+                type="checkbox"
+                checked={form.enableAutoClose}
+                onChange={e => setForm(f => ({ ...f, enableAutoClose: e.target.checked }))}
+                className="w-4 h-4 rounded"
+              />
+              إغلاق تلقائي بعد الوقت المحدد
+            </label>
+            <input
+              type="datetime-local"
+              value={form.closeAt}
+              disabled={!form.enableAutoClose}
+              onChange={e => setForm(f => ({ ...f, closeAt: e.target.value }))}
+              className={input}
+              dir="ltr"
+            />
+            <p className="text-[10px] text-[var(--ink-muted)]">بعد هذا الوقت يُغلق الواجب/الامتحان. الدعم يمكنه إعادة الفتح.</p>
+          </div>
+
           {/* Type-specific fields */}
           {form.type === "link" && (
             <div>
@@ -1250,7 +1324,7 @@ export function HomeworkManagerSection({
           </div>
         ) : (
           homeworks.filter((hw) => listType === "all" || hw.type === listType).map((hw) => (
-            <div key={hw.id} className={`bg-[var(--surface)] border rounded-2xl p-4 flex items-center justify-between gap-3 ${hw.type === "upload" ? "border-amber-400/70" : "border-[var(--border)]"}`}>
+            <div key={hw.id} className={`bg-[var(--surface)] border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 ${hw.type === "upload" ? "border-amber-400/70" : "border-[var(--border)]"}`}>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="font-bold text-[var(--ink)] truncate">{hw.title}</p>
@@ -1264,6 +1338,21 @@ export function HomeworkManagerSection({
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                {hw.type === "exam" && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditHomework({
+                        id: hw.id,
+                        title: hw.title || "واجب",
+                        questions: hw.questions || [],
+                      })
+                    }
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-600 bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
+                  >
+                    تعديل الأسئلة
+                  </button>
+                )}
                 <button
                   onClick={() => togglePublish(hw)}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${hw.isPublished ? "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20" : "text-[var(--ink-muted)] bg-[var(--border)] hover:bg-[var(--border)]/70"}`}
@@ -1274,12 +1363,69 @@ export function HomeworkManagerSection({
                   حذف
                 </button>
               </div>
+              <div className="basis-full mt-3 rounded-xl border border-rose-400/30 bg-rose-500/5 p-3 space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-[var(--ink)]">
+                  <input
+                    type="checkbox"
+                    checked={(closeDrafts[hw.id]?.enableAutoClose ?? !!hw.enableAutoClose) === true}
+                    onChange={(e) =>
+                      setCloseDrafts((prev) => ({
+                        ...prev,
+                        [hw.id]: {
+                          enableAutoClose: e.target.checked,
+                          closeAt: prev[hw.id]?.closeAt ?? toDatetimeLocal(hw.closeAt),
+                        },
+                      }))
+                    }
+                    className="w-4 h-4 rounded"
+                  />
+                  إغلاق تلقائي بعد الوقت المحدد
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="datetime-local"
+                    value={closeDrafts[hw.id]?.closeAt ?? toDatetimeLocal(hw.closeAt)}
+                    disabled={!(closeDrafts[hw.id]?.enableAutoClose ?? hw.enableAutoClose)}
+                    onChange={(e) =>
+                      setCloseDrafts((prev) => ({
+                        ...prev,
+                        [hw.id]: {
+                          enableAutoClose: prev[hw.id]?.enableAutoClose ?? !!hw.enableAutoClose,
+                          closeAt: e.target.value,
+                        },
+                      }))
+                    }
+                    className={input}
+                    dir="ltr"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => saveClose(hw)}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-rose-500 bg-rose-500/10 hover:bg-rose-500/20"
+                  >
+                    حفظ وقت الإغلاق
+                  </button>
+                </div>
+              </div>
             </div>
           ))
         )}
       </div>
 
       {showGuide && <HwJsonGuideModal onClose={() => setShowGuide(false)} notify={notify} />}
+
+      {editHomework && (
+        <EditHomeworkModal
+          isOpen={Boolean(editHomework)}
+          homeworkId={editHomework.id}
+          homeworkTitle={editHomework.title}
+          questions={editHomework.questions}
+          onClose={() => setEditHomework(null)}
+          onSuccess={async () => {
+            await fetchHomeworks();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -39,6 +39,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           status: true,
           teacherReply: true,
           reviewedAt: true,
+          degree: true,
         },
       },
     },

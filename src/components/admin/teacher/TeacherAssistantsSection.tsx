@@ -13,6 +13,7 @@ type AssistantRow = {
   isActive: boolean;
   lastLoginAt: string | null;
   createdAt: string;
+  canViewStudents?: boolean;
   permissions: AssistantPermissions;
 };
 
@@ -97,7 +98,11 @@ export function TeacherAssistantsSection() {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName, permissions: newPerms }),
+      body: JSON.stringify({
+        name: newName,
+        canViewStudents: Boolean(newPerms.canViewStudents),
+        permissions: newPerms,
+      }),
     });
     const data = await readJson<{ error?: string; password?: string; assistant?: { name: string } }>(res);
     setBusy(false);
@@ -153,7 +158,10 @@ export function TeacherAssistantsSection() {
   };
 
   const handleSavePerms = async (assistant: AssistantRow, permissions: AssistantPermissions) => {
-    const data = await patchAssistant(assistant.id, { permissions });
+    const data = await patchAssistant(assistant.id, {
+      canViewStudents: Boolean(permissions.canViewStudents),
+      permissions,
+    });
     if (data) {
       closeSheet();
       void load();
@@ -399,7 +407,13 @@ function PermissionToggles({
           <button
             key={item.key}
             type="button"
-            onClick={() => onChange({ ...value, [item.key]: !on })}
+            onClick={() =>
+              onChange(
+                item.key === "canViewStudents"
+                  ? { ...value, canViewStudents: !on, viewStudents: !on }
+                  : { ...value, [item.key]: !on }
+              )
+            }
             className={`flex w-full min-h-[4.25rem] items-center justify-between gap-3 rounded-2xl border px-4 text-right transition-colors ${
               on
                 ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30"

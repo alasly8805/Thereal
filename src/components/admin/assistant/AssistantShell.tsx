@@ -31,7 +31,7 @@ export function assistantNavItems(perms: AssistantPermissions): AssistantNavItem
   if (perms.manageHomework) {
     items.push({ id: "homework", label: "الواجبات", hint: "إنشاء واجبات رفع واختبارات", icon: "📚" });
   }
-  if (perms.viewStudents) {
+  if (perms.canViewStudents || perms.viewStudents) {
     items.push({ id: "students", label: "الطلاب", hint: "القائمة والأرقام حسب صلاحيتك", icon: "🎓" });
   }
   if (perms.viewQuizResults) {

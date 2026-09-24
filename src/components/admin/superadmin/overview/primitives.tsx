@@ -13,6 +13,23 @@ export const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("ar-EG", { year: "numeric", month: "2-digit", day: "2-digit" });
 export const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", hour12: true });
+export const fmtDateTime = (iso: string) =>
+  new Date(iso).toLocaleString("ar-EG", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+export function toDatetimeLocalValue(iso?: string) {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 /** Price after a percentage discount, or null if no discount applies. */
 export const discounted = (price: number, discountPercent?: number | null) =>
@@ -138,6 +155,8 @@ export function Stat({
   color = "brand",
   icon,
   compact = false,
+  lore,
+  delta,
 }: {
   label: string;
   value: ReactNode;
@@ -145,15 +164,21 @@ export function Stat({
   color?: Tone;
   icon?: ReactNode;
   compact?: boolean;
+  lore?: string;
+  delta?: number | null;
 }) {
   return (
     <div
       className={`rounded-xl flex flex-col justify-between ${compact ? "p-3" : "p-3.5"}`}
       style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+      title={lore}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-semibold truncate" style={{ color: "var(--ink-2)" }}>{label}</span>
-        {icon && <span style={{ color: tone[color] }} className="shrink-0 opacity-90">{icon}</span>}
+        <span className="flex items-center gap-1 shrink-0">
+          {delta != null && delta !== 0 && <Delta n={delta} />}
+          {icon && <span style={{ color: tone[color] }} className="opacity-90">{icon}</span>}
+        </span>
       </div>
       <div
         className={`${compact ? "text-lg" : "text-xl"} font-black leading-none mt-2 tabular-nums`}
@@ -161,7 +186,59 @@ export function Stat({
       >
         {value}
       </div>
-      {sub && <div className="text-[10px] mt-1.5 font-medium truncate" style={{ color: "var(--ink-3)" }}>{sub}</div>}
+      {sub && <div className="text-[10px] mt-1.5 font-medium leading-snug" style={{ color: "var(--ink-3)" }}>{sub}</div>}
+      {lore && (
+        <p className="text-[10px] mt-1.5 leading-relaxed" style={{ color: "var(--ink-3)" }}>
+          {lore}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function Delta({ n, money = false }: { n: number; money?: boolean }) {
+  if (!n) return null;
+  const up = n > 0;
+  const label = money
+    ? `${up ? "+" : ""}${egp(n)}`
+    : `${up ? "+" : ""}${ar(n)}`;
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-black tabular-nums"
+      style={{
+        background: up ? "color-mix(in srgb, #22c55e 16%, transparent)" : "color-mix(in srgb, #ef4444 16%, transparent)",
+        color: up ? tone.green : tone.red,
+      }}
+      title={up ? "زاد منذ تلك اللحظة حتى الآن" : "نقص منذ تلك اللحظة حتى الآن"}
+    >
+      {label}
+    </span>
+  );
+}
+
+export function XpBar({
+  value,
+  max,
+  color,
+  label,
+}: {
+  value: number;
+  max: number;
+  color: string;
+  label?: string;
+}) {
+  const pctFill = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  return (
+    <div className="w-full">
+      <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: "color-mix(in srgb, var(--ink) 10%, transparent)" }}>
+        <div
+          className="h-full rounded-full transition-all duration-700"
+          style={{ width: `${pctFill}%`, background: color, boxShadow: `0 0 12px ${color}` }}
+        />
+      </div>
+      {label && (
+        <div className="text-[10px] mt-1 font-semibold" style={{ color: "var(--ink-3)" }}>{label}</div>
+      )}
     </div>
   );
 }
@@ -212,9 +289,16 @@ export function StackedBar({
 export function PaymentSourcePill({ source, registeredBy }: { source?: string; registeredBy?: string }) {
   switch (source) {
     case "PAYMENT_GATEWAY":
-      return <Pill color="green" title="بوابة دفع إلكترونية">💳 بوابة دفع</Pill>;
+    case "PURCHASE":
+      return <Pill color="green" title="دفع إلكتروني أو شراء مباشر">💳 {source === "PURCHASE" ? "شراء مباشر" : "بوابة دفع"}</Pill>;
     case "WALLET":
       return <Pill color="amber" title="خصم من رصيد المحفظة">👛 محفظة</Pill>;
+    case "COVERED_BY_PACKAGE":
+      return <Pill color="sky" title="المقعد مغطى باشتراك الباقة — لا يُضاف لإيراد الكورس">🎟️ مغطى بالباقة</Pill>;
+    case "ACCESS_CODE":
+      return <Pill color="gold" title="تفعيل بكود وصول">🔑 كود تفعيل</Pill>;
+    case "ADMIN":
+      return <Pill color="violet" title={`تسجيل من اللوحة بواسطة ${registeredBy || "مشرف"}`}>✍️ لوحة{registeredBy ? ` · ${registeredBy}` : ""}</Pill>;
     case "TESTER_BYPASS":
       return <Pill color="slate" title="حساب فحص / تجريبي">🧪 تجريبي</Pill>;
     default:

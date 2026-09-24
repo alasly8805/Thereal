@@ -31,6 +31,7 @@ import {
   Menu,
   Search,
   UserCog,
+  Fingerprint,
 } from "lucide-react";
 import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
 import { AdminActionPasswordBar } from "@/components/admin/AdminActionPasswordBar";
@@ -92,6 +93,10 @@ export function ClassicAdminShell({
     finance: true,
     ai: true,
     operations: false,
+    academic: true,
+    curriculum: true,
+    assessment: true,
+    students: true,
   });
 
   const toggleHub = (hubId: string) => {
@@ -140,7 +145,8 @@ export function ClassicAdminShell({
       title: "استوديو الذكاء الاصطناعي",
       icon: <Bot className="w-4 h-4" />,
       sections: [
-        { id: "ai-studio", label: "مركز الذكاء الاصطناعي الموحد", badge: "AI Studio", badgeVariant: "bronze", icon: <Sparkles className="w-3.5 h-3.5" /> },
+        { id: "ai-copilot", label: "مساعد المشرف العام", badge: "DeepSeek", badgeVariant: "bronze", icon: <Sparkles className="w-3.5 h-3.5" /> },
+        { id: "ai-studio", label: "مركز الذكاء الاصطناعي", badge: "Studio", icon: <Bot className="w-3.5 h-3.5" /> },
       ],
     },
     {
@@ -150,6 +156,7 @@ export function ClassicAdminShell({
       sections: [
         { id: "staff-accounts", label: "المشرفون والموظفون", icon: <KeyRound className="w-3.5 h-3.5" /> },
         { id: "testers", label: "حسابات الفحص (QA Testers)", icon: <Eye className="w-3.5 h-3.5" /> },
+        { id: "center-passes", label: "أرقام السنتر (Center ID)", icon: <Fingerprint className="w-3.5 h-3.5" /> },
         { id: "whatsapp", label: "خدمة WhatsApp (Baileys)", icon: <Phone className="w-3.5 h-3.5" /> },
         { id: "daily-exams", label: "امتحانات لوحة الشرف", icon: <Award className="w-3.5 h-3.5" /> },
         { id: "leaderboard-prizes", label: "جوائز لوحة الشرف", icon: <Award className="w-3.5 h-3.5" /> },
@@ -169,6 +176,7 @@ export function ClassicAdminShell({
       icon: <LayoutDashboard className="w-4 h-4" />,
       sections: [
         { id: "dashboard", label: "مؤشرات الأداء والتحليلات", icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
+        { id: "teacher-subscriptions", label: "طلابك والأرقام", icon: <Wallet className="w-3.5 h-3.5" /> },
         { id: "my-page", label: "الملف التعريفي العام للمعلم", icon: <Eye className="w-3.5 h-3.5" /> },
         { id: "assistants", label: "المساعدون", icon: <UserCog className="w-3.5 h-3.5" /> },
       ],
@@ -199,7 +207,7 @@ export function ClassicAdminShell({
       title: "الطلاب والاشتراكات والوصول",
       icon: <Users className="w-4 h-4" />,
       sections: [
-        { id: "teacher-subscriptions", label: "حجوزات واشتراكات الطلاب", icon: <Wallet className="w-3.5 h-3.5" /> },
+        { id: "teacher-subscriptions", label: "طلابك والأرقام", icon: <Wallet className="w-3.5 h-3.5" /> },
         { id: "students", label: "قائمة الطلاب وأرقامهم", icon: <Phone className="w-3.5 h-3.5" /> },
         { id: "codes", label: "توليد أكواد الوصول الذكية", icon: <KeyRound className="w-3.5 h-3.5" /> },
         { id: "referred-students", label: "الطلاب المُحالون والإحالات", icon: <Users className="w-3.5 h-3.5" /> },

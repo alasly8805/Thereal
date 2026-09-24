@@ -3,6 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import {
+  ContentType,
+  parseCloseSchedule,
+  syncContentCloseSchedule,
+} from "@/lib/content-access-engine";
+import { parseDegree } from "@/lib/quiz-grading";
+import { FolderContentType } from "@/generated/prisma";
+import { appendFolderContent, removeFolderContent } from "@/lib/folder-content-order";
 
 /** GET — teacher's own homeworks with submission counts & review queue size */
 export async function GET() {
@@ -30,7 +38,7 @@ export async function GET() {
         orderBy: { order: "asc" },
         select: {
           id: true, order: true, question: true, imageUrl: true,
-          optionA: true, optionB: true, optionC: true, optionD: true, correctAnswer: true,
+          optionA: true, optionB: true, optionC: true, optionD: true, correctAnswer: true, degree: true,
         },
       },
       submissions: {
@@ -98,6 +106,8 @@ export async function POST(req: NextRequest) {
     folderId?: string;           // link to specific folder/محاضرة
     videoId?: string;           // link to specific lesson
     dueAt?: string;
+    closeAt?: string;
+    enableAutoClose?: boolean;
     timeLimitMinutes?: number;
     isPublished?: boolean;
     // Terminal fields
@@ -115,6 +125,7 @@ export async function POST(req: NextRequest) {
       optionC?: string;
       optionD?: string;
       correctAnswer: string;
+      degree?: number;
     }[];
   };
 
@@ -129,6 +140,14 @@ export async function POST(req: NextRequest) {
 
   if (body.type === "terminal" && !body.expectedOutput?.trim())
     return NextResponse.json({ error: "الناتج المتوقع مطلوب للنوع terminal" }, { status: 400 });
+
+  const closeSchedule = parseCloseSchedule({
+    closeAt: body.closeAt,
+    enableAutoClose: body.enableAutoClose,
+  });
+  if (closeSchedule.error) {
+    return NextResponse.json({ error: closeSchedule.error }, { status: 400 });
+  }
 
   // Validate questions for exam type
   if (body.type === "exam" && body.questions) {
@@ -168,6 +187,8 @@ export async function POST(req: NextRequest) {
       folderId:         body.folderId || (body.videoId ? video?.folderId : null) || null,
       videoId:          body.videoId ?? null,
       dueAt:            body.dueAt ? new Date(body.dueAt) : null,
+      closeAt:          closeSchedule.closeAt,
+      enableAutoClose:  closeSchedule.enableAutoClose,
       timeLimitMinutes: body.timeLimitMinutes ?? 30,
       isPublished:      body.isPublished ?? false,
       // Terminal
@@ -197,6 +218,7 @@ export async function POST(req: NextRequest) {
             optionC:       optC,
             optionD:       optD,
             correctAnswer: correct,
+            degree:        parseDegree((q as { degree?: unknown }).degree),
             order:         i,
           };
         }),
@@ -204,6 +226,16 @@ export async function POST(req: NextRequest) {
     },
     include: { questions: true, video: { select: { id: true, title: true } } },
   });
+
+  await syncContentCloseSchedule({
+    type: ContentType.HOMEWORK,
+    sourceId: homework.id,
+    title: homework.title,
+    closeAt: homework.closeAt,
+    enableAutoClose: homework.enableAutoClose,
+  });
+
+  await appendFolderContent(homework.folderId, FolderContentType.HOMEWORK, homework.id);
 
   return NextResponse.json({ homework }, { status: 201 });
 }
@@ -228,6 +260,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
 
   await prisma.homework.delete({ where: { id: homeworkId } });
+  await removeFolderContent(FolderContentType.HOMEWORK, homeworkId);
   return NextResponse.json({ ok: true });
 }
 
@@ -239,22 +272,45 @@ export async function PATCH(req: NextRequest) {
   if (!hasAssistantPermission(session, "manageHomework"))
     return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إدارة الواجبات" }, { status: 403 });
 
-  const { homeworkId, isPublished } = await req.json() as {
+  const { homeworkId, isPublished, closeAt, enableAutoClose } = await req.json() as {
     homeworkId: string;
-    isPublished: boolean;
+    isPublished?: boolean;
+    closeAt?: string | null;
+    enableAutoClose?: boolean;
   };
 
   const hw = await prisma.homework.findUnique({
     where: { id: homeworkId },
-    select: { teacherId: true },
+    select: { teacherId: true, title: true },
   });
   if (!hw || hw.teacherId !== actingTeacherId(session))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
 
+  const data: { isPublished?: boolean; closeAt?: Date | null; enableAutoClose?: boolean } = {};
+  if (typeof isPublished === "boolean") data.isPublished = isPublished;
+  if (enableAutoClose !== undefined || closeAt !== undefined) {
+    const closeSchedule = parseCloseSchedule({ closeAt, enableAutoClose });
+    if (closeSchedule.error) {
+      return NextResponse.json({ error: closeSchedule.error }, { status: 400 });
+    }
+    data.closeAt = closeSchedule.closeAt;
+    data.enableAutoClose = closeSchedule.enableAutoClose;
+  }
+
   const updated = await prisma.homework.update({
     where: { id: homeworkId },
-    data: { isPublished },
+    data,
   });
+
+  if (data.closeAt !== undefined || data.enableAutoClose !== undefined) {
+    await syncContentCloseSchedule({
+      type: ContentType.HOMEWORK,
+      sourceId: updated.id,
+      title: updated.title,
+      closeAt: updated.closeAt,
+      enableAutoClose: updated.enableAutoClose,
+    });
+  }
 
   return NextResponse.json({ homework: updated });
 }

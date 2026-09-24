@@ -1,9 +1,9 @@
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { normalizeEgyptPhone } from "@/lib/phone";
+import { sendVerificationSms as sendZadxVerificationSms, type ZadxSendResult } from "@/lib/zadx-sms";
 
 const awsRegion = process.env.AWS_REGION || "eu-north-1";
 
-// SNS client initialization (uses explicit credentials if set, or default AWS SDK chain)
 const snsClient = new SNSClient({
   region: awsRegion,
   credentials:
@@ -16,13 +16,14 @@ const snsClient = new SNSClient({
 });
 
 export type AwsSmsResult = {
-  method: "dev" | "sns";
+  method: "dev" | "sns" | "zadx";
   dev?: boolean;
   code?: string;
   messageId?: string;
+  [key: string]: unknown;
 };
 
-export async function sendVerificationSms(phone: string, code: string): Promise<AwsSmsResult> {
+async function sendSnsVerificationSms(phone: string, code: string): Promise<AwsSmsResult> {
   let toNumber: string;
   if (typeof phone === "string" && /^\+20\d{10}$/.test(phone)) {
     toNumber = phone;
@@ -60,6 +61,18 @@ export async function sendVerificationSms(phone: string, code: string): Promise<
     console.error(`[AWS SNS SMS] Error sending SMS to ${toNumber}:`, err);
     throw new Error(`AWS SNS SMS delivery failed: ${err?.message || err}`);
   }
+}
+
+/**
+ * Default SMS path is ZADX (Egyptian OTP). Set SMS_PROVIDER=sns to roll back
+ * to Amazon SNS without a code change.
+ */
+export async function sendVerificationSms(phone: string, code: string): Promise<AwsSmsResult | ZadxSendResult> {
+  const provider = (process.env.SMS_PROVIDER || "zadx").toLowerCase();
+  if (provider === "sns") {
+    return sendSnsVerificationSms(phone, code);
+  }
+  return sendZadxVerificationSms(phone, code);
 }
 
 /**

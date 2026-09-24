@@ -52,16 +52,17 @@ export function HomeContent({ text }: { text: SiteText }) {
             "alternateName": "Code-UP",
             "url": "https://code-up.tech",
             "logo": "https://code-up.tech/logo.jpeg",
-            "description": "منصة كورسات متكاملة للمتعلمين المصريين لمختلف الأعمار والمستويات. محاضرات فيديو، اختبارات تفاعلية، ومتابعة ذكية للتقدم التدريبي.",
+            "description": "منصة تعليمية مصرية لشرح البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية. محاضرات فيديو، محرر أكواد مدمج، ومتابعة ولي الأمر.",
             "contactPoint": {
               "@type": "ContactPoint",
-              "telephone": "+20-128-535-3604",
+              "telephone": "+20-111-880-2621",
               "contactType": "customer service",
               "areaServed": "EG",
               "availableLanguage": "Arabic"
             },
             "sameAs": [
-              "https://code-up.tech"
+              "https://www.facebook.com/CodeUpAcad",
+              "https://kemetcraft.me/"
             ]
           })
         }}

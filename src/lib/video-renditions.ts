@@ -32,11 +32,13 @@ export type RenditionHeight = (typeof RENDITION_LADDER)[number]["height"];
 export const RENDITION_HEIGHTS: RenditionHeight[] = RENDITION_LADDER.map((r) => r.height);
 
 export interface QualityOption {
-  /** null means "the original file, whatever height that is". */
+  /** null means Auto — the original file, whatever height that is. */
   height: RenditionHeight | null;
   label: string;
   note?: string;
   bytes?: number;
+  /** False until the transcoded file exists; the player still offers the tier. */
+  ready?: boolean;
 }
 
 export function isRenditionHeight(value: unknown): value is RenditionHeight {
@@ -87,24 +89,31 @@ export async function resolveRenditionName(
 }
 
 /**
- * Qualities the player may offer for this asset: "auto" (the original) plus
- * every rendition that has actually been generated. Never throws.
+ * Qualities the player offers for this asset: Auto plus 360p / 480p / 720p.
+ *
+ * The menu is always the full ladder so a student on a weak link can pick a
+ * lighter copy without waiting for us to finish transcoding. Tiers that have
+ * not been generated yet still appear; /api/videos/stream falls back to the
+ * original rather than 404ing. Never throws.
  */
 export async function availableQualities(baseFilename: string): Promise<QualityOption[]> {
-  const options: QualityOption[] = [{ height: null, label: "الأصلية", note: "أعلى جودة" }];
-  if (isRenditionFilename(baseFilename)) return options;
+  const auto: QualityOption = { height: null, label: "Auto", note: "تلقائي", ready: true };
+  if (isRenditionFilename(baseFilename)) return [auto];
 
   const found = await Promise.all(
     RENDITION_LADDER.map(async (tier) => {
       const bytes = await renditionSize(renditionFilename(baseFilename, tier.height)).catch(() => null);
-      return bytes === null ? null : { height: tier.height, label: tier.label, note: tier.note, bytes };
+      return {
+        height: tier.height,
+        label: tier.label,
+        note: tier.note,
+        bytes: bytes ?? undefined,
+        ready: bytes !== null,
+      };
     })
   );
 
-  for (const tier of found) {
-    if (tier) options.push(tier);
-  }
-  return options;
+  return [auto, ...found];
 }
 
 // ── Generation ───────────────────────────────────────────────────────────────

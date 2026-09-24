@@ -4,8 +4,9 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getConfigBool } from "@/lib/config";
 import { checkQuizAccess } from "@/lib/authorization";
-import { canAccessContent, ContentType } from "@/lib/content-access-engine";
+import { canAccessContent, contentDeniedPayload, ContentType } from "@/lib/content-access-engine";
 import { summarizeAnswers } from "@/lib/quiz-grading";
+import { parseDraftAnswers, retakeCooldownRemainingMs } from "@/lib/quiz-attempt";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 
@@ -45,16 +46,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           sourceId: quizId,
           title: quiz.title,
         });
-        if ("requiredItem" in access) {
-          return NextResponse.json(
-            {
-              error: `يجب إكمال «${access.requiredItem.title}» أولًا.`,
-              code: access.code,
-              requiredItem: access.requiredItem,
-            },
-            { status: 403 }
-          );
-        }
+        const denied = contentDeniedPayload(access);
+        if (denied) return NextResponse.json(denied.body, { status: denied.status });
       }
 
       // One graded attempt. An in-progress start (no completedAt) can resume.
@@ -81,15 +74,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 status: true,
                 teacherReply: true,
                 reviewedAt: true,
+                degree: true,
               },
             },
           },
         });
-        if (existingResult?.completedAt && !existingResult.allowRetake) {
-          // The student can always review their own sheet: MCQ answers with the
-          // correct option, and essay answers with the teacher's verdict once
-          // graded. Pending essays are reported so the UI does not show a
-          // 0% / راسب grade that has not been decided yet.
+        if (existingResult?.completedAt) {
+          // Read-only review. allowRetake only unlocks the "Start new attempt"
+          // button — opening this page must never clear completedAt.
           const summary = summarizeAnswers(existingResult.answers, existingResult.totalQ);
           const order = new Map(quiz.questions.map((q: any, i: number) => [q.id, i]));
           const breakdown = [...existingResult.answers]
@@ -111,12 +103,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
               teacherReply: a.teacherReply,
               reviewedAt: a.reviewedAt,
             }));
+          const cooldownRemainingMs = existingResult.allowRetake
+            ? retakeCooldownRemainingMs(existingResult.completedAt, (quiz as any).retakeCooldownHours ?? 0)
+            : 0;
           return NextResponse.json({
             alreadyCompleted: true,
+            allowRetake: !!existingResult.allowRetake,
+            cooldownRemainingMs,
             result: {
               score: existingResult.score,
               totalQ: existingResult.totalQ,
               completedAt: existingResult.completedAt,
+              allowRetake: !!existingResult.allowRetake,
               correct: summary.correct,
               pendingEssays: summary.pendingCount,
               gradingStatus: summary.gradingStatus,
@@ -130,31 +128,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           });
         }
 
-        if (existingResult?.completedAt && existingResult.allowRetake) {
-          const cooldownHours = (quiz as any).retakeCooldownHours ?? 0;
-          if (cooldownHours > 0) {
-            const cooldownMs = cooldownHours * 3_600_000;
-            const elapsed = Date.now() - new Date(existingResult.completedAt).getTime();
-            if (elapsed < cooldownMs) {
-              return NextResponse.json({
-                alreadyCompleted: true,
-                cooldownRemainingMs: cooldownMs - elapsed,
-                result: {
-                  score: existingResult.score,
-                  totalQ: existingResult.totalQ,
-                  completedAt: existingResult.completedAt,
-                },
-                quiz: { id: quiz.id, title: quiz.title, courseId: quiz.folder?.courseId ?? 'plan', course: quiz.folder?.course },
-              });
-            }
-          }
-          // Reopen the attempt: completedAt must be cleared or the submit
-          // route will treat the retake as a duplicate submission.
-          await prisma.quizResult.update({
-            where: { id: existingResult.id },
-            data: { startedAt: new Date(), completedAt: null, allowRetake: false },
-          });
-        } else if (!existingResult) {
+        if (!existingResult) {
           // In-progress placeholder. completedAt stays NULL until submit.
           await prisma.quizResult.create({
             data: {
@@ -188,19 +162,31 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       // off it must not auto-submit at zero — the server would accept the
       // answers, but the student would have been thrown out of their own quiz.
       const timeLimitEnforced = !(await getConfigBool("quiz_time_limit_disabled"));
+      const limitMinutes = (quiz as any).timeLimitMinutes || 30;
+      const inProgress = isStudent ? await prisma.quizResult.findUnique({
+        where: { studentId_quizId: { studentId: session.id, quizId } },
+        select: { startedAt: true, draftAnswers: true, completedAt: true },
+      }) : null;
+      const elapsedSeconds = inProgress?.startedAt
+        ? Math.floor((Date.now() - inProgress.startedAt.getTime()) / 1000)
+        : 0;
+      const remainingSeconds = Math.max(0, limitMinutes * 60 - elapsedSeconds);
 
       return NextResponse.json({
         quiz: {
           id: quiz.id,
           title: quiz.title,
-          timeLimitMinutes: (quiz as any).timeLimitMinutes,
+          timeLimitMinutes: limitMinutes,
           questions,
           folderId: quiz.folderId,
           courseId: quiz.folder?.courseId ?? 'plan',
           course: quiz.folder?.course,
         },
-        timeLimitMinutes: (quiz as any).timeLimitMinutes,
+        timeLimitMinutes: limitMinutes,
         timeLimitEnforced,
+        startedAt: inProgress?.startedAt ?? null,
+        remainingSeconds,
+        draftAnswers: parseDraftAnswers(inProgress?.draftAnswers),
       });
     } catch (error) {
         console.error("[quizzes/[id]] error:", error);

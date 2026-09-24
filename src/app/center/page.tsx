@@ -34,6 +34,8 @@ import {
   Sparkles,
   Users,
   XCircle,
+  Fingerprint,
+  BookOpen,
 } from "lucide-react";
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
@@ -42,6 +44,7 @@ interface SessionUser {
   id?: string;
   name: string;
   role: string;
+  accountMode?: string;
 }
 
 /** Shape returned by GET /api/codes/resolve */
@@ -178,8 +181,25 @@ export default function CenterHubPage() {
   const [stage, setStage] = useState("all");
   const [query, setQuery] = useState("");
 
+  const [publicId, setPublicId] = useState("");
+  const [idPassword, setIdPassword] = useState("");
+  const [idLoggingIn, setIdLoggingIn] = useState(false);
+  const [idError, setIdError] = useState("");
+  const [bundle, setBundle] = useState<{
+    pass: { publicId: string; title: string; studentName?: string };
+    courses: Array<{
+      id: string;
+      title: string;
+      subject?: string;
+      thumbnailUrl?: string | null;
+      teacherName?: string;
+      counts?: { videos: number; homeworks: number; quizzes: number; materials: number };
+    }>;
+  } | null>(null);
+
   const codeBoxRef = useRef<HTMLDivElement | null>(null);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
+  const idBoxRef = useRef<HTMLDivElement | null>(null);
 
   /* — Session — */
   useEffect(() => {
@@ -191,7 +211,7 @@ export default function CenterHubPage() {
       })
       .then((d) => {
         if (cancelled) return;
-        setUser(d?.user ? { id: d.user.id, name: d.user.name, role: d.user.role } : null);
+        setUser(d?.user ? { id: d.user.id, name: d.user.name, role: d.user.role, accountMode: d.user.accountMode } : null);
       })
       .catch(() => {
         if (!cancelled) setUser(null);
@@ -289,6 +309,30 @@ export default function CenterHubPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    if (user?.accountMode !== "CENTER_ID") {
+      setBundle(null);
+      return;
+    }
+    fetch("/api/center/my-bundle", { credentials: "include" })
+      .then((res) => res.json().catch(() => ({})))
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.pass) {
+          setBundle({ pass: data.pass, courses: Array.isArray(data.courses) ? data.courses : [] });
+        } else {
+          setBundle(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBundle(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.accountMode, user?.id]);
+
+  useEffect(() => {
     // Kicked off on the next task so the initial fetch never resolves into a
     // synchronous state update inside the effect body.
     const timer = window.setTimeout(loadCourses, 0);
@@ -321,6 +365,42 @@ export default function CenterHubPage() {
     codeBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     window.setTimeout(() => codeInputRef.current?.focus(), 420);
   }, []);
+
+  const focusIdBox = useCallback(() => {
+    idBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+
+  const handleIdLogin = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (idLoggingIn) return;
+    setIdLoggingIn(true);
+    setIdError("");
+    try {
+      const res = await fetch("/api/auth/center-id", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ publicId, password: idPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setIdError(data?.error || "بيانات الدخول غير صحيحة");
+        return;
+      }
+      setUser({
+        id: data.user.id,
+        name: data.user.name,
+        role: data.user.role,
+        accountMode: data.user.accountMode,
+      });
+      setIdPassword("");
+      setPublicId(data.pass?.publicId || publicId);
+    } catch {
+      setIdError("تعذر الاتصال بالخادم");
+    } finally {
+      setIdLoggingIn(false);
+    }
+  };
 
   const handleActivate = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -414,6 +494,14 @@ export default function CenterHubPage() {
               <KeyRound className="h-4 w-4" />
               <span>تفعيل كود الحصة الآن</span>
             </button>
+            <button
+              type="button"
+              onClick={() => focusIdBox()}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-5 py-3 text-sm font-black text-emerald-200 transition-all hover:bg-emerald-500/20 active:scale-95"
+            >
+              <Fingerprint className="h-4 w-4" />
+              <span>Get by ID — دخول بالرقم التعريفي</span>
+            </button>
             <a
               href="#center-courses"
               className="inline-flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-900/60 px-5 py-3 text-sm font-black text-slate-200 transition-all hover:border-amber-400/50 hover:text-amber-300"
@@ -433,6 +521,87 @@ export default function CenterHubPage() {
           </div>
         </div>
       </section>
+
+      <section ref={idBoxRef} className="relative scroll-mt-24 px-5 sm:px-7 pb-4">
+        <div className="mx-auto max-w-3xl">
+          <div className="relative overflow-hidden rounded-[28px] border border-emerald-500/25 bg-gradient-to-b from-slate-900/90 to-slate-950 p-5 sm:p-8 shadow-2xl shadow-black/50">
+            <div className="relative flex items-start gap-3.5">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/30 bg-emerald-400/10 text-emerald-400">
+                <Fingerprint className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="text-lg sm:text-xl font-black text-white">Get by ID</h2>
+                <p className="mt-1 text-xs sm:text-[13px] leading-6 text-slate-400">
+                  إذا استلمت رقماً تعريفياً من الإدارة، ادخله مع كلمة المرور لفتح كورسك المخصص (الفيديوهات والواجبات والاختبارات التي اختيرت لك فقط).
+                </p>
+              </div>
+            </div>
+
+            {user?.accountMode === "CENTER_ID" ? (
+              <div className="relative mt-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-bold text-emerald-200">
+                أنت داخل بحساب {user.name}
+                {bundle?.pass?.publicId ? ` — ${bundle.pass.publicId}` : ""}
+              </div>
+            ) : (
+              <form onSubmit={handleIdLogin} className="relative mt-6 space-y-3">
+                <input
+                  value={publicId}
+                  onChange={(e) => setPublicId(e.target.value.toUpperCase())}
+                  placeholder="CTR-XXXXXX"
+                  autoComplete="username"
+                  className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm font-black tracking-widest text-white placeholder:text-slate-600"
+                />
+                <input
+                  type="password"
+                  value={idPassword}
+                  onChange={(e) => setIdPassword(e.target.value)}
+                  placeholder="كلمة المرور"
+                  autoComplete="current-password"
+                  className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white placeholder:text-slate-600"
+                />
+                {idError ? <p className="text-xs font-bold text-rose-300">{idError}</p> : null}
+                <button
+                  type="submit"
+                  disabled={idLoggingIn || !publicId.trim() || !idPassword}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-black text-slate-950 disabled:opacity-40"
+                >
+                  {idLoggingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fingerprint className="h-4 w-4" />}
+                  دخول بالرقم التعريفي
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {bundle?.courses?.length ? (
+        <section className="relative px-5 sm:px-7 py-8">
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-5 flex items-center gap-2">
+              <BookOpen className="h-5 w-5 text-amber-300" />
+              <h2 className="text-lg font-black text-white">{bundle.pass.title || "كورسك المخصص"}</h2>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {bundle.courses.map((course) => (
+                <article key={course.id} className="rounded-2xl border border-emerald-500/20 bg-slate-900/80 p-4">
+                  <h3 className="font-black text-white">{course.title}</h3>
+                  <p className="mt-1 text-xs text-slate-400">{course.teacherName}</p>
+                  <p className="mt-3 text-[11px] font-bold text-emerald-300/90">
+                    {course.counts?.videos || 0} فيديو · {course.counts?.homeworks || 0} واجب · {course.counts?.quizzes || 0} اختبار · {course.counts?.materials || 0} ملف
+                  </p>
+                  <Link
+                    href={`/courses/${course.id}/learn`}
+                    className="mt-4 flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 py-2.5 text-[12px] font-black text-slate-950"
+                  >
+                    ادخل إلى الكورس المخصص
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                  </Link>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {/* ══ Unified smart code box ════════════════════════════════════════════ */}
       <section ref={codeBoxRef} className="relative scroll-mt-24 px-5 sm:px-7 py-12 sm:py-16">

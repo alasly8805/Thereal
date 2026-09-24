@@ -5,13 +5,24 @@ import { IconTrash } from "@/components/admin/AdminIcons";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 
+function toDatetimeLocal(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 type ExamItem = {
   id: string;
   title: string;
   timeLimitMinutes: number;
+  closeAt: string | null;
+  enableAutoClose: boolean;
   createdAt: string;
   courseId: string;
   courseTitle: string;
+  folderId: string;
   folderName: string;
   totalQuestions: number;
   mcqCount: number;
@@ -54,6 +65,7 @@ export function TeacherExamDashboard({
   const [selectedCourseId, setSelectedCourseId] = useState<string>("all");
   const [deleteExamId, setDeleteExamId] = useState<string | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [closeDrafts, setCloseDrafts] = useState<Record<string, { enableAutoClose: boolean; closeAt: string }>>({});
 
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
@@ -103,6 +115,37 @@ export function TeacherExamDashboard({
     }
   };
 
+  const handleSaveClose = async (exam: ExamItem) => {
+    const draft = closeDrafts[exam.id] ?? {
+      enableAutoClose: exam.enableAutoClose,
+      closeAt: toDatetimeLocal(exam.closeAt),
+    };
+    setIsActionLoading(true);
+    try {
+      const res = await fetch("/api/admin/teacher/exam-dashboard", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quizId: exam.id,
+          enableAutoClose: draft.enableAutoClose,
+          closeAt: draft.enableAutoClose ? draft.closeAt : null,
+        }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        toastSuccess("تم حفظ وقت الإغلاق");
+        void fetchDashboardData();
+      } else {
+        toastError(d.error || "تعذر حفظ وقت الإغلاق");
+      }
+    } catch {
+      toastError("حدث خطأ أثناء حفظ وقت الإغلاق");
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const handleAllowRetakes = async (quizId: string) => {
     setIsActionLoading(true);
     try {
@@ -114,7 +157,7 @@ export function TeacherExamDashboard({
       });
       const d = await res.json();
       if (res.ok) {
-        toastSuccess(`تم السماح بالإعادة لجميع الطلاب (${d.updatedCount} طالب)`);
+        toastSuccess(`تم السماح بالإعادة لـ ${d.updatedCount} طالب — المحاولة القديمة تبقى ظاهرة حتى يضغط الطالب «بدء محاولة جديدة»`);
         void fetchDashboardData();
       } else {
         toastError(d.error || "تعذر تفعيل إعادة الاختبار");
@@ -363,6 +406,52 @@ export function TeacherExamDashboard({
                     <IconTrash className="w-3.5 h-3.5" />
                     <span>حذف الاختبار</span>
                   </button>
+                </div>
+
+                <div className="rounded-xl border border-rose-400/30 bg-rose-500/5 p-3 space-y-2">
+                  <label className="flex items-center gap-2 text-xs font-bold text-[var(--ink)]">
+                    <input
+                      type="checkbox"
+                      checked={(closeDrafts[exam.id]?.enableAutoClose ?? exam.enableAutoClose) === true}
+                      onChange={(e) =>
+                        setCloseDrafts((prev) => ({
+                          ...prev,
+                          [exam.id]: {
+                            enableAutoClose: e.target.checked,
+                            closeAt: prev[exam.id]?.closeAt ?? toDatetimeLocal(exam.closeAt),
+                          },
+                        }))
+                      }
+                      className="w-4 h-4 rounded"
+                    />
+                    إغلاق تلقائي بعد الوقت المحدد
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="datetime-local"
+                      value={closeDrafts[exam.id]?.closeAt ?? toDatetimeLocal(exam.closeAt)}
+                      disabled={!(closeDrafts[exam.id]?.enableAutoClose ?? exam.enableAutoClose)}
+                      onChange={(e) =>
+                        setCloseDrafts((prev) => ({
+                          ...prev,
+                          [exam.id]: {
+                            enableAutoClose: prev[exam.id]?.enableAutoClose ?? exam.enableAutoClose,
+                            closeAt: e.target.value,
+                          },
+                        }))
+                      }
+                      className="bg-[var(--bg)] border border-[var(--border)] text-[var(--ink)] px-3 py-1.5 rounded-xl text-xs font-mono"
+                      dir="ltr"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSaveClose(exam)}
+                      disabled={isActionLoading}
+                      className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-300 text-xs font-bold"
+                    >
+                      حفظ وقت الإغلاق
+                    </button>
+                  </div>
                 </div>
               </div>
             );

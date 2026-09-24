@@ -13,6 +13,8 @@ import {
 import { PaymentMethodGrid } from "@/components/payment/PaymentMethodGrid";
 import { PaymentProviderIcon } from "@/components/payment/PaymentProviderIcon";
 import { calculateAmountWithTax } from "@/lib/sha7nawy";
+import { PAYMENT_FAQS } from "@/lib/geo-faqs";
+import { GeoFaqList } from "@/components/geo/GeoFaqList";
 
 export default function PaymentMethodsPage() {
   const [selectedMethodForModal, setSelectedMethodForModal] = useState<PaymentMethodConfig | null>(null);
@@ -178,6 +180,16 @@ export default function PaymentMethodsPage() {
               }
             }}
           />
+        </section>
+
+        <section dir="rtl" className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-14">
+          <h2 className="text-2xl font-black text-gray-900 dark:text-white mb-4">
+            أسئلة شائعة عن الدفع على Code-UP
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-5" data-geo-quote>
+            على Code-UP الدفع المحلي متاح: فودافون كاش، إنستاباي، وفوري. التفاصيل والرسوم تظهر قبل التحويل.
+          </p>
+          <GeoFaqList items={PAYMENT_FAQS} theme="light" />
         </section>
       </main>
 

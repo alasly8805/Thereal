@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { canBypassPayment } from "./demo";
+import { getCenterPassGrant } from "./center-pass";
 
 /**
  * Checks if a student is enrolled in a course.
@@ -14,6 +15,11 @@ export async function checkCourseEnrollment(userId: string, courseId: string, ro
   });
   if (isExcluded?.value === "true") {
     return false;
+  }
+
+  const centerGrant = await getCenterPassGrant(userId);
+  if (centerGrant) {
+    return centerGrant.isActive && centerGrant.courseIds.has(courseId);
   }
 
   const directEnrollment = await prisma.courseEnrollment.findUnique({
@@ -35,25 +41,63 @@ export async function checkCourseEnrollment(userId: string, courseId: string, ro
 
   const course = await prisma.course.findUnique({
     where: { id: courseId },
-    select: { id: true, title: true, subject: true, description: true, teacherId: true, isPaid: true, price: true },
+    select: {
+      id: true,
+      title: true,
+      subject: true,
+      description: true,
+      teacherId: true,
+      isPaid: true,
+      price: true,
+      deliveryMode: true,
+    },
   });
 
-  if (course?.teacherId) {
-    const activeSubs = await prisma.teacherSubscription.findMany({
-      where: {
-        studentId: userId,
-        teacherId: course.teacherId,
-        status: "active",
-        expiresAt: { gt: new Date() },
-      },
-      select: { id: true, languageTrack: true },
-    });
+  // Active teacher booking = status "active". Do not require amount > 0 / isPaid.
+  // expiresAt null is treated as still valid (manual hall grants often omit it).
+  const activeTeacherSubWhere = {
+    studentId: userId,
+    status: "active" as const,
+    OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+  };
 
-    if (activeSubs.length > 0) {
-      const { getEffectiveCourseTrack, isSubscriptionTrackMatching } = await import("./course-track");
-      const courseTrack = await getEffectiveCourseTrack(courseId, course);
-      const matches = activeSubs.some((sub) => isSubscriptionTrackMatching(sub.languageTrack, courseTrack));
-      if (matches) return true;
+  // Booking (حجز) must never open a separately-sold lecture or a teaser lesson.
+  // Those require CourseEnrollment / AccessCode / center pass only.
+  if (course?.teacherId) {
+    const { teacherSubscriptionCoversCourse } = await import("./standalone-lessons");
+    if (teacherSubscriptionCoversCourse(course)) {
+      const activeSubs = await prisma.teacherSubscription.findMany({
+        where: { ...activeTeacherSubWhere, teacherId: course.teacherId },
+        select: { id: true, languageTrack: true, amount: true, status: true },
+      });
+
+      if (activeSubs.length > 0) {
+        const { getEffectiveCourseTrack, isSubscriptionTrackMatching } = await import("./course-track");
+        const courseTrack = await getEffectiveCourseTrack(courseId, course);
+        const matches = activeSubs.some((sub) => isSubscriptionTrackMatching(sub.languageTrack, courseTrack));
+        if (matches) return true;
+      }
+    }
+
+    // Temp center exception: a hall student with an active booking (status only,
+    // paid or not) can open that teacher's CENTER course. Access codes still
+    // win first; this only covers bookings that used to fail the isPaid filter.
+    if ((course.deliveryMode || "").toUpperCase() === "CENTER") {
+      const hallSub = await prisma.teacherSubscription.findFirst({
+        where: { ...activeTeacherSubWhere, teacherId: course.teacherId },
+        select: { id: true, amount: true, status: true },
+      });
+      if (hallSub) {
+        console.log("[center-video-access]", JSON.stringify({
+          event: "center_active_sub_granted",
+          userId,
+          courseId,
+          subscriptionId: hallSub.id,
+          status: hallSub.status,
+          amount: hallSub.amount,
+        }));
+        return true;
+      }
     }
   }
 
@@ -88,7 +132,58 @@ export async function checkCourseEnrollment(userId: string, courseId: string, ro
     }
   }
 
+  await logCenterVideoAccess({
+    userId,
+    courseId,
+    allowed: false,
+    reason: "NOT_ENROLLED",
+  });
   return false;
+}
+
+/** Server log keyed by phone so `pm2 logs | grep 01145749177` can find play denials. */
+async function logCenterVideoAccess(params: {
+  userId: string;
+  courseId?: string;
+  videoId?: string;
+  allowed: boolean;
+  reason: string;
+}) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: params.userId },
+      select: { phone: true, name: true, accountMode: true },
+    });
+    const [subscriptions, enrollments, accessCodes] = await Promise.all([
+      prisma.teacherSubscription.findMany({
+        where: { studentId: params.userId },
+        select: { id: true, teacherId: true, status: true, amount: true, expiresAt: true, planType: true },
+      }),
+      params.courseId
+        ? prisma.courseEnrollment.findMany({
+            where: { studentId: params.userId, courseId: params.courseId },
+            select: { id: true, amountPaid: true, fulfillmentSource: true },
+          })
+        : Promise.resolve([]),
+      params.courseId
+        ? prisma.accessCode.findMany({
+            where: { studentId: params.userId, courseId: params.courseId },
+            select: { id: true, code: true, accessType: true, isActive: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    console.log("[center-video-access]", JSON.stringify({
+      phone: user?.phone,
+      name: user?.name,
+      accountMode: user?.accountMode,
+      ...params,
+      subscriptions,
+      enrollments,
+      accessCodes,
+    }));
+  } catch (err) {
+    console.error("[center-video-access] log failed", err);
+  }
 }
 
 /**
@@ -134,6 +229,11 @@ export async function checkQuizAccess(userId: string, role: string, quizId: stri
   }
 
   if (role !== "student") return false;
+
+  const centerGrant = await getCenterPassGrant(userId);
+  if (centerGrant) {
+    return centerGrant.has("QUIZ", quizId);
+  }
 
   // QA Tester Check
   const user = await prisma.user.findUnique({
@@ -207,6 +307,13 @@ export async function checkQuizAccess(userId: string, role: string, quizId: stri
  */
 export async function checkVideoAccess(userId: string, role: string, videoId: string): Promise<boolean> {
   if (role === "superadmin" || role === "admin") return true;
+
+  if (role === "student") {
+    const centerGrant = await getCenterPassGrant(userId);
+    if (centerGrant) {
+      return centerGrant.has("VIDEO", videoId);
+    }
+  }
 
   const video = await prisma.video.findUnique({
     where: { id: videoId },
@@ -291,6 +398,13 @@ export async function checkVideoAccess(userId: string, role: string, videoId: st
   });
   if (hasPlanEnrollment) return true;
 
+  await logCenterVideoAccess({
+    userId,
+    courseId: video.folder.courseId,
+    videoId,
+    allowed: false,
+    reason: "VIDEO_ACCESS_DENIED",
+  });
   return false;
 }
 
@@ -317,6 +431,13 @@ export async function checkHomeworkAccess(userId: string, role: string, homework
 
   if (role === "teacher") {
     return hw.teacherId === userId;
+  }
+
+  if (role === "student") {
+    const centerGrant = await getCenterPassGrant(userId);
+    if (centerGrant) {
+      return centerGrant.has("HOMEWORK", homeworkId);
+    }
   }
 
   // 1. Teacher subscription access & QA Tester check

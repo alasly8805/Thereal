@@ -244,6 +244,14 @@ export default function VideoWatchPage() {
       });
       const data = await res.json();
 
+      console.log("[center-video-access] watch page play", {
+        status: res.status,
+        code: data.code,
+        error: data.error,
+        videoId,
+        courseId,
+        subscription: data.studentPlan || null,
+      });
       if (!res.ok) {
         if (data.code === "VPN_DETECTED" || data.vpnDetected) {
           router.push(`/vpn-check?redirect_url=${encodeURIComponent(window.location.pathname)}`);

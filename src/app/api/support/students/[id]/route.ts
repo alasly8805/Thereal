@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSupportSession } from "@/lib/support-auth";
 import { ContentType } from "@/generated/prisma";
+import { isContentClosed } from "@/lib/content-access-engine";
 
 /**
  * GET /api/support/students/[id]
@@ -122,20 +123,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           isPublished: true,
           OR: [{ courseId: { in: courseIds } }, { folder: { courseId: { in: courseIds } } }],
         },
-        select: { id: true, title: true, dueAt: true, videoId: true, courseId: true },
+        select: { id: true, title: true, dueAt: true, closeAt: true, enableAutoClose: true, videoId: true, courseId: true },
         orderBy: { createdAt: "desc" },
         take: 60,
       })
     : [];
-
-  const homeworkRows = homework.map((h) => ({
-    id: h.id,
-    title: h.title,
-    dueAt: h.dueAt,
-    videoId: h.videoId,
-    submitted: submittedHomeworkIds.has(h.id),
-    overdue: h.dueAt ? new Date() > h.dueAt : false,
-  }));
 
   // ── Account context: what the student owns, where they're signed in, and
   // what has already been done to this account ─────────────────────────────
@@ -317,10 +309,107 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .sort((a, b) => +new Date(b.at ?? 0) - +new Date(a.at ?? 0))
     .slice(0, 30);
 
+  const enrolledCourseIds = [
+    ...new Set([...courseIds, ...courses.map((c) => c.courseId)].filter(Boolean)),
+  ];
+  const [moreHomework, quizzes] = await Promise.all([
+    enrolledCourseIds.length
+      ? prisma.homework.findMany({
+          where: {
+            isPublished: true,
+            OR: [
+              { courseId: { in: enrolledCourseIds } },
+              { folder: { courseId: { in: enrolledCourseIds } } },
+            ],
+          },
+          select: {
+            id: true,
+            title: true,
+            dueAt: true,
+            closeAt: true,
+            enableAutoClose: true,
+            videoId: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 80,
+        })
+      : Promise.resolve(homework),
+    enrolledCourseIds.length
+      ? prisma.quiz.findMany({
+          where: { folder: { courseId: { in: enrolledCourseIds } } },
+          select: { id: true, title: true, closeAt: true, enableAutoClose: true },
+          orderBy: { createdAt: "desc" },
+          take: 80,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const assessmentSourceIds = [...moreHomework.map((h) => h.id), ...quizzes.map((q) => q.id)];
+  const contentItems = assessmentSourceIds.length
+    ? await prisma.contentItem.findMany({
+        where: { sourceId: { in: assessmentSourceIds } },
+        select: { id: true, sourceId: true },
+      })
+    : [];
+  const now = new Date();
+  const closeExtensions = contentItems.length
+    ? await prisma.contentExtension.findMany({
+        where: {
+          contentId: { in: contentItems.map((item) => item.id) },
+          revokedAt: null,
+          extendedUntil: { gte: now },
+          OR: [{ studentId: null }, { studentId }],
+        },
+        select: { contentId: true, studentId: true, extendedUntil: true, revokedAt: true },
+      })
+    : [];
+  const sourceByContentId = new Map(contentItems.map((item) => [item.id, item.sourceId]));
+  const extensionsBySource = new Map<string, typeof closeExtensions>();
+  for (const extension of closeExtensions) {
+    const sourceId = sourceByContentId.get(extension.contentId);
+    if (!sourceId) continue;
+    const list = extensionsBySource.get(sourceId) ?? [];
+    list.push(extension);
+    extensionsBySource.set(sourceId, list);
+  }
+
+  const homeworkRows = moreHomework.map((h) => ({
+    id: h.id,
+    title: h.title,
+    dueAt: h.dueAt,
+    closeAt: h.closeAt,
+    enableAutoClose: h.enableAutoClose,
+    timedClosed: isContentClosed({
+      enableAutoClose: h.enableAutoClose,
+      closeAt: h.closeAt,
+      now,
+      studentId,
+      extensions: extensionsBySource.get(h.id) ?? [],
+    }),
+    videoId: h.videoId,
+    submitted: submittedHomeworkIds.has(h.id),
+    overdue: h.dueAt ? now > h.dueAt : false,
+  }));
+
+  const quizRows = quizzes.map((q) => ({
+    id: q.id,
+    title: q.title,
+    closeAt: q.closeAt,
+    enableAutoClose: q.enableAutoClose,
+    timedClosed: isContentClosed({
+      enableAutoClose: q.enableAutoClose,
+      closeAt: q.closeAt,
+      now,
+      studentId,
+      extensions: extensionsBySource.get(q.id) ?? [],
+    }),
+  }));
+
   return NextResponse.json({
     student,
     videos: videoRows,
     homework: homeworkRows,
+    quizzes: quizRows,
     overrides: overrides.map((o) => ({
       id: o.id,
       contentType: o.contentType,

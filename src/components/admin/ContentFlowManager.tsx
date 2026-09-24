@@ -268,9 +268,16 @@ export function ContentFlowManager({ courseId }: ContentFlowManagerProps) {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const contentOrders: Record<string, string[]> = {};
+      Object.entries(itemsByFolder).forEach(([folderId, folderData]) => {
+        if (folderId === "unassigned") return;
+        contentOrders[folderId] = folderData.items.map((item) => item.id);
+      });
+
       const bodyData: Record<string, unknown> = {
         mode: flowMode,
         sequentialAccess: flowMode !== "free",
+        contentOrders,
       };
 
       if (flowMode === "free") {

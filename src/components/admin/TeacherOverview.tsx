@@ -63,12 +63,13 @@ const ISSUE_ICON: Record<string, (p: { className?: string }) => React.ReactEleme
 const SEV_DOT: Record<string, string> = { high: "bg-rose-500", med: "bg-amber-500", low: "bg-slate-400" };
 
 export function TeacherOverview({
-  courses, onCreateCourse, loadingCourses, onGoToMyPage,
+  courses, onCreateCourse, loadingCourses, onGoToMyPage, onGoToStudents,
 }: {
   courses: { id: string; title: string }[];
   onCreateCourse?: () => void;
   loadingCourses: boolean;
   onGoToMyPage?: () => void;
+  onGoToStudents?: () => void;
 }) {
   const [period, setPeriod] = useState("30d");
   const [courseId, setCourseId] = useState("");
@@ -124,6 +125,11 @@ export function TeacherOverview({
           {onCreateCourse && (
             <button onClick={onCreateCourse} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold transition-colors">
               <IconPlus className="w-4 h-4" /> إنشاء كورس
+            </button>
+          )}
+          {onGoToStudents && (
+            <button onClick={onGoToStudents} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-sky-400/40 text-sky-600 dark:text-sky-300 text-sm font-bold transition-colors hover:bg-sky-500/10">
+              طلابك والأرقام
             </button>
           )}
           {onGoToMyPage && (
@@ -190,6 +196,20 @@ export function TeacherOverview({
           </div>
         </div>
       </div>
+
+      {onGoToStudents && (
+        <button
+          type="button"
+          onClick={onGoToStudents}
+          className={`${cardPad} w-full text-right flex items-center justify-between gap-3 hover:border-sky-400/50 transition-colors`}
+        >
+          <div>
+            <p className="text-sm font-black text-[var(--ink)]">طلابك والأرقام</p>
+            <p className="text-xs text-[var(--ink-muted)] mt-1">كل المشتركين، الحجوزات، مشتريات الكورس، والإيراد</p>
+          </div>
+          <span className="shrink-0 px-3 py-2 rounded-xl bg-sky-500 text-white text-xs font-bold">افتح الصفحة</span>
+        </button>
+      )}
 
       {/* ── KPI cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

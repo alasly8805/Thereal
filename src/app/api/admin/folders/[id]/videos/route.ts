@@ -8,6 +8,8 @@ import { cleanProviderVideoId, validateProviderId, type VideoProvider } from "@/
 import { parsePublishAt } from "@/lib/publish";
 import { getConfigNumber, getConfigNumberClamped } from "@/lib/config";
 import { triggerPlanSyncForCourse } from "@/lib/plan-lesson-matcher";
+import { FolderContentType } from "@/generated/prisma";
+import { appendFolderContent, removeFolderContent } from "@/lib/folder-content-order";
 
 const MAX_TITLE_LENGTH = 100;
 const VALID_PROVIDERS: VideoProvider[] = ["vdocipher", "bunny", "youtube", "alasly", "axinom"];
@@ -158,6 +160,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       },
     }).catch(console.error);
 
+    await appendFolderContent(folderId, FolderContentType.VIDEO, video.id);
+
     // Fire and forget auto-matcher sync
     triggerPlanSyncForCourse(folder.course.id).catch(console.error);
 
@@ -279,6 +283,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
     await prisma.progress.deleteMany({ where: { videoId } });
     await prisma.video.delete({ where: { id: videoId } });
+    await removeFolderContent(FolderContentType.VIDEO, videoId);
 
     // Fire and forget auto-matcher sync
     triggerPlanSyncForCourse(folder.course.id).catch(console.error);

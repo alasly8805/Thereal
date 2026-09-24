@@ -417,7 +417,11 @@ export const SECTION_ICONS: Record<string, (p: IconProps) => React.ReactElement>
   homework: IconFile,
   review: IconClipboard,
   wallet: IconDollar,
+  testers: IconShield,
+  "center-passes": IconKey,
   // ── AI Section ──
+  "ai-copilot": IconBrain,
+  "ai-studio": IconBrain,
   "ai-overview": IconBrain,
   "ai-live": IconActivity,
   "ai-requests": IconChat,

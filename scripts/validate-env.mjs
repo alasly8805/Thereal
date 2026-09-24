@@ -63,8 +63,9 @@ const REQUIRED = [
 /**
  * OTP delivery needs at least one configured channel.
  *
- * sendVerificationCode() tries the Meta WhatsApp Cloud API and falls back to AWS
- * SNS. If neither is configured, both legs throw and /api/auth/signup and
+ * sendVerificationCode() tries the Meta WhatsApp Cloud API and falls back to
+ * ZADX SMS (default) or AWS SNS. If neither WhatsApp nor an SMS provider is
+ * configured, both legs throw and /api/auth/signup and
  * /api/auth/forgot-password return 500 — no new accounts and no password
  * recovery. The Baileys QR client can also deliver, but it is interactively
  * paired and cannot be verified from the environment, so it does not count here.
@@ -74,10 +75,12 @@ const REQUIRED = [
  */
 function describeOtpChannels(env) {
   const meta = Boolean(env.WHATSAPP_PHONE_NUMBER_ID?.trim() && env.WHATSAPP_PERMANENT_TOKEN?.trim());
+  const zadx = Boolean(env.ZADX_API_KEY?.trim() && env.ZADX_API_SECRET?.trim());
   const sns = Boolean(
     (env.AWS_ACCESS_KEY_ID?.trim() && env.AWS_SECRET_ACCESS_KEY?.trim()) || env.AWS_USE_INSTANCE_ROLE === "true"
   );
-  return { meta, sns, any: meta || sns };
+  const sms = zadx || sns;
+  return { meta, zadx, sns, sms, any: meta || sms };
 }
 
 /**
@@ -210,6 +213,9 @@ if (isProduction) {
       "         No WhatsApp Cloud API (WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_PERMANENT_TOKEN)"
     );
     console.error(
+      "         and no ZADX SMS (ZADX_API_KEY + ZADX_API_SECRET)"
+    );
+    console.error(
       "         and no AWS SNS (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or AWS_USE_INSTANCE_ROLE=true)."
     );
     console.error(
@@ -218,9 +224,9 @@ if (isProduction) {
     failed++;
   } else {
     console.log(
-      `OK: OTP delivery (${[otp.meta && "WhatsApp Cloud API", otp.sns && "AWS SNS"].filter(Boolean).join(" + ")})`
+      `OK: OTP delivery (${[otp.meta && "WhatsApp Cloud API", otp.zadx && "ZADX SMS", otp.sns && "AWS SNS"].filter(Boolean).join(" + ")})`
     );
-    if (!otp.sns) {
+    if (!otp.sms) {
       console.warn(
         "WARN: no SMS fallback configured — if the WhatsApp Cloud API errors, OTP delivery has nowhere to go."
       );

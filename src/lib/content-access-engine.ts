@@ -4,6 +4,7 @@ import {
   Prisma,
 } from "@/generated/prisma";
 import { prisma } from "@/lib/prisma";
+import { getCenterPassGrant, type CenterItemKind } from "@/lib/center-pass";
 
 export { ContentProgressStatus, ContentType };
 
@@ -19,13 +20,122 @@ export type RequiredContentItem = {
   type: ContentType;
 };
 
-export type ContentAccessDecision =
+export const CONTENT_CLOSED_MESSAGE = "انتهى وقت الامتحان";
+
+export type PrerequisiteAccessDecision =
   | { allowed: true }
   | {
       allowed: false;
       code: "PREREQUISITE_LOCKED";
       requiredItem: RequiredContentItem;
     };
+
+export type ContentAccessDecision =
+  | PrerequisiteAccessDecision
+  | {
+      allowed: false;
+      code: "CONTENT_CLOSED";
+      message: typeof CONTENT_CLOSED_MESSAGE;
+    };
+
+export type ContentCloseExtension = {
+  studentId: string | null;
+  extendedUntil: Date | string;
+  revokedAt?: Date | string | null;
+};
+
+/**
+ * Pure close-window check used by the access engine and invariant tests.
+ * Past closeAt is closed unless a still-valid extension covers this student
+ * or every student (studentId null).
+ */
+export function isContentClosed(input: {
+  enableAutoClose?: boolean | null;
+  closeAt?: Date | string | null;
+  now?: Date;
+  studentId?: string | null;
+  extensions?: readonly ContentCloseExtension[];
+}): boolean {
+  if (!input.enableAutoClose || !input.closeAt) return false;
+  const closeAt = input.closeAt instanceof Date ? input.closeAt : new Date(input.closeAt);
+  if (Number.isNaN(closeAt.getTime())) return false;
+  const now = input.now ?? new Date();
+  if (now.getTime() <= closeAt.getTime()) return false;
+
+  const studentId = input.studentId ?? null;
+  const hasValidExtension = (input.extensions ?? []).some((extension) => {
+    if (extension.revokedAt) return false;
+    if (extension.studentId != null && extension.studentId !== studentId) return false;
+    const until =
+      extension.extendedUntil instanceof Date
+        ? extension.extendedUntil
+        : new Date(extension.extendedUntil);
+    if (Number.isNaN(until.getTime())) return false;
+    return now.getTime() <= until.getTime();
+  });
+  return !hasValidExtension;
+}
+
+export function contentDeniedPayload(access: ContentAccessDecision): {
+  status: number;
+  body: Record<string, unknown>;
+} | null {
+  if (access.allowed) return null;
+  if (access.code === "CONTENT_CLOSED") {
+    return { status: 403, body: { error: access.message, code: access.code } };
+  }
+  return {
+    status: 403,
+    body: {
+      error: `يجب إكمال «${access.requiredItem.title}» أولًا.`,
+      code: access.code,
+      requiredItem: access.requiredItem,
+    },
+  };
+}
+
+export function parseCloseSchedule(body: {
+  closeAt?: unknown;
+  enableAutoClose?: unknown;
+}): { enableAutoClose: boolean; closeAt: Date | null; error?: string } {
+  const enableAutoClose = body.enableAutoClose === true;
+  let closeAt: Date | null = null;
+  if (typeof body.closeAt === "string" && body.closeAt.trim()) {
+    const parsed = new Date(body.closeAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return { enableAutoClose, closeAt: null, error: "وقت الإغلاق غير صالح" };
+    }
+    closeAt = parsed;
+  }
+  if (enableAutoClose && !closeAt) {
+    return { enableAutoClose, closeAt: null, error: "حدد وقت الإغلاق عند تفعيل الإغلاق التلقائي" };
+  }
+  return { enableAutoClose, closeAt };
+}
+
+export async function syncContentCloseSchedule(input: {
+  type: ContentType;
+  sourceId: string;
+  title: string;
+  closeAt: Date | null;
+  enableAutoClose: boolean;
+}): Promise<void> {
+  await prisma.contentItem.upsert({
+    where: { type_sourceId: { type: input.type, sourceId: input.sourceId } },
+    create: {
+      type: input.type,
+      sourceId: input.sourceId,
+      title: input.title,
+      closeAt: input.closeAt,
+      enableAutoClose: input.enableAutoClose,
+    },
+    update: {
+      title: input.title,
+      closeAt: input.closeAt,
+      enableAutoClose: input.enableAutoClose,
+    },
+  }).catch(console.error);
+}
 
 export type GraphContentItem = RequiredContentItem;
 
@@ -87,7 +197,7 @@ export function evaluateContentAccess(input: {
   items: readonly GraphContentItem[];
   prerequisites: readonly GraphPrerequisite[];
   progress: readonly GraphStudentProgress[];
-}): ContentAccessDecision {
+}): PrerequisiteAccessDecision {
   const itemById = new Map(input.items.map((item) => [item.id, item]));
   const progressByContentId = new Map(
     input.progress.map((entry) => [entry.contentId, entry])
@@ -103,7 +213,7 @@ export function evaluateContentAccess(input: {
   const visiting = new Set<string>();
   const resolved = new Set<string>();
 
-  const blocked = (contentId: string): ContentAccessDecision => {
+  const blocked = (contentId: string): PrerequisiteAccessDecision => {
     const item = itemById.get(contentId) ?? itemById.get(input.targetContentId);
     if (!item) {
       throw new Error(`Content graph references missing item: ${contentId}`);
@@ -111,7 +221,7 @@ export function evaluateContentAccess(input: {
     return { allowed: false, code: "PREREQUISITE_LOCKED", requiredItem: item };
   };
 
-  const walk = (targetId: string): ContentAccessDecision => {
+  const walk = (targetId: string): PrerequisiteAccessDecision => {
     if (resolved.has(targetId)) return { allowed: true };
     if (visiting.has(targetId)) return blocked(targetId);
 
@@ -204,7 +314,9 @@ async function loadProgressWithLegacyFallback(
   const quizItems = unresolved.filter(
     (item) => item.type === ContentType.QUIZ || item.type === ContentType.EXAM
   );
-  const homeworkItems = unresolved.filter(
+  // Homework unlock is always derived from the live submission. Stale
+  // studentContentProgress (IN_PROGRESS after a PDF upload) must not win.
+  const homeworkItems = items.filter(
     (item) => item.type === ContentType.HOMEWORK || item.type === ContentType.EXAM
   );
 
@@ -224,7 +336,14 @@ async function loadProgressWithLegacyFallback(
     homeworkItems.length
       ? prisma.homeworkSubmission.findMany({
           where: { studentId, homeworkId: { in: homeworkItems.map((item) => item.sourceId) } },
-          select: { homeworkId: true, score: true, status: true, allowRetake: true },
+          select: {
+            homeworkId: true,
+            score: true,
+            status: true,
+            allowRetake: true,
+            fileUrl: true,
+            review: { select: { verdict: true } },
+          },
         })
       : [],
   ]);
@@ -235,9 +354,24 @@ async function loadProgressWithLegacyFallback(
   const quizBySource = new Map<string, { score: number; totalQ: number }>();
   for (const entry of quizResults) quizBySource.set(entry.quizId, entry);
 
-  const homeworkBySource = new Map<string, { score: number | null; status: string; allowRetake: boolean }>();
+  const homeworkBySource = new Map<
+    string,
+    {
+      score: number | null;
+      status: string;
+      allowRetake: boolean;
+      fileUrl?: string | null;
+      reviewVerdict?: string | null;
+    }
+  >();
   for (const entry of homeworkSubmissions) {
-    homeworkBySource.set(entry.homeworkId, entry);
+    homeworkBySource.set(entry.homeworkId, {
+      score: entry.score,
+      status: entry.status,
+      allowRetake: entry.allowRetake,
+      fileUrl: entry.fileUrl,
+      reviewVerdict: entry.review?.verdict ?? null,
+    });
   }
 
   for (const item of unresolved) {
@@ -260,22 +394,23 @@ async function loadProgressWithLegacyFallback(
           status: ContentProgressStatus.COMPLETED,
           score: legacyQuiz.score,
         });
-        continue;
       }
     }
+  }
 
-    if (item.type === ContentType.HOMEWORK || item.type === ContentType.EXAM) {
-      const legacyHomework = homeworkBySource.get(item.sourceId);
-      // Only a passed (and not-reopened) attempt unlocks the next item.
-      // Rejected / pending / retry-open work must keep the chain closed.
-      if (legacyHomework?.status === "passed" && !legacyHomework.allowRetake) {
-        progressByContentId.set(item.id, {
-          contentId: item.id,
-          status: ContentProgressStatus.COMPLETED,
-          score: legacyHomework.score,
-        });
-      }
-    }
+  for (const item of homeworkItems) {
+    const legacyHomework = homeworkBySource.get(item.sourceId);
+    if (!legacyHomework) continue;
+    const opensNext = homeworkOpensNextContent(legacyHomework.status, {
+      allowRetake: legacyHomework.allowRetake,
+      reviewVerdict: legacyHomework.reviewVerdict,
+      hasUploadedFile: Boolean(legacyHomework.fileUrl),
+    });
+    progressByContentId.set(item.id, {
+      contentId: item.id,
+      status: opensNext ? ContentProgressStatus.COMPLETED : ContentProgressStatus.IN_PROGRESS,
+      score: legacyHomework.score,
+    });
   }
 
   return [...progressByContentId.values()];
@@ -308,13 +443,108 @@ async function hasSupportOverride(studentId: string, locator: ContentLocator): P
   }
 }
 
+async function loadTimedCloseState(
+  locator: ContentLocator,
+  studentId: string
+): Promise<{ closed: boolean }> {
+  if (
+    locator.type !== ContentType.QUIZ &&
+    locator.type !== ContentType.EXAM &&
+    locator.type !== ContentType.HOMEWORK
+  ) {
+    return { closed: false };
+  }
+
+  const items = await prisma.contentItem.findMany({
+    where: {
+      sourceId: locator.sourceId,
+      type: { in: compatibleContentTypes(locator.type) },
+    },
+    select: { id: true, closeAt: true, enableAutoClose: true },
+  });
+
+  let enableAutoClose = items.some((item) => item.enableAutoClose);
+  let closeAt: Date | null = items.find((item) => item.closeAt)?.closeAt ?? null;
+
+  const quiz = await prisma.quiz.findUnique({
+    where: { id: locator.sourceId },
+    select: { closeAt: true, enableAutoClose: true },
+  });
+  if (quiz) {
+    enableAutoClose = quiz.enableAutoClose;
+    closeAt = quiz.closeAt;
+  } else {
+    const homework = await prisma.homework.findUnique({
+      where: { id: locator.sourceId },
+      select: { closeAt: true, enableAutoClose: true },
+    });
+    if (homework) {
+      enableAutoClose = homework.enableAutoClose;
+      closeAt = homework.closeAt;
+    }
+  }
+
+  if (!enableAutoClose || !closeAt) return { closed: false };
+
+  const extensions = items.length
+    ? await prisma.contentExtension.findMany({
+        where: {
+          contentId: { in: items.map((item) => item.id) },
+          revokedAt: null,
+          extendedUntil: { gte: new Date() },
+          OR: [{ studentId: null }, { studentId }],
+        },
+        select: { studentId: true, extendedUntil: true, revokedAt: true },
+      })
+    : [];
+
+  return {
+    closed: isContentClosed({
+      enableAutoClose,
+      closeAt,
+      studentId,
+      extensions,
+    }),
+  };
+}
+
 /** Authoritative server-side prerequisite gate for every supported content type. */
+function locatorToCenterKind(type: ContentType): CenterItemKind | null {
+  if (type === ContentType.VIDEO || type === ContentType.SOLUTION_VIDEO) return "VIDEO";
+  if (type === ContentType.QUIZ || type === ContentType.EXAM) return "QUIZ";
+  if (type === ContentType.HOMEWORK) return "HOMEWORK";
+  if (type === ContentType.PDF) return "MATERIAL";
+  return null;
+}
+
 export async function canAccessContent(
   studentId: string,
   locator: ContentLocator
 ): Promise<ContentAccessDecision> {
+  const timed = await loadTimedCloseState(locator, studentId);
+  if (timed.closed) {
+    return { allowed: false, code: "CONTENT_CLOSED", message: CONTENT_CLOSED_MESSAGE };
+  }
+
   if (await hasSupportOverride(studentId, locator)) {
     return { allowed: true };
+  }
+
+  const centerGrant = await getCenterPassGrant(studentId);
+  if (centerGrant) {
+    const kind = locatorToCenterKind(locator.type);
+    if (kind && centerGrant.has(kind, locator.sourceId)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      code: "PREREQUISITE_LOCKED",
+      requiredItem: {
+        id: locator.sourceId,
+        title: locator.title || "",
+        type: locator.type,
+      },
+    };
   }
 
   const candidates = await prisma.contentItem.findMany({
@@ -353,19 +583,82 @@ export async function canAccessContent(
 export async function getCourseContentLocks(
   studentId: string,
   sourceIds: string[]
-): Promise<{ active: boolean; locks: Map<string, RequiredContentItem> }> {
+): Promise<{ active: boolean; locks: Map<string, RequiredContentItem>; timedClosed: Set<string> }> {
   const locks = new Map<string, RequiredContentItem>();
-  if (sourceIds.length === 0) return { active: false, locks };
+  const timedClosed = new Set<string>();
+  if (sourceIds.length === 0) return { active: false, locks, timedClosed };
 
   const items = await prisma.contentItem.findMany({
     where: { sourceId: { in: sourceIds } },
-    select: { id: true, title: true, type: true, sourceId: true },
+    select: { id: true, title: true, type: true, sourceId: true, closeAt: true, enableAutoClose: true },
   });
-  if (items.length === 0) return { active: false, locks };
 
-  const itemIds = new Set(items.map((item) => item.id));
+  const [quizzes, homeworks] = await Promise.all([
+    prisma.quiz.findMany({
+      where: { id: { in: sourceIds } },
+      select: { id: true, closeAt: true, enableAutoClose: true },
+    }),
+    prisma.homework.findMany({
+      where: { id: { in: sourceIds } },
+      select: { id: true, closeAt: true, enableAutoClose: true },
+    }),
+  ]);
+  const quizById = new Map(quizzes.map((row) => [row.id, row]));
+  const homeworkById = new Map(homeworks.map((row) => [row.id, row]));
+
+  const itemIds = items.map((item) => item.id);
+  const extensions = itemIds.length
+    ? await prisma.contentExtension.findMany({
+        where: {
+          contentId: { in: itemIds },
+          revokedAt: null,
+          extendedUntil: { gte: new Date() },
+          OR: [{ studentId: null }, { studentId }],
+        },
+        select: { contentId: true, studentId: true, extendedUntil: true, revokedAt: true },
+      })
+    : [];
+  const extensionsByContentId = new Map<string, ContentCloseExtension[]>();
+  for (const extension of extensions) {
+    const list = extensionsByContentId.get(extension.contentId) ?? [];
+    list.push(extension);
+    extensionsByContentId.set(extension.contentId, list);
+  }
+
+  const scheduleForSource = (sourceId: string) => {
+    const quiz = quizById.get(sourceId);
+    if (quiz) return quiz;
+    const homework = homeworkById.get(sourceId);
+    if (homework) return homework;
+    const item = items.find((entry) => entry.sourceId === sourceId);
+    return item
+      ? { closeAt: item.closeAt, enableAutoClose: item.enableAutoClose }
+      : { closeAt: null, enableAutoClose: false };
+  };
+
+  for (const sourceId of sourceIds) {
+    const schedule = scheduleForSource(sourceId);
+    const relatedItems = items.filter((item) => item.sourceId === sourceId);
+    const sourceExtensions = relatedItems.flatMap(
+      (item) => extensionsByContentId.get(item.id) ?? []
+    );
+    if (
+      isContentClosed({
+        enableAutoClose: schedule.enableAutoClose,
+        closeAt: schedule.closeAt,
+        studentId,
+        extensions: sourceExtensions,
+      })
+    ) {
+      timedClosed.add(sourceId);
+    }
+  }
+
+  if (items.length === 0) return { active: false, locks, timedClosed };
+
+  const itemIdSet = new Set(items.map((item) => item.id));
   const prerequisites = await prisma.contentPrerequisite.findMany({
-    where: { targetContentId: { in: [...itemIds] } },
+    where: { targetContentId: { in: [...itemIdSet] } },
     select: {
       targetContentId: true,
       prerequisiteContentId: true,
@@ -373,13 +666,13 @@ export async function getCourseContentLocks(
       minScore: true,
     },
   });
-  if (prerequisites.length === 0) return { active: false, locks };
+  if (prerequisites.length === 0) return { active: false, locks, timedClosed };
 
   // Edges may point at prerequisite items outside this course's source set
   // (ContentItem is keyed by source, so cross-course chains are possible) —
   // pull those in too or the evaluator would fail closed on a missing item.
   const missingIds = [
-    ...new Set(prerequisites.map((edge) => edge.prerequisiteContentId).filter((id) => !itemIds.has(id))),
+    ...new Set(prerequisites.map((edge) => edge.prerequisiteContentId).filter((id) => !itemIdSet.has(id))),
   ];
   const extraItems = missingIds.length
     ? await prisma.contentItem.findMany({
@@ -401,7 +694,7 @@ export async function getCourseContentLocks(
     if (!decision.allowed) locks.set(item.sourceId, decision.requiredItem);
   }
 
-  return { active: true, locks };
+  return { active: true, locks, timedClosed };
 }
 
 type ContentProgressDb = Pick<
@@ -485,19 +778,98 @@ export async function recordContentCompleted(
   );
 }
 
+export type HomeworkUnlockOptions = {
+  allowRetake?: boolean;
+  /** Last teacher verdict. Unlock is driven by submission status, not this. */
+  reviewVerdict?: string | null;
+  /** True when the student already stored a PDF/file on the submission. */
+  hasUploadedFile?: boolean;
+};
+
+/** Canonical status for every PDF homework persist/submit ("قيد المراجعة"). */
+export const HOMEWORK_REVIEW_REQUESTED_STATUS = "review_requested";
+
+export function isHomeworkUnderReview(
+  status: string,
+  options: HomeworkUnlockOptions = {}
+): boolean {
+  return (
+    status === HOMEWORK_REVIEW_REQUESTED_STATUS ||
+    (status === "pending" && options.hasUploadedFile === true)
+  );
+}
+
 /**
- * Homework only opens the next item when the attempt is passed and not
- * reopened. Reject / pending / retry-open all keep the chain closed so a
- * failed file cannot skip the rest of the lecture.
+ * Global PDF homework chain rule (all current and future uploads):
+ * - Any قيد المراجعة row (`review_requested`, or legacy `pending` with a file)
+ *   marks progress COMPLETED and unlocks the next item.
+ * - Teacher reject (`failed`) locks the next item again.
+ * - Teacher accept (`passed`) keeps it unlocked.
+ * Re-upload after reject returns to قيد المراجعة and unlocks again.
+ *
+ * `canAccessContent` / `getCourseContentLocks` both overlay live submissions
+ * through this helper, so a later upload cannot stay locked just because
+ * studentContentProgress was left IN_PROGRESS.
+ */
+export function homeworkOpensNextContent(
+  status: string,
+  options: HomeworkUnlockOptions = {}
+): boolean {
+  if (options.allowRetake) return false;
+  if (status === "passed") return true;
+  return isHomeworkUnderReview(status, options);
+}
+
+export function homeworkProgressStatusFromSubmission(
+  status: string,
+  options: HomeworkUnlockOptions = {}
+): ContentProgressStatus {
+  return homeworkOpensNextContent(status, options)
+    ? ContentProgressStatus.COMPLETED
+    : ContentProgressStatus.IN_PROGRESS;
+}
+
+/** Rejected upload homework can be replaced without a teacher retry toggle. */
+export function canReplaceRejectedHomeworkUpload(
+  homeworkType: string,
+  status: string,
+  allowRetake: boolean
+): boolean {
+  if (allowRetake) return true;
+  return homeworkType === "upload" && status === "failed";
+}
+
+/**
+ * /upload may store a PDF on this attempt. Passed work stays locked until the
+ * teacher reopens it. قيد المراجعة rows may be replaced so a retried upload
+ * after a dropped /submit still writes the same global unlock rule.
+ */
+export function canPersistPdfHomeworkUpload(
+  homeworkType: string,
+  status: string | null | undefined,
+  allowRetake: boolean
+): boolean {
+  if (!status) return true;
+  if (allowRetake) return true;
+  if (homeworkType !== "upload") return false;
+  return (
+    status === "pending" ||
+    status === HOMEWORK_REVIEW_REQUESTED_STATUS ||
+    status === "failed"
+  );
+}
+
+/**
+ * Keep studentContentProgress in lock-step with the homework submission.
  */
 export async function syncHomeworkContentProgress(
   studentId: string,
   locator: ContentLocator,
   status: string,
-  options: { score?: number | null; completedAt?: Date; allowRetake?: boolean } = {},
+  options: HomeworkUnlockOptions & { score?: number | null; completedAt?: Date } = {},
   db: ContentProgressDb = prisma
 ): Promise<void> {
-  const opensNext = status === "passed" && !options.allowRetake;
+  const opensNext = homeworkOpensNextContent(status, options);
   if (opensNext) {
     await recordContentCompleted(studentId, locator, {
       score: options.score,

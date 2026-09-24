@@ -71,6 +71,7 @@ export async function GET(
     });
 
     // 2. Fetch redeemed access codes for this course
+    // Booking / teacher subscriptions are NEVER mixed into this list.
     const redeemedCodes = await prisma.accessCode.findMany({
       where: {
         courseId,
@@ -100,45 +101,7 @@ export async function GET(
       orderBy: { usedAt: "desc" },
     });
 
-    // 3. Fetch active teacher subscriptions for this teacher matching course track
-    const { getEffectiveCourseTrack, isSubscriptionTrackMatching } = await import("@/lib/course-track");
-    const courseTrack = await getEffectiveCourseTrack(courseId, course);
-
-    const rawTeacherSubscriptions = await prisma.teacherSubscription.findMany({
-      where: {
-        teacherId: course.teacherId,
-        status: "active",
-        expiresAt: { gt: new Date() },
-        student: {
-          role: "student",
-          accountMode: { not: "TESTER" },
-          isVirtual: false,
-          id: { not: course.teacherId },
-        },
-      },
-      include: {
-        student: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            parentPhone: true,
-            educationalStage: true,
-            createdAt: true,
-            lastLoginAt: true,
-            devices: { select: { id: true, lastSeenAt: true }, take: 1, orderBy: { lastSeenAt: "desc" } },
-          },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    const teacherSubscriptions = rawTeacherSubscriptions.filter((s) =>
-      isSubscriptionTrackMatching(s.languageTrack, courseTrack)
-    );
-
-    // 4. Fetch exclusion overrides from AppSetting
+    // 3. Fetch exclusion overrides from AppSetting
     const exclusions = await prisma.appSetting.findMany({
       where: { key: { startsWith: `course_excluded_${courseId}_` } },
       select: { key: true, value: true },
@@ -149,11 +112,10 @@ export async function GET(
         .map((e) => e.key.replace(`course_excluded_${courseId}_`, ""))
     );
 
-    // 5. Gather all unique student IDs to query watch sessions
+    // 4. Gather all unique student IDs to query real watches (not booking students)
     const allStudentIds = new Set<string>();
     directEnrollments.forEach((e) => allStudentIds.add(e.student.id));
     redeemedCodes.forEach((c) => c.student && allStudentIds.add(c.student.id));
-    teacherSubscriptions.forEach((s) => s.student && allStudentIds.add(s.student.id));
 
     // Exclude teacher and any superadmin IDs just in case
     allStudentIds.delete(course.teacherId);
@@ -161,21 +123,24 @@ export async function GET(
 
     const studentIdsList = Array.from(allStudentIds);
 
-    // 6. Query watch sessions count on videos in this course
-    const watchSessions = await prisma.videoWatchSession.findMany({
-      where: {
-        video: { folder: { courseId } },
-        studentId: { in: studentIdsList },
-      },
-      select: { studentId: true },
-    });
-
+    // 5. Count real lecture watches (completed or >10s), not raw session starts
     const watchCountMap = new Map<string, number>();
-    for (const ws of watchSessions) {
-      watchCountMap.set(ws.studentId, (watchCountMap.get(ws.studentId) || 0) + 1);
+    if (studentIdsList.length > 0) {
+      const watchRows = await prisma.progress.groupBy({
+        by: ["studentId"],
+        where: {
+          studentId: { in: studentIdsList },
+          video: { folder: { courseId } },
+          OR: [{ watched: true }, { watchedSecondsTotal: { gt: 10 } }],
+        },
+        _count: { _all: true },
+      });
+      for (const row of watchRows) {
+        watchCountMap.set(row.studentId, row._count._all);
+      }
     }
 
-    // 7. Aggregate student data deduplicated by studentId
+    // 6. Aggregate student data deduplicated by studentId
     interface StudentAggregated {
       id: string;
       name: string;
@@ -256,21 +221,6 @@ export async function GET(
       });
       if (date < agg.firstEnrolledAt) {
         agg.firstEnrolledAt = date;
-      }
-    }
-
-    // Add teacher subscriptions
-    for (const ts of teacherSubscriptions) {
-      if (!ts.student) continue;
-      const agg = getOrCreate(ts.student, ts.createdAt);
-      agg.sources.push({
-        type: "TEACHER_SUBSCRIPTION",
-        label: `باقة اشتراك المعلم (${ts.planLabel})`,
-        amount: ts.amount,
-        date: ts.createdAt,
-      });
-      if (ts.createdAt < agg.firstEnrolledAt) {
-        agg.firstEnrolledAt = ts.createdAt;
       }
     }
 

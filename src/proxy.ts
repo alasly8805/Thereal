@@ -8,6 +8,7 @@ const ADMIN_PANEL_PREFIXES = [
   "/adminpanel/superadmin",
   "/adminpanel/teacher",
   "/adminpanel/assistant",
+  "/teacher",
 ];
 
 /** Student/user page routes — require a valid session; redirect to /login on failure */
@@ -76,12 +77,13 @@ function isVpnExemptRoute(pathname: string) {
     // Support panel: agents are staff and may legitimately be behind a VPN.
     pathname === "/thefake/support" ||
     pathname.startsWith("/thefake/support/") ||
-    pathname.startsWith("/api/support/")
+    pathname.startsWith("/api/support/") ||
+    pathname.startsWith("/api/thefake/support/")
   );
 }
 
 // Read JWT_SECRET dynamically inside hasValidSession to handle hot-reloads and Edge runtime environment injection correctly.
-async function readSession(req: NextRequest): Promise<{ supportView: boolean; demoTour: boolean } | null> {
+async function readSession(req: NextRequest): Promise<{ supportView: boolean; demoTour: boolean; accountMode?: string } | null> {
   const secretStr = process.env.JWT_SECRET;
   if (!secretStr) {
     console.warn("JWT_SECRET environment variable is missing in middleware context!");
@@ -94,7 +96,11 @@ async function readSession(req: NextRequest): Promise<{ supportView: boolean; de
   try {
     const secret = new TextEncoder().encode(secretStr);
     const { payload } = await jwtVerify(token, secret);
-    return { supportView: payload.supportView === true, demoTour: payload.demoTour === true };
+    return {
+      supportView: payload.supportView === true,
+      demoTour: payload.demoTour === true,
+      accountMode: typeof payload.accountMode === "string" ? payload.accountMode : undefined,
+    };
   } catch {
     return null;
   }
@@ -239,6 +245,35 @@ export default async function proxy(req: NextRequest) {
   const sessionInfo = await readSession(req);
   const authed = sessionInfo !== null;
 
+  // Center-ID hall accounts are bound to center.code-up.tech. A cookie on the
+  // online host would otherwise leak their custom curriculum onto code-up.tech.
+  if (sessionInfo?.accountMode === "CENTER_ID" && !isCenterMode) {
+    const allowOnOnline =
+      pathname === "/api/auth/me" ||
+      pathname.startsWith("/api/auth/logout") ||
+      pathname === "/login" ||
+      pathname.startsWith("/login/");
+    if (!allowOnOnline) {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json(
+          {
+            error: "حساب الرقم التعريفي يعمل فقط على منصة السنتر (center.code-up.tech).",
+            code: "CENTER_ID_HOST_ONLY",
+          },
+          { status: 403 }
+        );
+      }
+      const host = req.headers.get("host") || "";
+      if (host.startsWith("localhost") || host.startsWith("127.")) {
+        const local = req.nextUrl.clone();
+        local.pathname = "/center";
+        local.searchParams.set("center", "1");
+        return NextResponse.redirect(local);
+      }
+      return NextResponse.redirect("https://center.code-up.tech/center");
+    }
+  }
+
   // Read-only enforcement for "support is looking at this account". Runs before
   // every other check so no downstream branch can let a write slip through.
   if (sessionInfo?.supportView && isSupportViewReadOnlyViolation(req, pathname)) {
@@ -310,9 +345,12 @@ export default async function proxy(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Exclude multipart upload routes — proxy body buffering corrupts FormData.
-    // Auth is enforced inside each upload handler instead.
-    "/(api|trpc)((?!/homework/[^/]+/upload$).*)",
+    // Next.js ORs matcher entries, so the upload skip has to live in THIS
+    // pattern. The second entry used to "exclude" /api/homework/*/upload, but
+    // the catch-all above still matched it — proxy then buffered the multipart
+    // body, Android Chrome got HTTP 400 with an empty body, and the student
+    // toast was just "فشل رفع الملف". Auth for the upload route is enforced
+    // inside the handler.
+    "/((?!_next|api/homework/[^/]+/upload|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest|txt|xml)).*)",
   ],
 };

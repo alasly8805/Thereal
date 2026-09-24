@@ -115,7 +115,7 @@ function VpnCheckContent() {
             <span className="text-xl font-black tracking-tight text-white group-hover:text-sky-400 transition-colors">
               Code-UP
             </span>
-            <span className="text-[11px] text-[#94a3b8] font-medium">المنصة التعليمية الأولى</span>
+            <span className="text-[11px] text-[#94a3b8] font-medium">منصة Code-UP التعليمية</span>
           </div>
         </Link>
 

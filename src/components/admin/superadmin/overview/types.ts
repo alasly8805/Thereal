@@ -39,6 +39,20 @@ export interface OverviewSubscription {
   createdAt: string;
 }
 
+/** One student's purchase (or package-covered seat) of a paid course. */
+export interface OverviewCoursePayment {
+  id: string;
+  studentId?: string;
+  studentName: string;
+  studentPhone: string;
+  courseId: string;
+  courseTitle: string;
+  amount: number;
+  coveredBySubscription: boolean;
+  source?: string;
+  createdAt: string;
+}
+
 export interface PlanPricingStage {
   key: string;
   label: string;
@@ -87,6 +101,7 @@ export interface OverviewTeacher {
   teacherShare?: number;
   planPricing?: PlanPricing;
   subscriptions: OverviewSubscription[];
+  coursePayments?: OverviewCoursePayment[];
   courses: TeacherCourse[];
 }
 
@@ -120,8 +135,55 @@ export interface AccessMonitorEvent {
   reason: string;
 }
 
+/** Compact board reading — stored when the HQ page is opened, and reconstructed for the time machine. */
+export interface OverviewKpis {
+  capturedAt: string;
+  totalStudents: number;
+  totalTeachers: number;
+  totalCourses: number;
+  bookingsActiveNow: number;
+  bookingsActiveStudents: number;
+  uniquePaidStudents: number;
+  bookingsAddedToday: number;
+  revenueActive: number;
+  pendingStudentCount: number;
+  pendingTransactionCount: number;
+  pendingAmount: number;
+  gross: number;
+  platformShare: number;
+  teachersShare: number;
+  expenses: number;
+  net: number;
+  expensesCount: number;
+  defaultPercentage: number;
+  customTeacherPctCount: number;
+  totalPaidStudentsAcrossPlatform: number;
+  totalActiveContentConsumers: number;
+  totalRealReservations: number;
+  totalRealPaidReservations: number;
+  totalCourseEnrollmentsCount: number;
+  totalCodesUsed: number;
+  totalCodesBooked: number;
+  totalGatewayDeposits: number;
+  totalRevenue: number;
+  teachersEarnedRevenue: number;
+  accessMonitorAlertCount: number;
+  outstandingValue: number | null;
+  coveragePercent: number | null;
+}
+
+export type OverviewSnapshotSource = "page_open" | "pin" | "reconstructed";
+
+export interface OverviewSnapshot {
+  id: string;
+  capturedAt: string;
+  source: OverviewSnapshotSource;
+  kpis: OverviewKpis;
+}
+
 export interface OverviewData {
   totalStudents: number;
+  signupsByDay?: Array<{ date: string; count: number }>;
   totalTeachers: number;
   totalCourses: number;
   totalRealReservations?: number;
@@ -136,9 +198,28 @@ export interface OverviewData {
   totalRevenue: number;
   bookings?: {
     activeNow: number;
+    activeStudents?: number;
+    uniquePaidStudents?: number;
     addedToday: number;
     revenueActive: number;
     generatedAt: string;
+  };
+  pendingPayments?: {
+    studentCount: number;
+    transactionCount: number;
+    amountPending: number;
+    students: Array<{
+      studentId: string;
+      name: string;
+      phone: string | null;
+      transactions: Array<{
+        id: string;
+        amount: number;
+        provider: "shakeout" | "sha7nawy";
+        itemLabel: string;
+        createdAt: string;
+      }>;
+    }>;
   };
   bookingIntelligence?: BookingIntelligenceData;
   coursesPricing?: CoursePricingRow[];

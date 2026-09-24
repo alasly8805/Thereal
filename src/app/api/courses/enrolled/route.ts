@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { unlockAtISO, isScheduledLocked } from "@/lib/publish";
+import { getCenterPassGrant } from "@/lib/center-pass";
 
 export async function GET() {
   try {
@@ -19,10 +20,13 @@ export async function GET() {
       where: {
         studentId: session.id,
         status: "active",
-        expiresAt: { gt: new Date() },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
-      select: { teacherId: true, languageTrack: true },
+      select: { teacherId: true, languageTrack: true, amount: true, status: true },
     }) : [];
+
+    const centerGrant = session.role === "student" ? await getCenterPassGrant(session.id) : null;
+    const centerCourseIds = centerGrant?.isActive ? [...centerGrant.courseIds] : [];
 
     // Get enrolled or owned courses with minimal data
     const rawEnrolledCourses = await prisma.course.findMany({
@@ -35,8 +39,9 @@ export async function GET() {
         OR: [
           { accessCodes: { some: { studentId: session.id, isActive: true } } },
           { enrollments: { some: { studentId: session.id } } },
-          { teacher: { teacherSubscriptions: { some: { studentId: session.id, status: "active", expiresAt: { gt: new Date() } } } } },
+          { teacher: { teacherSubscriptions: { some: { studentId: session.id, status: "active", OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } } } },
           { planCourseLinks: { some: { plan: { enrollments: { some: { studentId: session.id, expiresAt: { gt: new Date() } } } } } } },
+          ...(centerCourseIds.length ? [{ id: { in: centerCourseIds } }] : []),
         ],
       },
       select: {
@@ -44,6 +49,7 @@ export async function GET() {
         title: true,
         subject: true,
         description: true,
+        deliveryMode: true,
         thumbnailUrl: true,
         educationalStage: true,
         createdAt: true,
@@ -89,34 +95,24 @@ export async function GET() {
     });
 
     const { getCourseLanguageTrack, isSubscriptionTrackMatching } = await import("@/lib/course-track");
-
-    const STANDALONE_LESSON_IDS = new Set([
-      "cmtqbw41d005qqwobfcrfg07c", // شرح الدرس الأول (Mohamed Abdelbaset - Arabic)
-      "cmtr54unr00wfqwwvtbvaxy8q", // شرح الدرس الأول (Mohamed Abdelbaset - Languages)
-      "cmta9me5r0007qxmwnnsq1cez", // First section programming language (Youssef El-Tareq - Languages)
-      "cmt45qxsf001oqx3e9jtlwny8", // اول حصة في الشهر الاول عربي (Youssef El-Tareq - Arabic)
-    ]);
-
-    const isStandaloneLesson = (course: { id: string; title?: string | null; teacher?: { id: string } | null }) => {
-      if (STANDALONE_LESSON_IDS.has(course.id)) return true;
-      const title = (course.title || "").toLowerCase();
-      if (title.includes("شرح الدرس الأول") || title.includes("اول حصة في الشهر") || title.includes("first section")) {
-        return true;
-      }
-      return false;
-    };
+    const { isTeaserLesson, teacherSubscriptionCoversCourse } = await import("@/lib/standalone-lessons");
 
     const enrolledCourses = rawEnrolledCourses.filter((course) => {
       if (session.role === "teacher") return true;
 
-      // Standalone single-lesson courses are merged into full monthly courses and hidden from library
-      if (isStandaloneLesson(course)) return false;
+      if (centerGrant?.isActive && centerGrant.courseIds.has(course.id)) return true;
+
+      // Teaser first-lessons are merged into the monthly course and hidden from the library.
+      // Separately-sold lectures (center / المحاضرة الثانية) stay visible if the student
+      // actually enrolled or redeemed a code — never via booking.
+      if (isTeaserLesson(course)) return false;
 
       if (course.accessCodes && course.accessCodes.length > 0) return true;
       if (course.enrollments && course.enrollments.length > 0) return true;
       if (course.planCourseLinks && course.planCourseLinks.length > 0) return true;
 
-      if (course.teacher?.id) {
+      const isCenterCourse = (course.deliveryMode || "").toUpperCase() === "CENTER";
+      if (course.teacher?.id && (teacherSubscriptionCoversCourse(course) || isCenterCourse)) {
         const teacherSubs = activeSubs.filter((s) => s.teacherId === course.teacher.id);
         if (teacherSubs.length > 0) {
           const courseTrack = getCourseLanguageTrack(course);
@@ -138,24 +134,41 @@ export async function GET() {
 
     // Build response with corrected progress calculation per course
     const coursesWithProgress = enrolledCourses.map(course => {
-      const folders = course.folders.map(folder => ({
-        id: folder.id,
-        name: folder.name,
-        order: folder.order,
-        videos: folder.videos.map(video => ({
-          id: video.id,
-          title: video.title,
-          order: video.order,
-          watched: progressMap.get(video.id) || false,
-          unlockAt: unlockAtISO(folder.publishAt, video.publishAt),
-          scheduledLocked: isScheduledLocked(folder.publishAt, video.publishAt, now),
-        })),
-        quizzes: folder.quizzes.map(quiz => ({
-          id: quiz.id,
-          title: quiz.title,
-          timeLimitMinutes: (quiz as any).timeLimitMinutes,
-        })),
-      }));
+      const folders = course.folders
+        .map(folder => {
+          const videos = folder.videos
+            .filter((video) => !centerGrant || centerGrant.has("VIDEO", video.id))
+            .map(video => ({
+              id: video.id,
+              title: video.title,
+              order: video.order,
+              watched: progressMap.get(video.id) || false,
+              unlockAt: unlockAtISO(folder.publishAt, video.publishAt),
+              scheduledLocked: isScheduledLocked(folder.publishAt, video.publishAt, now),
+            }));
+          const quizzes = folder.quizzes
+            .filter((quiz) => !centerGrant || centerGrant.has("QUIZ", quiz.id))
+            .map(quiz => ({
+              id: quiz.id,
+              title: quiz.title,
+              timeLimitMinutes: (quiz as any).timeLimitMinutes,
+            }));
+          if (centerGrant && videos.length === 0 && quizzes.length === 0) return null;
+          return {
+            id: folder.id,
+            name: folder.name,
+            order: folder.order,
+            videos,
+            quizzes,
+          };
+        })
+        .filter(Boolean) as Array<{
+          id: string;
+          name: string;
+          order: number;
+          videos: Array<{ id: string; title: string; order: number; watched: boolean; unlockAt: string | null; scheduledLocked: boolean }>;
+          quizzes: Array<{ id: string; title: string; timeLimitMinutes: number }>;
+        }>;
 
       // Calculate totals correctly per course
       const totalVideos = folders.reduce((sum, f) => sum + f.videos.length, 0);

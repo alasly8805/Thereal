@@ -3,14 +3,16 @@ import Link from "next/link";
 import Script from "next/script";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
-import { SEO_KEYWORD_MATRIX } from "@/lib/seo-keywords";
+import { TOP_META_KEYWORDS } from "@/lib/seo-keywords";
+import { STUDY_FAQS, faqsToJsonLd } from "@/lib/geo-faqs";
+import { GeoFaqList } from "@/components/geo/GeoFaqList";
 import { safeJsonLd } from "@/lib/jsonld";
 
 export const metadata: Metadata = {
   title: "دليل مادة البرمجة والذكاء الاصطناعي (نظري وعملي) | منصة Code-UP",
   description:
     "الشرح الأكاديمي المتكامل لمنهج مادة البرمجة والذكاء الاصطناعي لطلاب الصف الأول الثانوي وطلاب البكالوريا. تفكيك النظري للامتحانات الورقية وتطبيقات عملية بمحرر الأكواد.",
-  keywords: SEO_KEYWORD_MATRIX.slice(0, 600),
+  keywords: [...TOP_META_KEYWORDS],
   alternates: {
     canonical: "https://code-up.tech/curriculum/programming-and-ai",
   },
@@ -32,7 +34,7 @@ const jsonLd = {
       "@id": "https://code-up.tech/curriculum/programming-and-ai#course",
       "name": "مادة البرمجة والذكاء الاصطناعي الشاملة للثانوية العامة والبكالوريا",
       "description":
-        "دورة دراسية معتمدة تجمع بين تفكيك المفاهيم النظرية المقررة في الامتحانات الورقية لوزارة التربية والتعليم والتطبيق العملي الكودي عبر محرر مباشر.",
+        "شرح مادة البرمجة والذكاء الاصطناعي: المفاهيم النظرية للامتحانات الورقية والتطبيق عبر محرر أكواد مدمج. منصة خاصة وليست منصة الوزارة.",
       "provider": {
         "@type": "EducationalOrganization",
         "name": "Code-UP",
@@ -48,7 +50,8 @@ const jsonLd = {
         { "@type": "ListItem", "position": 2, "name": "دليل المنهج", "item": "https://code-up.tech/curriculum" },
         { "@type": "ListItem", "position": 3, "name": "البرمجة والذكاء الاصطناعي", "item": "https://code-up.tech/curriculum/programming-and-ai" }
       ]
-    }
+    },
+    faqsToJsonLd(STUDY_FAQS, "https://code-up.tech/curriculum/programming-and-ai#faq")
   ]
 };
 
@@ -67,13 +70,13 @@ export default function ProgrammingAndAiCurriculumPage() {
         <section className="relative overflow-hidden py-16 sm:py-24 border-b border-slate-800/80 bg-gradient-to-b from-[#0f172a] via-[#0b101b] to-[#0b101b]">
           <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 text-center space-y-6">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-1.5 text-xs sm:text-sm font-semibold text-emerald-400">
-              <span>✨ المنهج الأقوى والأشمل في مصر لطلاب البكالوريا والثانوي</span>
+              <span>مادة البرمجة والذكاء الاصطناعي — شرح نظري وعملي</span>
             </div>
             <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white leading-tight">
               دليل مادة <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-200">البرمجة والذكاء الاصطناعي</span>
             </h1>
             <p className="mx-auto max-w-3xl text-base sm:text-lg text-slate-300 leading-relaxed">
-              منصة <strong>Code-UP</strong> صُممت خصيصاً لتجمع بين الفهم الأكاديمي النظري لضمان الدرجة النهائية في الامتحانات الورقية، وبين التطبيق البرمجي العملي الفوري عبر محرر الأكواد المدمج.
+              منصة <strong>Code-UP</strong> تجمع الشرح النظري للامتحان الورقي مع التطبيق في محرر أكواد مدمج. كيريو QUREO تبقى منصة الوزارة للجزء العملي الرسمي.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
               <Link
@@ -135,6 +138,11 @@ export default function ProgrammingAndAiCurriculumPage() {
               </p>
             </div>
           </div>
+
+          <section className="space-y-4">
+            <h2 className="text-2xl font-black text-white text-center">أسئلة الطلاب عن المادة</h2>
+            <GeoFaqList items={STUDY_FAQS} />
+          </section>
 
           <div className="rounded-3xl border border-emerald-500/30 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-emerald-950/40 p-8 sm:p-10 text-center space-y-6">
             <h2 className="text-2xl sm:text-3xl font-black text-white">

@@ -79,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
               score: true,
               totalQ: true,
               completedAt: true,
-              answers: { select: { questionType: true, isCorrect: true, status: true, aiGrade: { select: { status: true } } } },
+              answers: { select: { questionType: true, isCorrect: true, status: true, degree: true, aiGrade: { select: { status: true } } } },
             },
           })
         : Promise.resolve([]),

@@ -9,9 +9,13 @@ import fs from "fs/promises";
 import { blockSupportView } from "@/lib/support-auth";
 import {
   canAccessContent,
+  canReplaceRejectedHomeworkUpload,
+  contentDeniedPayload,
   ContentType,
+  HOMEWORK_REVIEW_REQUESTED_STATUS,
   syncHomeworkContentProgress,
 } from "@/lib/content-access-engine";
+import { scoreHomeworkExam } from "@/lib/homework-regrade";
 
 /** Normalize output: collapse whitespace, trim lines, lowercase */
 function normalizeOutput(s: string): string {
@@ -64,29 +68,38 @@ export async function POST(
     sourceId: homeworkId,
     title: hw.title,
   });
-  if ("requiredItem" in access) {
-    return NextResponse.json(
-      {
-        error: `يجب إكمال «${access.requiredItem.title}» أولًا.`,
-        code: access.code,
-        requiredItem: access.requiredItem,
-      },
-      { status: 403 }
-    );
-  }
+  const denied = contentDeniedPayload(access);
+  if (denied) return NextResponse.json(denied.body, { status: denied.status });
 
   // One graded attempt unless the teacher/assistant reopened it.
   // The deadline never substitutes for this lock: a student who submits late
   // still gets a score, and cannot submit again without allowRetake.
   const existing = await prisma.homeworkSubmission.findUnique({
     where: { homeworkId_studentId: { homeworkId, studentId: session.id } },
-    include: { review: { select: { id: true } } },
+    include: { review: { select: { id: true, verdict: true } } },
   });
-  if (existing && !existing.allowRetake)
+  // Rejected PDF: student may replace the file. Keep the previous review row
+  // so the teacher UI can show that the file changed; unlock still follows
+  // the new قيد المراجعة status (review_requested → COMPLETED).
+  const afterRejection =
+    existing?.status === "failed" || existing?.review?.verdict === "failed";
+  // Upload may already have written a قيد المراجعة row (file persist). Allow
+  // this follow-up submit to finalize the same attempt instead of 409.
+  const uploadResubmit =
+    hw.type === "upload" &&
+    !!existing &&
+    (existing.status === "pending" || existing.status === HOMEWORK_REVIEW_REQUESTED_STATUS) &&
+    !existing.allowRetake;
+  if (
+    existing &&
+    !canReplaceRejectedHomeworkUpload(hw.type, existing.status, existing.allowRetake) &&
+    !uploadResubmit
+  ) {
     return NextResponse.json(
       { error: "تم احتساب درجتك مرة واحدة. لا يمكن إعادة الاختبار.", alreadySubmitted: true, submission: existing },
       { status: 409 }
     );
+  }
 
   const body = (await req.json()) as {
     submittedOutput?: string; // terminal
@@ -121,7 +134,7 @@ export async function POST(
         status = aiResult.passed ? "passed" : "failed";
       } catch {
         // AI unavailable → flag for manual review
-        status = "review_requested";
+        status = HOMEWORK_REVIEW_REQUESTED_STATUS;
       }
     }
   }
@@ -144,7 +157,9 @@ export async function POST(
       return NextResponse.json({ error: "الملف المشار إليه غير موجود على السيرفر، يرجى إعادة رفعه" }, { status: 400 });
     }
 
-    status = "pending"; // teacher reviews manually
+    // PDF / file homework waits for the teacher ("قيد المراجعة").
+    // Global rule: this status is COMPLETED progress and unlocks the next item.
+    status = HOMEWORK_REVIEW_REQUESTED_STATUS;
   }
 
   // ── Exam (MCQ) ────────────────────────────────────────────────────────────
@@ -152,14 +167,10 @@ export async function POST(
     if (!body.answers || Object.keys(body.answers).length === 0)
       return NextResponse.json({ error: "يجب الإجابة على الأسئلة" }, { status: 400 });
 
-    const questions = hw.questions;
-    let correct = 0;
-    for (const q of questions) {
-      if (body.answers[q.id] === q.correctAnswer) correct++;
-    }
-    totalQ = questions.length;
-    score = totalQ > 0 ? Math.round((correct / totalQ) * 100) : 0;
-    status = score >= 50 ? "passed" : "failed";
+    const graded = scoreHomeworkExam(hw.questions, body.answers);
+    totalQ = graded.totalQ;
+    score = graded.score;
+    status = graded.status;
   }
 
   // ── Link (no submission needed) ───────────────────────────────────────────
@@ -172,7 +183,7 @@ export async function POST(
     submission = await prisma.$transaction(async (tx) => {
       let savedSubmission;
       if (existing) {
-        if (existing.review) {
+        if (existing.review && !(hw.type === "upload" && afterRejection)) {
           await tx.homeworkReview.delete({ where: { submissionId: existing.id } });
         }
         savedSubmission = await tx.homeworkSubmission.update({
@@ -209,7 +220,11 @@ export async function POST(
         session.id,
         { type: ContentType.HOMEWORK, sourceId: homeworkId, title: hw.title },
         status,
-        { score, completedAt: savedSubmission.completedAt },
+        {
+          score,
+          completedAt: savedSubmission.completedAt,
+          hasUploadedFile: Boolean(body.fileUrl || savedSubmission.fileUrl),
+        },
         tx
       );
       return savedSubmission;

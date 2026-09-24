@@ -6,6 +6,7 @@ import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { useToast } from "@/components/ui/Toast";
 import { EssayAIPanel, useEssayFeedback } from "@/components/student/EssayAIFeedback";
+import { clearLocalDraft, mergeDraftAnswers, readLocalDraft, writeLocalDraft } from "@/lib/quiz-attempt";
 
 type QuizQuestion = {
   id: string;
@@ -61,6 +62,8 @@ type QuizResult = {
   quizTitle: string;
   courseId: string;
   completedAt?: string | null;
+  allowRetake?: boolean;
+  cooldownRemainingMs?: number;
   /** true when this is a revisit of a previously submitted attempt */
   isPrevious: boolean;
 };
@@ -78,8 +81,12 @@ export default function QuizPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [startedAt] = useState(() => new Date().toISOString());
+  const [startedAt, setStartedAt] = useState(() => new Date().toISOString());
   const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [allowRetake, setAllowRetake] = useState(false);
+  const [cooldownRemainingMs, setCooldownRemainingMs] = useState(0);
+  const [startingRetake, setStartingRetake] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
   // Server decides whether the countdown is binding (quiz_time_limit_disabled).
   // Defaults to false so a failed/older response never auto-submits a student.
   const [timeLimitEnforced, setTimeLimitEnforced] = useState(false);
@@ -134,6 +141,8 @@ export default function QuizPage() {
       quizTitle: (data.quizTitle as string) || fallback.quizTitle,
       courseId: (data.courseId as string) || fallback.courseId,
       completedAt: (data.completedAt as string | null | undefined) ?? null,
+      allowRetake: data.allowRetake === true,
+      cooldownRemainingMs: typeof data.cooldownRemainingMs === "number" ? data.cooldownRemainingMs : 0,
       isPrevious,
     };
   };
@@ -161,6 +170,8 @@ export default function QuizPage() {
 
         if (data.alreadyCompleted) {
           setSubmitted(true);
+          setAllowRetake(data.allowRetake === true || data.result?.allowRetake === true);
+          setCooldownRemainingMs(Number(data.cooldownRemainingMs ?? data.result?.cooldownRemainingMs ?? 0));
           setResult(
             toResult(
               { ...data.result, quizTitle: data.quiz.title, courseId: data.quiz.courseId },
@@ -171,9 +182,19 @@ export default function QuizPage() {
           return;
         }
 
+        const serverDraft = (data.draftAnswers && typeof data.draftAnswers === "object")
+          ? (data.draftAnswers as Record<string, string>)
+          : {};
+        const localDraft = readLocalDraft(quizId);
+        setAnswers(mergeDraftAnswers(serverDraft, localDraft));
         setQuiz(data.quiz);
         setTimeLimitEnforced(data.timeLimitEnforced === true);
-        setRemainingSeconds((data.timeLimitMinutes || 30) * 60);
+        if (data.startedAt) setStartedAt(new Date(data.startedAt).toISOString());
+        setRemainingSeconds(
+          typeof data.remainingSeconds === "number"
+            ? data.remainingSeconds
+            : (data.timeLimitMinutes || 30) * 60
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "تعذر تحميل الاختبار");
       } finally {
@@ -226,8 +247,10 @@ export default function QuizPage() {
         }
 
         setSubmitted(true);
+        clearLocalDraft(quiz.id);
         const nextResult = toResult(data, { quizTitle: quiz.title, courseId: quiz.courseId }, false);
         setResult(nextResult);
+        setAllowRetake(false);
 
         toastSuccess(
           isAutoSubmit
@@ -246,6 +269,95 @@ export default function QuizPage() {
     },
     [answers, quiz, saving, startedAt, submitted, toastSuccess, toastError]
   );
+
+  const startNewAttempt = useCallback(async () => {
+    if (!quizId || startingRetake) return;
+    const confirmed = window.confirm(
+      "هتبدأ محاولة جديدة. ورقتك القديمة هتفضل ظاهرة هنا لحد ما تضغط الزر. بعد البدء هتظهر أسئلة فاضية، والتسليم الجديد هيستبدل الإجابات القديمة."
+    );
+    if (!confirmed) return;
+    setStartingRetake(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/quizzes/${quizId}/start-retake`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "تعذر بدء المحاولة الجديدة");
+      const again = await fetch(`/api/quizzes/${quizId}`);
+      const next = await again.json();
+      if (!again.ok) throw new Error(next.error || "تعذر تحميل الاختبار");
+      if (next.alreadyCompleted) {
+        throw new Error("ما زال الاختبار محسوبًا. حدّث الصفحة وحاول مرة أخرى.");
+      }
+      clearLocalDraft(quizId);
+      setResult(null);
+      setSubmitted(false);
+      setAllowRetake(false);
+      setAnswers({});
+      setQuiz(next.quiz);
+      setTimeLimitEnforced(next.timeLimitEnforced === true);
+      setStartedAt(next.startedAt ? new Date(next.startedAt).toISOString() : new Date().toISOString());
+      setRemainingSeconds(
+        typeof next.remainingSeconds === "number"
+          ? next.remainingSeconds
+          : (next.timeLimitMinutes || 30) * 60
+      );
+      setDraftStatus("idle");
+      toastSuccess("تم فتح محاولة جديدة — إجاباتك هتتحفظ تلقائيًا أثناء الكتابة");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "تعذر بدء المحاولة الجديدة";
+      setError(message);
+      toastError(message);
+    } finally {
+      setStartingRetake(false);
+    }
+  }, [quizId, startingRetake, toastError, toastSuccess]);
+
+  const persistEssayDraft = useCallback(
+    (payload: Record<string, string>, keepalive = false) => {
+      if (!quiz || submitted || result) return;
+      writeLocalDraft(quiz.id, payload);
+      if (!quiz.questions.some((q) => q.questionType === "essay")) return;
+      return fetch(`/api/quizzes/${quiz.id}/draft`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers: payload }),
+        keepalive,
+      });
+    },
+    [quiz, result, submitted]
+  );
+
+  useEffect(() => {
+    if (!quiz || submitted || result) return;
+    writeLocalDraft(quiz.id, answers);
+    if (!quiz.questions.some((q) => q.questionType === "essay")) return;
+    setDraftStatus("saving");
+    const timer = window.setTimeout(() => {
+      void persistEssayDraft(answers)
+        ?.then((res) => {
+          if (res?.ok) setDraftStatus("saved");
+          else setDraftStatus("idle");
+        })
+        .catch(() => setDraftStatus("idle"));
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [answers, persistEssayDraft, quiz, result, submitted]);
+
+  useEffect(() => {
+    if (!quiz || submitted || result) return;
+    const flush = () => {
+      void persistEssayDraft(answers, true);
+    };
+    const onVis = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [answers, persistEssayDraft, quiz, result, submitted]);
 
   useEffect(() => {
     // No countdown at all when the time limit is not enforced: the quiz stays
@@ -266,11 +378,47 @@ export default function QuizPage() {
     return () => window.clearInterval(timer);
   }, [quiz, submitQuiz, submitted, timeLimitEnforced]);
 
+  useEffect(() => {
+    if (!result || !allowRetake) return;
+    const timer = window.setInterval(() => {
+      setCooldownRemainingMs((ms) => (ms <= 1000 ? 0 : ms - 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [result, allowRetake]);
+
   const formatTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
+
+  const retakeAvailable = allowRetake && cooldownRemainingMs <= 0;
+  const retakeNotice = result ? (
+    allowRetake ? (
+      <div className="mt-4 space-y-3">
+        <p className="text-sm font-bold text-sky-700 dark:text-sky-300">
+          المعلم سمح لك بإعادة هذا الاختبار. ورقتك الحالية للقراءة فقط.
+        </p>
+        {cooldownRemainingMs > 0 && (
+          <p className="text-xs text-slate-500">
+            إعادة المحاولة بعد {formatTime(Math.ceil(cooldownRemainingMs / 1000))}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => void startNewAttempt()}
+          disabled={!retakeAvailable || startingRetake}
+          className="rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {startingRetake ? "جارٍ فتح المحاولة..." : "بدء محاولة جديدة"}
+        </button>
+      </div>
+    ) : (
+      <p className="mt-3 text-sm font-bold text-amber-700 dark:text-amber-300">
+        🔒 محاولة واحدة فقط — لا يمكن إعادة الاختبار
+      </p>
+    )
+  ) : null;
 
   const optionText = (item: ResultBreakdown, label: string) => {
     const key = `option${label}` as keyof ResultBreakdown;
@@ -323,9 +471,7 @@ export default function QuizPage() {
                       تاريخ الحل: {new Date(result.completedAt).toLocaleString("ar-EG")}
                     </p>
                   )}
-                  <p className="mt-3 text-sm font-bold text-amber-700 dark:text-amber-300">
-                    🔒 محاولة واحدة فقط — لا يمكن إعادة الاختبار
-                  </p>
+                  {retakeNotice}
                 </div>
               ) : (
                 <div
@@ -354,9 +500,7 @@ export default function QuizPage() {
                       تاريخ الحل: {new Date(result.completedAt).toLocaleString("ar-EG")}
                     </p>
                   )}
-                  <p className="mt-3 text-sm font-bold text-amber-700 dark:text-amber-300">
-                    🔒 محاولة واحدة فقط — لا يمكن إعادة الاختبار
-                  </p>
+                  {retakeNotice}
                 </div>
               )}
 
@@ -593,6 +737,13 @@ export default function QuizPage() {
                         placeholder="اكتب إجابتك المقالية بالتفصيل هنا..."
                         className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-900 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:text-white"
                       />
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {draftStatus === "saving"
+                          ? "جارٍ حفظ إجابتك تلقائيًا..."
+                          : draftStatus === "saved"
+                            ? "تم حفظ المسودة — تقدر تقفل الصفحة وترجع تكمل"
+                            : "الإجابة المقالية تُحفظ تلقائيًا أثناء الكتابة"}
+                      </p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

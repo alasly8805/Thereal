@@ -34,6 +34,7 @@ const superadminSections = [
   { id: "logs",                label: "سجلات النشاط" },
   { id: "staff-accounts",      label: "المشرفون والموظفون" },
   { id: "testers",             label: "🧪 حسابات الفحص (QA Testers)" },
+  { id: "center-passes",       label: "🎫 أرقام السنتر (Center ID)" },
   { id: "site-text",           label: "نصوص الموقع" },
   { id: "advanced-settings",   label: "الإعدادات المتقدمة" },
   { id: "errors",              label: "مراقبة الأخطاء" },
@@ -41,6 +42,7 @@ const superadminSections = [
 ];
 
 const aiSections = [
+  { id: "ai-copilot",            label: "مساعد المشرف العام" },
   { id: "ai-overview",            label: "نظرة عامة" },
   { id: "ai-live",                label: "المراقبة الحية" },
   { id: "ai-requests",            label: "الطلبات" },
@@ -88,7 +90,7 @@ const staffSections = [
 const teacherSections = [
   { id: "dashboard",             label: "لوحة التحكم" },
   { id: "my-page",               label: "صفحتي" },
-  { id: "teacher-subscriptions", label: "حجوزات واشتراكات الطلاب" },
+  { id: "teacher-subscriptions", label: "طلابك والأرقام" },
   { id: "courses",               label: "الكورسات" },
   { id: "exam-dashboard",        label: "📊 لوحة إدارة الاختبارات" },
   { id: "in-video-responses",    label: "📝 تصحيح الأسئلة المقالية" },

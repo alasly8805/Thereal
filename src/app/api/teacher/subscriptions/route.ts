@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     const track = searchParams.get("track");
     const query = searchParams.get("q");
 
-    const teacherId = session.id;
+    const teacherId = actingTeacherId(session);
 
     const where: any = {
       teacherId,

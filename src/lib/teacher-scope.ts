@@ -4,6 +4,7 @@ export const ASSISTANT_PERMISSION_KEYS = [
   "manageHomework",
   "gradeHomework",
   "viewStudents",
+  "canViewStudents",
   "viewStudentPhones",
   "manageCodes",
   "viewQuizResults",
@@ -20,7 +21,8 @@ export const DEFAULT_ASSISTANT_PERMISSIONS: AssistantPermissions = {
   editCourses: false,
   manageHomework: false,
   gradeHomework: true,
-  viewStudents: true,
+  viewStudents: false,
+  canViewStudents: false,
   viewStudentPhones: true,
   manageCodes: false,
   viewQuizResults: true,
@@ -34,6 +36,7 @@ export const ALL_ASSISTANT_PERMISSIONS: AssistantPermissions = {
   manageHomework: true,
   gradeHomework: true,
   viewStudents: true,
+  canViewStudents: true,
   viewStudentPhones: true,
   manageCodes: true,
   viewQuizResults: true,
@@ -50,7 +53,7 @@ export const ASSISTANT_PERMISSION_META: Array<{
   { key: "editCourses", label: "تعديل الكورسات والمحاضرات", hint: "رفع فيديوهات، مجلدات، إعدادات الكورس" },
   { key: "manageHomework", label: "إدارة الواجبات", hint: "إنشاء وتعديل الواجبات" },
   { key: "gradeHomework", label: "تصحيح الواجبات", hint: "مراجعة وتصحيح كل تسليمات الطلاب" },
-  { key: "viewStudents", label: "عرض الطلاب", hint: "يشوف قائمة الطلاب المسجّلين" },
+  { key: "canViewStudents", label: "عرض الطلاب والتقارير", hint: "يشوف صفحة الطلاب وتقاريرهم وكل بياناتهم" },
   { key: "viewStudentPhones", label: "أرقام الطلاب", hint: "يشوف رقم الموبايل ويتصل أو يبعت واتساب" },
   { key: "manageCodes", label: "أكواد الوصول", hint: "توليد وتفعيل وتعطيل الأكواد" },
   { key: "viewQuizResults", label: "نتائج الاختبارات", hint: "سجل الاختبارات، عرض الإجابات، وتصحيح الأسئلة المقالية" },
@@ -58,18 +61,54 @@ export const ASSISTANT_PERMISSION_META: Array<{
   { key: "manageTickets", label: "تذاكر الدعم", hint: "الرد على استفسارات الطلاب" },
 ];
 
-export function parseAssistantPermissions(raw?: string | null): AssistantPermissions {
+export function syncStudentViewPermission(perms: AssistantPermissions): AssistantPermissions {
+  perms.viewStudents = Boolean(perms.canViewStudents);
+  return perms;
+}
+
+export function parseAssistantPermissions(
+  raw?: string | null,
+  canViewStudents?: boolean | null
+): AssistantPermissions {
   const base = { ...DEFAULT_ASSISTANT_PERMISSIONS };
-  if (!raw) return base;
-  try {
-    const parsed = JSON.parse(raw) as Partial<Record<string, boolean>>;
+  let parsed: Partial<Record<string, boolean>> | null = null;
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw) as Partial<Record<string, boolean>>;
+    } catch {
+      parsed = null;
+    }
+  }
+  if (parsed) {
     for (const key of ASSISTANT_PERMISSION_KEYS) {
       if (typeof parsed[key] === "boolean") base[key] = parsed[key]!;
     }
-  } catch {
-    // keep defaults
+    if (typeof parsed.canViewStudents !== "boolean" && typeof parsed.viewStudents === "boolean") {
+      base.canViewStudents = parsed.viewStudents;
+    }
   }
-  return base;
+  if (typeof canViewStudents === "boolean") {
+    base.canViewStudents = canViewStudents;
+  }
+  return syncStudentViewPermission(base);
+}
+
+export function applyAssistantPermissionPatch(
+  current: AssistantPermissions,
+  incoming: unknown
+): AssistantPermissions {
+  const next = { ...current };
+  if (!incoming || typeof incoming !== "object") return syncStudentViewPermission(next);
+  const rec = incoming as Record<string, unknown>;
+  for (const key of ASSISTANT_PERMISSION_KEYS) {
+    if (typeof rec[key] === "boolean") next[key] = rec[key];
+  }
+  if (typeof rec.canViewStudents === "boolean") {
+    next.canViewStudents = rec.canViewStudents;
+  } else if (typeof rec.viewStudents === "boolean") {
+    next.canViewStudents = rec.viewStudents;
+  }
+  return syncStudentViewPermission(next);
 }
 
 export function isTeacherLike(role?: string | null): boolean {
@@ -115,8 +154,8 @@ export function sectionAllowedForAssistant(
     "in-video-responses": "viewQuizResults",
     "exam-dashboard": "viewQuizResults",
     "grade-requests": "manageRequests",
-    "teacher-subscriptions": "viewStudents",
-    students: "viewStudents",
+    students: "canViewStudents",
+    reports: "canViewStudents",
     codes: "manageCodes",
     "referred-students": "viewStudents",
     requests: "manageRequests",

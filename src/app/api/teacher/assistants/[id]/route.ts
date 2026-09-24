@@ -4,24 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { invalidateUserSessionCache } from "@/lib/cache";
 import { requireTeacherContext } from "@/lib/teacher-scope-server";
 import {
-  ASSISTANT_PERMISSION_KEYS,
+  applyAssistantPermissionPatch,
   generateAssistantPassword,
   parseAssistantPermissions,
-  type AssistantPermissions,
 } from "@/lib/teacher-scope";
-
-function applyPermissionPatch(
-  current: AssistantPermissions,
-  incoming: unknown
-): AssistantPermissions {
-  const next = { ...current };
-  if (!incoming || typeof incoming !== "object") return next;
-  const rec = incoming as Record<string, unknown>;
-  for (const key of ASSISTANT_PERMISSION_KEYS) {
-    if (typeof rec[key] === "boolean") next[key] = rec[key];
-  }
-  return next;
-}
 
 async function loadOwnedAssistant(teacherId: string, assistantId: string) {
   return prisma.user.findFirst({
@@ -54,6 +40,7 @@ export async function PATCH(
     action?: string;
     permissions?: unknown;
     isActive?: boolean;
+    canViewStudents?: boolean;
   };
 
   if (body.action === "reset_password") {
@@ -76,9 +63,14 @@ export async function PATCH(
     data.isActive = body.isActive;
     if (!body.isActive) data.tokenVersion = { increment: 1 };
   }
-  if (body.permissions) {
-    const current = parseAssistantPermissions(assistant.assistantPermissions);
-    data.assistantPermissions = JSON.stringify(applyPermissionPatch(current, body.permissions));
+  if (body.permissions || typeof body.canViewStudents === "boolean") {
+    const current = parseAssistantPermissions(assistant.assistantPermissions, assistant.canViewStudents);
+    const permissions = applyAssistantPermissionPatch(current, {
+      ...(body.permissions && typeof body.permissions === "object" ? body.permissions : {}),
+      ...(typeof body.canViewStudents === "boolean" ? { canViewStudents: body.canViewStudents } : {}),
+    });
+    data.assistantPermissions = JSON.stringify(permissions);
+    data.canViewStudents = permissions.canViewStudents;
   }
 
   if (Object.keys(data).length === 0) {
@@ -93,6 +85,7 @@ export async function PATCH(
       name: true,
       isActive: true,
       assistantPermissions: true,
+      canViewStudents: true,
       lastLoginAt: true,
       createdAt: true,
     },
@@ -103,7 +96,7 @@ export async function PATCH(
     success: true,
     assistant: {
       ...updated,
-      permissions: parseAssistantPermissions(updated.assistantPermissions),
+      permissions: parseAssistantPermissions(updated.assistantPermissions, updated.canViewStudents),
     },
   });
 }

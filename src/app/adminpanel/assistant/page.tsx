@@ -8,10 +8,10 @@ import {
   assistantNavItems,
   type AssistantSection,
 } from "@/components/admin/assistant/AssistantShell";
-import { AssistantStudentsSection } from "@/components/admin/assistant/AssistantStudentsSection";
 import { HomeworkManagerSection, LiveReviewPanel } from "@/components/admin/TeacherHomeworkComponents";
 import { TeacherRequests } from "@/components/admin/TeacherRequests";
 import { TeacherQuizResults } from "@/components/admin/TeacherQuizResults";
+import { AssistantStudentsSection } from "@/components/admin/assistant/AssistantStudentsSection";
 import { InVideoResponsesSection } from "@/components/admin/InVideoResponsesSection";
 import { TeacherFeedback } from "@/components/admin/TeacherFeedback";
 import {
@@ -68,6 +68,10 @@ export default function AssistantPanelPage() {
   }, [load]);
 
   const items = useMemo(() => assistantNavItems(perms), [perms]);
+
+  useEffect(() => {
+    if (active === "students" && !perms.canViewStudents && !perms.viewStudents) setActive("home");
+  }, [active, perms.canViewStudents, perms.viewStudents]);
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });

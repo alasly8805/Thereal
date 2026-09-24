@@ -127,7 +127,7 @@ import { StudentDossierButton } from "@/components/admin/TeacherStudentDossierMo
 const SECTION_TITLES: Record<string, string> = {
   dashboard: "لوحة التحكم",
   "my-page": "صفحتي",
-  "teacher-subscriptions": "حجوزات واشتراكات الطلاب",
+  "teacher-subscriptions": "طلابك والأرقام",
   "in-video-responses": "تصحيح الأسئلة المقالية",
   "quiz-results": "نتائج الاختبارات",
   "create-course": "كورس جديد",
@@ -159,13 +159,19 @@ interface NewQuizState {
   title: string;
   folderId: string;
   timeLimitMinutes: number;
+  enableAutoClose: boolean;
+  closeAt: string;
   questions: QuizQuestionInput[];
 }
 
 export default function TeacherDashboardPage() {
   const router = useRouter();
   const { success: toastSuccess, error: toastError } = useToast();
-  const [activeSection, setActiveSection] = useState("dashboard");
+  const [activeSection, setActiveSection] = useState(() => {
+    if (typeof window === "undefined") return "dashboard";
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    return tab || "dashboard";
+  });
   const [courseTab, setCourseTab] = useState<"content" | "flow" | "settings" | "pricing">("content");
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
@@ -729,6 +735,8 @@ export default function TeacherDashboardPage() {
     videoId: "",
     timeLimitMinutes: 30,
     dueAt: "",
+    closeAt: "",
+    enableAutoClose: false,
     isPublished: true,
     expectedOutput: "",
     codeTemplate: "",
@@ -739,6 +747,8 @@ export default function TeacherDashboardPage() {
   const [newQuiz, setNewQuiz] = useState<NewQuizState>({
     title: "", folderId: "",
     timeLimitMinutes: 30,
+    enableAutoClose: false,
+    closeAt: "",
     questions: [{ question: "", questionType: "mcq", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
   });
   const [newMaterial, setNewMaterial] = useState({ title: "", url: "", type: "pdf", folderId: "" });
@@ -1176,6 +1186,8 @@ export default function TeacherDashboardPage() {
         title: newQuiz.title,
         questions: cleanedQuestions,
         timeLimitMinutes: newQuiz.timeLimitMinutes,
+        enableAutoClose: newQuiz.enableAutoClose,
+        closeAt: newQuiz.closeAt || undefined,
       }),
     });
     const data = await readJson<{ error?: string }>(res);
@@ -1184,6 +1196,8 @@ export default function TeacherDashboardPage() {
         title: "",
         folderId: "",
         timeLimitMinutes: 30,
+        enableAutoClose: false,
+        closeAt: "",
         questions: [{ question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
       });
       if (selectedCourse) fetchFolders(selectedCourse.id);
@@ -1261,6 +1275,8 @@ export default function TeacherDashboardPage() {
       videoId: newFolderHomework.videoId || undefined,
       dueAt: newFolderHomework.dueAt || undefined,
       timeLimitMinutes: newFolderHomework.timeLimitMinutes,
+      enableAutoClose: newFolderHomework.enableAutoClose,
+      closeAt: newFolderHomework.closeAt || undefined,
       isPublished: newFolderHomework.isPublished,
     };
     if (newFolderHomework.type === "link") payload.linkUrl = newFolderHomework.linkUrl;
@@ -1313,6 +1329,8 @@ export default function TeacherDashboardPage() {
         videoId: "",
         timeLimitMinutes: 30,
         dueAt: "",
+        closeAt: "",
+        enableAutoClose: false,
         isPublished: true,
         expectedOutput: "",
         codeTemplate: "",
@@ -1693,6 +1711,12 @@ export default function TeacherDashboardPage() {
       setActiveSection={(s) => {
         setActiveSection(s);
         if (s !== "courses") setSelectedCourse(null);
+        if (typeof window !== "undefined") {
+          const url = new URL(window.location.href);
+          if (s === "dashboard") url.searchParams.delete("tab");
+          else url.searchParams.set("tab", s);
+          window.history.replaceState({}, "", url);
+        }
       }}
       onLogout={handleLogout}
       headerTitle={headerTitle}
@@ -1724,6 +1748,7 @@ export default function TeacherDashboardPage() {
               courses={courses.map((c) => ({ id: c.id, title: c.title }))}
               onCreateCourse={() => setActiveSection("create-course")}
               onGoToMyPage={() => setActiveSection("my-page")}
+              onGoToStudents={() => setActiveSection("teacher-subscriptions")}
               loadingCourses={loading}
             />
           )}
@@ -2961,6 +2986,25 @@ export default function TeacherDashboardPage() {
                           <input type="text" value={newQuiz.title} onChange={(e) => setNewQuiz({ ...newQuiz, title: e.target.value })} placeholder="عنوان الاختبار" className={input} />
                           <input type="number" min={1} max={240} value={newQuiz.timeLimitMinutes} onChange={(e) => setNewQuiz({ ...newQuiz, timeLimitMinutes: Number(e.target.value) || 30 })} placeholder="المدة (دقائق)" className={input} dir="ltr" />
                         </div>
+                        <div className="rounded-xl border border-rose-400/30 bg-rose-500/5 p-3 space-y-2">
+                          <label className="flex items-center gap-2 text-xs font-bold text-[var(--ink)]">
+                            <input
+                              type="checkbox"
+                              checked={newQuiz.enableAutoClose}
+                              onChange={(e) => setNewQuiz({ ...newQuiz, enableAutoClose: e.target.checked })}
+                              className="w-4 h-4 rounded"
+                            />
+                            إغلاق تلقائي بعد الوقت المحدد
+                          </label>
+                          <input
+                            type="datetime-local"
+                            value={newQuiz.closeAt}
+                            disabled={!newQuiz.enableAutoClose}
+                            onChange={(e) => setNewQuiz({ ...newQuiz, closeAt: e.target.value })}
+                            className={input}
+                            dir="ltr"
+                          />
+                        </div>
 
                         {newQuiz.questions.map((q, qi) => (
                           <div key={qi} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 space-y-3">
@@ -3196,6 +3240,25 @@ export default function TeacherDashboardPage() {
                             <option value="upload">📎 رفع وتكليف ملفات</option>
                             <option value="link">🔗 رابط خارجي</option>
                           </select>
+                        </div>
+                        <div className="rounded-xl border border-rose-400/30 bg-rose-500/5 p-3 space-y-2">
+                          <label className="flex items-center gap-2 text-xs font-bold text-[var(--ink)]">
+                            <input
+                              type="checkbox"
+                              checked={newFolderHomework.enableAutoClose}
+                              onChange={(e) => setNewFolderHomework({ ...newFolderHomework, enableAutoClose: e.target.checked })}
+                              className="w-4 h-4 rounded"
+                            />
+                            إغلاق تلقائي بعد الوقت المحدد
+                          </label>
+                          <input
+                            type="datetime-local"
+                            value={newFolderHomework.closeAt}
+                            disabled={!newFolderHomework.enableAutoClose}
+                            onChange={(e) => setNewFolderHomework({ ...newFolderHomework, closeAt: e.target.value })}
+                            className={input}
+                            dir="ltr"
+                          />
                         </div>
 
                         {newFolderHomework.type === "link" && (

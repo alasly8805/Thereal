@@ -65,8 +65,8 @@ export async function POST(
   });
 
   const { submission, review } = await prisma.$transaction(async (tx) => {
-    // A reject must not open the next item. A pass does. Retry stays closed
-    // until the student actually submits again and is accepted.
+    // Accept keeps the next item open. Reject locks it again. A later PDF
+    // re-upload returns to قيد المراجعة and unlocks until the next verdict.
     const updatedSubmission = await tx.homeworkSubmission.update({
       where: { id: body.submissionId },
       data: { status: body.verdict, allowRetake: false },

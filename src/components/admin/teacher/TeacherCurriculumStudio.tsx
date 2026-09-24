@@ -10,6 +10,8 @@ import {
   exportQuizToJson,
   exportHomeworkToJson,
 } from "./TeacherCurriculumModals";
+import { EditQuizModal } from "./EditQuizModal";
+import { EditHomeworkModal } from "./EditHomeworkModal";
 import {
   Folder,
   Plus,
@@ -32,6 +34,7 @@ import {
   Video,
   Sparkles,
   Download,
+  Pencil,
 } from "lucide-react";
 
 export interface VideoItem {
@@ -180,6 +183,18 @@ export function TeacherCurriculumStudio({
   const [activeQuizModal, setActiveQuizModal] = useState<{
     folderId: string;
     folderName: string;
+  } | null>(null);
+
+  const [activeEditQuiz, setActiveEditQuiz] = useState<{
+    id: string;
+    title: string;
+    questions: Array<any>;
+  } | null>(null);
+
+  const [activeEditHomework, setActiveEditHomework] = useState<{
+    id: string;
+    title: string;
+    questions: Array<any>;
   } | null>(null);
 
   const [activeHomeworkModal, setActiveHomeworkModal] = useState<{
@@ -1358,6 +1373,20 @@ export function TeacherCurriculumStudio({
                                   <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                                     <button
                                       type="button"
+                                      onClick={() =>
+                                        setActiveEditQuiz({
+                                          id: quiz.id,
+                                          title: quiz.title || "اختبار المحاضرة",
+                                          questions: quiz.questions || [],
+                                        })
+                                      }
+                                      className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors cursor-pointer"
+                                      title="تعديل أسئلة الاختبار"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
                                       onClick={() => exportQuizToJson(quiz)}
                                       className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors cursor-pointer"
                                       title="تحميل وتصدير الاختبار كملف JSON"
@@ -1429,6 +1458,22 @@ export function TeacherCurriculumStudio({
                                     </div>
 
                                     <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                                      {hw.type === "exam" && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setActiveEditHomework({
+                                              id: hw.id,
+                                              title: hw.title || "واجب المحاضرة",
+                                              questions: hw.questions || [],
+                                            })
+                                          }
+                                          className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition-colors cursor-pointer"
+                                          title="تعديل أسئلة الواجب"
+                                        >
+                                          <Pencil className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
                                       {hw.type === "exam" && (
                                         <button
                                           type="button"
@@ -1528,6 +1573,32 @@ export function TeacherCurriculumStudio({
           isOpen={Boolean(activeVideoModal)}
           onClose={() => setActiveVideoModal(null)}
           onVideoCreated={async () => {
+            await onRefreshFolders();
+          }}
+        />
+      )}
+
+      {activeEditQuiz && (
+        <EditQuizModal
+          isOpen={Boolean(activeEditQuiz)}
+          quizId={activeEditQuiz.id}
+          quizTitle={activeEditQuiz.title}
+          questions={activeEditQuiz.questions}
+          onClose={() => setActiveEditQuiz(null)}
+          onSuccess={async () => {
+            await onRefreshFolders();
+          }}
+        />
+      )}
+
+      {activeEditHomework && (
+        <EditHomeworkModal
+          isOpen={Boolean(activeEditHomework)}
+          homeworkId={activeEditHomework.id}
+          homeworkTitle={activeEditHomework.title}
+          questions={activeEditHomework.questions}
+          onClose={() => setActiveEditHomework(null)}
+          onSuccess={async () => {
             await onRefreshFolders();
           }}
         />

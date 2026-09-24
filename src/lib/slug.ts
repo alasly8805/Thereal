@@ -8,6 +8,9 @@ export const RESERVED_SLUGS = new Set([
   "courses", "login", "signup", "account", "library", "adminpanel",
   "api", "_next", "images", "public", "favicon.ico", "t", "teacher", "admin",
   "quizzes", "clerk", "sign-in", "sign-up", "og-image.jpeg", "robots.txt", "sitemap.xml",
+  "faq", "privacy", "terms", "plans", "curriculum", "payment-methods", "payment",
+  "environments", "leaderboard", "parent", "student", "center", "llms.txt",
+  "llms-full.txt", "geo-keywords.txt", "about", "qureo", "teachers",
 ]);
 
 export function slugify(input: string): string {

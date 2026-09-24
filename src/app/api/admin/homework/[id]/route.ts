@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import { FolderContentType } from "@/generated/prisma";
+import { removeFolderContent } from "@/lib/folder-content-order";
 
 /** GET /api/admin/homework/[id] — teacher views a single homework */
 export async function GET(
@@ -47,5 +49,6 @@ export async function DELETE(
     return NextResponse.json({ error: "غير موجود" }, { status: 404 });
 
   await prisma.homework.delete({ where: { id } });
+  await removeFolderContent(FolderContentType.HOMEWORK, id);
   return NextResponse.json({ ok: true });
 }

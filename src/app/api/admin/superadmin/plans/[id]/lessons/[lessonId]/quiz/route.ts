@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAdminAction } from "@/lib/admin-auth";
+import { parseDegree } from "@/lib/quiz-grading";
 
 export async function POST(
   req: NextRequest,
@@ -78,6 +79,7 @@ export async function POST(
               optionC: q.optionC?.trim() || "",
               optionD: q.optionD?.trim() || "",
               correctAnswer: q.correctAnswer,
+              degree: parseDegree(q.degree),
               order: i,
             }))
           }

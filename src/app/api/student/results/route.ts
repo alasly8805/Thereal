@@ -37,7 +37,7 @@ export async function GET() {
       },
       // Per-question counts for the detailed table columns
       answers: {
-        select: { isCorrect: true, selectedAnswer: true, essayAnswer: true, questionType: true, status: true },
+        select: { isCorrect: true, selectedAnswer: true, essayAnswer: true, questionType: true, status: true, degree: true },
       },
     },
   });

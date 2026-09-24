@@ -7,21 +7,41 @@ import { acquireAdvisoryLock } from "@/lib/distributed-lock";
  * Shared grading rules for quizzes that mix auto-graded MCQ questions with
  * teacher-graded essay questions.
  *
- * The score is always `correct / totalQ` where totalQ counts every question in
- * the attempt. Essay questions are stored with `status = "PENDING"` and
- * `isCorrect = false` until a teacher/assistant reviews them, so a result with
- * pending answers is NOT a final grade. Every consumer must check
- * `pendingCount` before labelling a result as passed/failed.
+ * Shared grading rules for quizzes that mix auto-graded MCQ questions with
+ * teacher-graded essay questions.
+ *
+ * The score is `earnedDegree / totalDegree * 100`. Each question's `degree`
+ * defaults to 1, so existing equal-weight quizzes stay `correct / totalQ`.
+ * Essay questions are stored with `status = "PENDING"` and `isCorrect = false`
+ * until a teacher/assistant reviews them, so a result with pending answers is
+ * NOT a final grade. Every consumer must check `pendingCount` before labelling
+ * a result as passed/failed.
  */
 
 export const PASS_MARK = 50;
 
 export type GradingStatus = "PENDING" | "GRADED";
 
+export const MIN_DEGREE = 1;
+export const MAX_DEGREE = 100;
+
+/** Points a question contributes. Missing/invalid values count as 1 so legacy rows stay equal-weight. */
+export function parseDegree(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return MIN_DEGREE;
+  return Math.min(MAX_DEGREE, Math.max(MIN_DEGREE, Math.round(n)));
+}
+
+export function answerDegree(a: { degree?: number | null }): number {
+  const n = Number(a.degree);
+  return Number.isFinite(n) && n > 0 ? n : MIN_DEGREE;
+}
+
 export type AnswerLike = {
   questionType: string | null;
   isCorrect: boolean;
   status: string | null;
+  degree?: number | null;
 };
 
 export type GradingSummary = {
@@ -49,7 +69,11 @@ export function summarizeAnswers(answers: AnswerLike[], totalQOverride?: number 
   const essays = answers.filter((a) => a.questionType === "essay");
   const mcqs = answers.filter((a) => a.questionType !== "essay");
   const pendingCount = essays.filter((a) => a.status === "PENDING").length;
-  const score = totalQ > 0 ? Number(((correct / totalQ) * 100).toFixed(2)) : 0;
+  const earnedDegree = answers.filter((a) => a.isCorrect).reduce((sum, a) => sum + answerDegree(a), 0);
+  const answerDegreeSum = answers.reduce((sum, a) => sum + answerDegree(a), 0);
+  // Questions with no stored answer row (shouldn't happen after submit) count as 1 each.
+  const totalDegree = answerDegreeSum + Math.max(0, totalQ - answers.length);
+  const score = totalDegree > 0 ? Number(((earnedDegree / totalDegree) * 100).toFixed(2)) : 0;
   const gradingStatus: GradingStatus = pendingCount > 0 ? "PENDING" : "GRADED";
   return {
     totalQ,
@@ -75,7 +99,7 @@ export async function recomputeQuizResult(resultId: string, opts: { wasPendingBe
   const result = await prisma.quizResult.findUnique({
     where: { id: resultId },
     include: {
-      answers: { select: { questionType: true, isCorrect: true, status: true } },
+      answers: { select: { questionType: true, isCorrect: true, status: true, degree: true } },
       student: { select: { id: true, role: true } },
       quiz: { select: { id: true, title: true, planLessonId: true, planLesson: { select: { planId: true } } } },
     },

@@ -151,7 +151,7 @@ export function VideoControlBar({
         )}
       </button>
 
-      {onQualityChange && qualities.length >= 2 && (
+      {onQualityChange && (
         <VideoQualityMenu variant="inline" options={qualities} value={quality} onChange={onQualityChange} />
       )}
 

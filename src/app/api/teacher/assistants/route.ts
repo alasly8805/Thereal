@@ -4,30 +4,16 @@ import { prisma } from "@/lib/prisma";
 import { invalidateUserSessionCache } from "@/lib/cache";
 import { requireTeacherContext } from "@/lib/teacher-scope-server";
 import {
-  ASSISTANT_PERMISSION_KEYS,
   DEFAULT_ASSISTANT_PERMISSIONS,
+  applyAssistantPermissionPatch,
   generateAssistantPassword,
   parseAssistantPermissions,
-  type AssistantPermissions,
 } from "@/lib/teacher-scope";
 
 const MAX_ASSISTANTS = 8;
 
 function sanitizeName(raw: string): string {
   return raw.replace(/\s+/g, " ").trim().slice(0, 40);
-}
-
-function applyPermissionPatch(
-  current: AssistantPermissions,
-  incoming: unknown
-): AssistantPermissions {
-  const next = { ...current };
-  if (!incoming || typeof incoming !== "object") return next;
-  const rec = incoming as Record<string, unknown>;
-  for (const key of ASSISTANT_PERMISSION_KEYS) {
-    if (typeof rec[key] === "boolean") next[key] = rec[key];
-  }
-  return next;
 }
 
 export async function GET() {
@@ -51,6 +37,7 @@ export async function GET() {
       lastLoginAt: true,
       createdAt: true,
       assistantPermissions: true,
+      canViewStudents: true,
     },
   });
 
@@ -61,7 +48,8 @@ export async function GET() {
       isActive: a.isActive,
       lastLoginAt: a.lastLoginAt,
       createdAt: a.createdAt,
-      permissions: parseAssistantPermissions(a.assistantPermissions),
+      canViewStudents: a.canViewStudents,
+      permissions: parseAssistantPermissions(a.assistantPermissions, a.canViewStudents),
     })),
     maxAssistants: MAX_ASSISTANTS,
   });
@@ -77,6 +65,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     name?: string;
     permissions?: unknown;
+    canViewStudents?: boolean;
   };
   const name = sanitizeName(body.name || "");
   if (name.length < 2) {
@@ -108,7 +97,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const permissions = applyPermissionPatch(DEFAULT_ASSISTANT_PERMISSIONS, body.permissions);
+  const permissions = applyAssistantPermissionPatch(DEFAULT_ASSISTANT_PERMISSIONS, {
+    ...(body.permissions && typeof body.permissions === "object" ? body.permissions : {}),
+    ...(typeof body.canViewStudents === "boolean" ? { canViewStudents: body.canViewStudents } : {}),
+  });
   const plainPassword = generateAssistantPassword();
   const passwordHash = await bcrypt.hash(plainPassword, 10);
   const email = `asst.${gate.ctx.teacherId.slice(-6)}.${Date.now().toString(36)}@assistant.code-up.local`;
@@ -123,8 +115,9 @@ export async function POST(req: NextRequest) {
       profileCompleted: true,
       assistantOfTeacherId: gate.ctx.teacherId,
       assistantPermissions: JSON.stringify(permissions),
+      canViewStudents: permissions.canViewStudents,
     },
-    select: { id: true, name: true, createdAt: true, isActive: true },
+    select: { id: true, name: true, createdAt: true, isActive: true, canViewStudents: true },
   });
 
   return NextResponse.json({

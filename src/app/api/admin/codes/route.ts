@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     if (
       isTeacherLike(session.role) &&
       !hasAssistantPermission(session, "manageCodes") &&
-      !hasAssistantPermission(session, "viewStudents")
+      !hasAssistantPermission(session, "canViewStudents")
     ) {
       return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الأكواد أو الطلاب" }, { status: 403 });
     }

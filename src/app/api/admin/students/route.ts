@@ -43,9 +43,9 @@ export async function GET(req: NextRequest) {
     });
 
     const canSeePhones = hasAssistantPermission(session, "viewStudentPhones");
-    const canViewStudents = hasAssistantPermission(session, "viewStudents");
+    const canViewStudents = hasAssistantPermission(session, "canViewStudents");
     if (!canViewStudents) {
-      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية عرض الطلاب" }, { status: 403 });
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية عرض الطلاب والتقارير" }, { status: 403 });
     }
 
     return NextResponse.json({

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkHomeworkAccess } from "@/lib/authorization";
-import { canAccessContent, ContentType } from "@/lib/content-access-engine";
+import { canAccessContent, contentDeniedPayload, ContentType } from "@/lib/content-access-engine";
 
 /** GET /api/homework/[id] — student fetches homework details (answers hidden) */
 export async function GET(
@@ -71,16 +71,8 @@ export async function GET(
       sourceId: homeworkId,
       title: homework.title,
     });
-    if ("requiredItem" in access) {
-      return NextResponse.json(
-        {
-          error: `يجب إكمال «${access.requiredItem.title}» أولًا.`,
-          code: access.code,
-          requiredItem: access.requiredItem,
-        },
-        { status: 403 }
-      );
-    }
+    const denied = contentDeniedPayload(access);
+    if (denied) return NextResponse.json(denied.body, { status: denied.status });
   }
 
   // Fetch student submission if any

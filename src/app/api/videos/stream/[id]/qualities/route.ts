@@ -5,12 +5,10 @@ import { PREVIEW_COOKIE_NAME, verifyPreviewCookie } from "@/lib/preview-auth";
 import { availableQualities } from "@/lib/video-renditions";
 
 /**
- * Qualities the player may offer for a Native (alasly) lesson.
- *
- * Deliberately thin: it reports which pre-generated renditions exist, nothing
- * about the lesson itself. The bytes still go through /api/videos/stream, which
- * is where watch-session and entitlement checks live — this route only needs to
- * know the caller is signed in so the ladder is not enumerable anonymously.
+ * Qualities the Native (alasly / Drive) player always offers: Auto, 360p,
+ * 480p, 720p. Reports which pre-generated renditions exist so the menu can
+ * show file sizes; missing tiers still appear and /api/videos/stream falls
+ * back to the original. Watch-session checks live on the byte stream, not here.
  */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

@@ -29,9 +29,23 @@ type VideoItem = {
   chainLockedBy?: string | null;
 };
 
-type MaterialItem = { id: string; title: string; url: string; type: string };
+type MaterialItem = {
+  id: string;
+  title: string;
+  url: string;
+  type: string;
+  chainLocked?: boolean;
+  chainLockedBy?: string | null;
+};
 
-type QuizItem = { id: string; title: string; timeLimitMinutes: number };
+type QuizItem = {
+  id: string;
+  title: string;
+  timeLimitMinutes: number;
+  chainLocked?: boolean;
+  chainLockedBy?: string | null;
+  timedClosed?: boolean;
+};
 
 type HomeworkItem = {
   id: string;
@@ -40,7 +54,16 @@ type HomeworkItem = {
   isPublished?: boolean;
   timeLimitMinutes?: number;
   mySubmission?: { id: string; status: string; score?: number; totalQ?: number; allowRetake?: boolean } | null;
+  chainLocked?: boolean;
+  chainLockedBy?: string | null;
+  timedClosed?: boolean;
 };
+
+type FolderContentEntry =
+  | { contentType: "VIDEO"; contentId: string; order: number; video: VideoItem }
+  | { contentType: "HOMEWORK"; contentId: string; order: number; homework: HomeworkItem }
+  | { contentType: "EXAM"; contentId: string; order: number; exam: QuizItem }
+  | { contentType: "ATTACHMENT"; contentId: string; order: number; attachment: MaterialItem };
 
 type FolderItem = {
   id: string;
@@ -51,6 +74,7 @@ type FolderItem = {
   materials: MaterialItem[];
   quizzes: QuizItem[];
   homeworks?: HomeworkItem[];
+  contents?: FolderContentEntry[];
 };
 
 type CourseData = {
@@ -351,12 +375,23 @@ export default function CourseLearningPage() {
     setPageError("");
     setAccessBlock(null);
     try {
-      const courseRes = await fetch(`/api/courses/${courseId}`);
+      const courseRes = await fetch(`/api/courses/${courseId}/learn`);
       const courseJson = await courseRes.json();
       if (!courseRes.ok) {
+        console.log("[center-video-access] course load", {
+          status: courseRes.status,
+          code: courseJson.code,
+          error: courseJson.error,
+          courseId,
+          silent: Boolean(opts?.silent),
+        });
         if (courseRes.status === 401) { router.replace("/login"); return; }
         if (courseRes.status === 403) {
           const code = courseJson.code as string | undefined;
+          if (code === "VPN_DETECTED" || courseJson.vpnDetected) {
+            router.push(`/vpn-check?redirect_url=${encodeURIComponent(window.location.pathname)}`);
+            return;
+          }
           // Teacher/staff aren't allowed into the student course room — show a
           // clear message instead of a silent redirect.
           if (code === "TEACHER_NOT_ALLOWED" || code === "STAFF_NOT_ALLOWED") {
@@ -366,8 +401,14 @@ export default function CourseLearningPage() {
             });
             return;
           }
-          // Not enrolled → send to the course page to enroll/activate a code.
-          router.replace(`/courses/${courseId}`);
+          // Stay on the learn page. A silent 403 used to kick the student back
+          // to /courses/[id] right after "بدء الفيديو" and the player never opened.
+          if (!opts?.silent) {
+            setAccessBlock({
+              message: courseJson.error || "لا يوجد صلاحية للوصول. فعّل كود الكورس أو تواصل مع المعلم.",
+              teacher: false,
+            });
+          }
           return;
         }
         throw new Error(courseJson.error || "فشل تحميل الكورس");
@@ -380,6 +421,12 @@ export default function CourseLearningPage() {
         setMarkThreshold(courseJson.markCompleteThreshold);
       }
       setChainActive(courseJson.chainActive === true);
+      console.log("[center-video-access] subscription", {
+        courseId: c.id,
+        courseTitle: c.title,
+        folders: c.folders?.length ?? 0,
+        videos: c.folders?.flatMap((f) => f.videos).length ?? 0,
+      });
       setCourse(c);
       
       const allVideos = c.folders.flatMap((f) => f.videos);
@@ -610,6 +657,15 @@ export default function CourseLearningPage() {
     try {
       const res = await fetch(`/api/videos/${modalVideo.id}/watch`, { method: "POST", credentials: "include" });
       const data = await res.json();
+      console.log("[center-video-access] watch play", {
+        status: res.status,
+        code: data.code,
+        error: data.error,
+        videoId: modalVideo.id,
+        courseId,
+        sessionToken: data.sessionToken ? "present" : null,
+        embedUrl: data.embedUrl || null,
+      });
       if (!res.ok) {
         if (data.code === "VPN_DETECTED" || data.vpnDetected) {
           router.push(`/vpn-check?redirect_url=${encodeURIComponent(window.location.pathname)}`);
@@ -633,7 +689,7 @@ export default function CourseLearningPage() {
         drm: data.drm || null,
       });
       setModalVideo(null);
-      await loadCourse();
+      await loadCourse({ silent: true });
     } catch { toastError("تعذر بدء جلسة المشاهدة"); }
     finally { setWatching(false); }
   };
@@ -806,8 +862,9 @@ export default function CourseLearningPage() {
                     {/* Folder items */}
                     {isOpen && (
                       <div>
-                        {/* Videos */}
-                        {folder.videos.map((video) => {
+                        {(folder.contents ?? []).map((entry) => {
+                          if (entry.contentType === "VIDEO") {
+                          const video = entry.video;
                           const watched = isWatched(video);
                           const locked = isLocked(video.id);
                           const scheduledUnlock = getScheduledUnlockTime(video.id);
@@ -882,25 +939,40 @@ export default function CourseLearningPage() {
                               )}
                             </button>
                           );
-                        })}
+                          }
 
-                        {/* Quizzes */}
-                        {folder.quizzes.map((quiz) => (
+                          if (entry.contentType === "EXAM") {
+                          const quiz = entry.exam;
+                          const quizLocked = (chainActive && !!quiz.chainLocked) || !!quiz.timedClosed;
+                          return (
                           <button
                             key={quiz.id}
-                            onClick={() => router.push(`/quizzes/${quiz.id}`)}
-                            className="w-full flex items-center gap-2.5 px-4 py-2 text-right hover:bg-[var(--border)] transition-colors"
+                            onClick={() => {
+                              if (quizLocked) return;
+                              router.push(`/quizzes/${quiz.id}`);
+                            }}
+                            className={`w-full flex items-center gap-2.5 px-4 py-2 text-right hover:bg-[var(--border)] transition-colors ${quizLocked ? "opacity-60" : ""}`}
                           >
                             <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--border)] flex items-center justify-center">
-                              <IconQuiz className="w-3 h-3 text-[var(--ink-muted)]" />
+                              {quizLocked ? <span className="text-[11px]">🔒</span> : <IconQuiz className="w-3 h-3 text-[var(--ink-muted)]" />}
                             </span>
                             <span className="text-xs text-[var(--ink-muted)] flex-1 truncate">{quiz.title}</span>
-                            <span className="text-[10px] text-[var(--ink-muted)] shrink-0" dir="ltr">{quiz.timeLimitMinutes}د</span>
+                            {quiz.timedClosed ? (
+                              <span className="text-[10px] text-rose-500/90 shrink-0 truncate max-w-[40%]">انتهى وقت الامتحان</span>
+                            ) : quizLocked ? (
+                              <span className="text-[10px] text-amber-500/80 shrink-0 truncate max-w-[40%]">
+                                {quiz.chainLockedBy ? `أكمل «${quiz.chainLockedBy}»` : "مقفل"}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-[var(--ink-muted)] shrink-0" dir="ltr">{quiz.timeLimitMinutes}د</span>
+                            )}
                           </button>
-                        ))}
+                          );
+                          }
 
-                        {/* Homeworks */}
-                        {(folder.homeworks || []).map((hw) => {
+                          if (entry.contentType === "HOMEWORK") {
+                          const hw = entry.homework;
+                          const hwLocked = (chainActive && !!hw.chainLocked) || !!hw.timedClosed;
                           const isPassed = hw.mySubmission?.status === "passed" && !hw.mySubmission?.allowRetake;
                           const isPending = hw.mySubmission?.status === "pending" || hw.mySubmission?.status === "review_requested";
                           const isFailed = hw.mySubmission?.status === "failed" && !hw.mySubmission?.allowRetake;
@@ -908,14 +980,25 @@ export default function CourseLearningPage() {
                           return (
                             <button
                               key={hw.id}
-                              onClick={() => router.push(`/homeworks/${hw.id}`)}
-                              className="w-full flex items-center gap-2.5 px-4 py-2 text-right hover:bg-[var(--border)] transition-colors group"
+                              onClick={() => {
+                                if (hwLocked) return;
+                                router.push(`/homeworks/${hw.id}`);
+                              }}
+                              className={`w-full flex items-center gap-2.5 px-4 py-2 text-right hover:bg-[var(--border)] transition-colors group ${hwLocked ? "opacity-60" : ""}`}
                             >
-                              <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${isPassed ? "bg-emerald-500/20 text-emerald-400" : isFailed ? "bg-rose-500/20 text-rose-400" : isPending || canRetry ? "bg-amber-500/20 text-amber-400" : "bg-amber-500/10 text-amber-400"}`}>
-                                <span className="text-[11px]">📝</span>
+                              <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${hwLocked ? "bg-[var(--border)]" : isPassed ? "bg-emerald-500/20 text-emerald-400" : isFailed ? "bg-rose-500/20 text-rose-400" : isPending || canRetry ? "bg-amber-500/20 text-amber-400" : "bg-amber-500/10 text-amber-400"}`}>
+                                <span className="text-[11px]">{hwLocked ? "🔒" : "📝"}</span>
                               </span>
                               <span className="text-xs text-[var(--ink-muted)] group-hover:text-[var(--ink)] flex-1 truncate">{hw.title}</span>
-                              {isPassed ? (
+                              {hw.timedClosed ? (
+                                <span className="text-[10px] text-rose-500/90 bg-rose-500/10 px-1.5 py-0.5 rounded font-bold truncate max-w-[40%]">
+                                  انتهى وقت الامتحان
+                                </span>
+                              ) : hwLocked ? (
+                                <span className="text-[10px] text-amber-500/80 bg-amber-500/10 px-1.5 py-0.5 rounded font-bold truncate max-w-[40%]">
+                                  {hw.chainLockedBy ? `أكمل «${hw.chainLockedBy}»` : "مقفل"}
+                                </span>
+                              ) : isPassed ? (
                                 <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-bold">تم الحل ✅</span>
                               ) : canRetry ? (
                                 <span className="text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded font-bold">إعادة المحاولة</span>
@@ -928,23 +1011,43 @@ export default function CourseLearningPage() {
                               )}
                             </button>
                           );
-                        })}
+                          }
 
-                        {/* Materials */}
-                        {folder.materials.map((m) => (
+                          if (entry.contentType === "ATTACHMENT") {
+                          const m = entry.attachment;
+                          const materialLocked = chainActive && !!m.chainLocked;
+                          return (
                           <a
                             key={m.id}
-                            href={m.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="w-full flex items-center gap-2.5 px-4 py-2 text-right hover:bg-[var(--border)] transition-colors"
+                            href={materialLocked ? undefined : m.url}
+                            onClick={(e) => {
+                              if (materialLocked) e.preventDefault();
+                            }}
+                            target={materialLocked ? undefined : "_blank"}
+                            rel={materialLocked ? undefined : "noreferrer"}
+                            className={`w-full flex items-center gap-2.5 px-4 py-2 text-right hover:bg-[var(--border)] transition-colors ${materialLocked ? "opacity-60 cursor-not-allowed" : ""}`}
                           >
                             <span className="shrink-0 w-5 h-5 rounded-full bg-[var(--border)] flex items-center justify-center">
-                              {m.type === "pdf" ? <IconFile className="w-3 h-3 text-[var(--ink-muted)]" /> : <IconLink className="w-3 h-3 text-[var(--ink-muted)]" />}
+                              {materialLocked ? (
+                                <span className="text-[11px]">🔒</span>
+                              ) : m.type === "pdf" ? (
+                                <IconFile className="w-3 h-3 text-[var(--ink-muted)]" />
+                              ) : (
+                                <IconLink className="w-3 h-3 text-[var(--ink-muted)]" />
+                              )}
                             </span>
                             <span className="text-xs text-[var(--ink-muted)] flex-1 truncate">{m.title}</span>
+                            {materialLocked && (
+                              <span className="text-[10px] text-amber-500/80 shrink-0 truncate max-w-[40%]">
+                                {m.chainLockedBy ? `أكمل «${m.chainLockedBy}»` : "مقفل"}
+                              </span>
+                            )}
                           </a>
-                        ))}
+                          );
+                          }
+
+                          return null;
+                        })}
                       </div>
                     )}
                   </div>

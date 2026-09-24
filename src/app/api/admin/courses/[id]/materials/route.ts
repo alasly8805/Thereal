@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
+import { FolderContentType } from "@/generated/prisma";
+import { removeFolderContent } from "@/lib/folder-content-order";
 
 export async function DELETE(
   req: NextRequest,
@@ -52,6 +54,7 @@ export async function DELETE(
     await prisma.material.delete({
       where: { id: materialId },
     });
+    await removeFolderContent(FolderContentType.ATTACHMENT, materialId);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -1,6 +1,16 @@
 import { Prisma } from "@/generated/prisma";
+import { prisma } from "@/lib/prisma";
+import { SHAKEOUT_CREDITED_TYPE } from "@/lib/shakeout";
+import { SHA7NAWY_CREDITED_TYPE } from "@/lib/sha7nawy";
 import { PurchaseService } from "@/services/purchase/PurchaseService";
 import { PurchaseType } from "@/services/discount/DiscountService";
+
+export const PENDING_LEDGER_TYPES = [
+  "credit_shakeout_pending",
+  "credit_sha7nawy_pending",
+  "credit_shakeout_expired",
+  "credit_sha7nawy_expired",
+] as const;
 
 export interface FulfillmentResult {
   fulfilled: boolean;
@@ -351,4 +361,157 @@ export async function fulfillPendingItemPurchase({
   }
 
   return { fulfilled: false, message: "لم يتم التعرف على نوع المحتوى المستهدف" };
+}
+
+const PLAN_AR: Record<string, string> = {
+  monthly: "شهري",
+  termly: "ترم",
+  yearly: "سنوي",
+};
+
+/** Stable key so duplicate pending invoices for the same purchase can be collapsed. */
+export function paymentItemKey(note: string | null | undefined): string {
+  const meta = parsePaymentNoteMetadata(note);
+  if (meta.itemType === "teacher_sub" && meta.teacherId) {
+    return `teacher_sub:${meta.teacherId}:${meta.planType || ""}`;
+  }
+  if (meta.itemType === "course" && meta.courseId) return `course:${meta.courseId}`;
+  if (meta.itemType === "folder" && meta.folderId) return `folder:${meta.folderId}`;
+  if (meta.itemType === "video" && meta.videoId) return `video:${meta.videoId}`;
+  if (meta.itemType === "plan" && meta.planId) return `plan:${meta.planId}`;
+  return "wallet";
+}
+
+export function describePaymentItem(note: string | null | undefined): string {
+  const meta = parsePaymentNoteMetadata(note);
+  if (meta.itemType === "teacher_sub") {
+    const plan = meta.planType ? PLAN_AR[meta.planType] || meta.planType : "";
+    return plan ? `اشتراك معلم (${plan})` : "اشتراك معلم";
+  }
+  if (meta.itemType === "course") return "كورس";
+  if (meta.itemType === "folder") return "محاضرة";
+  if (meta.itemType === "video") return "درس";
+  if (meta.itemType === "plan") return "خطة دراسية";
+  return "شحن رصيد";
+}
+
+export function creditedTypeForLedger(type: string): string | null {
+  if (type.includes("shakeout")) return SHAKEOUT_CREDITED_TYPE;
+  if (type.includes("sha7nawy")) return SHA7NAWY_CREDITED_TYPE;
+  return null;
+}
+
+export function expiredTypeForLedger(type: string): string | null {
+  if (type.includes("shakeout")) return "credit_shakeout_expired";
+  if (type.includes("sha7nawy")) return "credit_sha7nawy_expired";
+  return null;
+}
+
+export async function claimPendingPaymentAsPaid(args: {
+  transactionId: string;
+  noteSuffix: string;
+}): Promise<{
+  ok: boolean;
+  alreadyPaid?: boolean;
+  error?: string;
+  userId?: string;
+  amount?: number;
+  note?: string | null;
+  type?: string;
+  fulfillment?: FulfillmentResult;
+  cancelledDuplicates?: number;
+}> {
+  const existing = await prisma.balanceTransaction.findUnique({
+    where: { id: args.transactionId },
+    select: { id: true, userId: true, type: true, amount: true, note: true },
+  });
+
+  if (!existing) {
+    return { ok: false, error: "المعاملة غير موجودة" };
+  }
+
+  const creditedType = creditedTypeForLedger(existing.type);
+  if (existing.type === SHAKEOUT_CREDITED_TYPE || existing.type === SHA7NAWY_CREDITED_TYPE) {
+    return {
+      ok: true,
+      alreadyPaid: true,
+      userId: existing.userId,
+      amount: existing.amount,
+      note: existing.note,
+      type: existing.type,
+    };
+  }
+
+  if (!creditedType || !PENDING_LEDGER_TYPES.includes(existing.type as (typeof PENDING_LEDGER_TYPES)[number])) {
+    return { ok: false, error: "هذه المعاملة ليست دفعة معلّقة" };
+  }
+
+  let fulfillment: FulfillmentResult | undefined;
+  let cancelledDuplicates = 0;
+
+  const claimed = await prisma.$transaction(
+    async (tx: Prisma.TransactionClient) => {
+      cancelledDuplicates = 0;
+      const claim = await tx.balanceTransaction.updateMany({
+        where: { id: existing.id, type: existing.type },
+        data: {
+          type: creditedType,
+          note: `${existing.note || ""} — ${args.noteSuffix}`.trim(),
+        },
+      });
+      if (claim.count === 0) return false;
+
+      await tx.user.update({
+        where: { id: existing.userId },
+        data: { balance: { increment: existing.amount } },
+      });
+
+      fulfillment = await fulfillPendingItemPurchase({
+        userId: existing.userId,
+        note: existing.note || "",
+        tx,
+      });
+
+      const itemKey = paymentItemKey(existing.note);
+      if (itemKey !== "wallet") {
+        const siblings = await tx.balanceTransaction.findMany({
+          where: {
+            userId: existing.userId,
+            id: { not: existing.id },
+            type: { in: [...PENDING_LEDGER_TYPES] },
+          },
+          select: { id: true, type: true, note: true },
+        });
+        const expiredType = expiredTypeForLedger(existing.type) || "credit_shakeout_expired";
+        for (const row of siblings) {
+          if (paymentItemKey(row.note) !== itemKey) continue;
+          await tx.balanceTransaction.update({
+            where: { id: row.id },
+            data: {
+              type: expiredType,
+              note: `${row.note || ""} — أُلغيت كمحاولة مكررة بعد تفعيل الدفعة`.trim(),
+            },
+          });
+          cancelledDuplicates += 1;
+        }
+      }
+
+      return true;
+    },
+    { timeout: 20000, maxWait: 10000 }
+  );
+
+  if (!claimed) {
+    return { ok: false, error: "تعذر تأكيد المعاملة — ربما أكّدها شخص آخر للتو" };
+  }
+
+  return {
+    ok: true,
+    userId: existing.userId,
+    amount: existing.amount,
+    note: existing.note,
+    type: creditedType,
+    fulfillment,
+    cancelledDuplicates,
+  };
 }

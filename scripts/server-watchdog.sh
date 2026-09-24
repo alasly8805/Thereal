@@ -438,7 +438,7 @@ case "$1" in
   75) [ -n "$(env_val DIRECT_URL)" ] ;;
   76) [ -n "$(find /home/ec2-user/backups -name 'codeup-*.dump' -mmin -1800 2>/dev/null | head -1)" ] ;;
   77) l=$(tail -1 /home/ec2-user/backups/backup.log 2>/dev/null); [[ ! "$l" =~ (FAIL|BAD) ]] ;;
-  78) timeout 20 aws s3 ls "s3://codeup-backups-687374520011/nightly/" --page-size 1 >/dev/null 2>&1 ;;
+  78) AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_REGION=eu-north-1 timeout 20 aws s3 ls "s3://codeup-backups-687374520011/nightly/" --page-size 1 >/dev/null 2>&1 ;;
   79) [ "$(cached pgjournal sudo -n journalctl -u postgresql --no-pager -n 60 -q 2>/dev/null | grep -Ec 'FATAL|PANIC')" -lt 1 ] ;;
   80) f=/var/lib/pgsql/data/pg_hba.conf; [ -r "$f" ] || f=$(sudo -n psql -U postgres -tAc 'SHOW hba_file;' 2>/dev/null);
       if sudo -n test -r "$f" 2>/dev/null; then sudo -n grep -E '^host[[:space:]]+all[[:space:]]+all[[:space:]]+127\.0\.0\.1' "$f" 2>/dev/null | grep -q 'scram'; else true; fi ;;
@@ -628,6 +628,9 @@ remedy_pm2() {
 # a stale lock left by a dead build can never wedge repairs off permanently.
 build_in_progress() {
   pgrep -f 'next build|npm run build' >/dev/null 2>&1 && return 0
+  # scripts/deploy.sh holds this lock for its whole run, including the swap +
+  # reload + auto-rollback window after the build process has already exited.
+  [ -e /tmp/thefake_deploy.lock ] && ! flock -n /tmp/thefake_deploy.lock true 2>/dev/null && return 0
   if [ -f .next/lock ]; then
     local age; age=$(( $(now) - $(stat -c %Y .next/lock 2>/dev/null || echo 0) ))
     [ "$age" -lt 120 ] && return 0
@@ -662,14 +665,16 @@ snapshot_build() {
   cur="$(cat .next/BUILD_ID 2>/dev/null)"
   snap="$(cat "$LASTGOOD_DIR/BUILD_ID" 2>/dev/null || echo '')"
   [ -n "$cur" ] && [ "$cur" = "$snap" ] && return 0
-  need=$(du -sk .next 2>/dev/null | awk '{print $1}')
+  need=$(du -sk --exclude=./cache .next 2>/dev/null | awk '{print $1}')
   avail=$(df -Pk "$APP_DIR" 2>/dev/null | awk 'NR==2{print $4}')
   if [ "${avail:-0}" -lt $(( ${need:-0} + 1048576 )) ]; then
     log WARN "last-good snapshot skipped: only ${avail:-0}KB free on $APP_DIR"
     return 1
   fi
   rm -rf "$LASTGOOD_DIR.tmp" 2>/dev/null || true
-  if timeout 300 cp -a .next "$LASTGOOD_DIR.tmp" 2>/dev/null && build_artifacts_ok "$LASTGOOD_DIR.tmp"; then
+  # Skip cache/: ~700MB of webpack build cache the server never reads at runtime.
+  # Without it the snapshot is ~40MB and restore_last_good takes seconds.
+  if timeout 300 rsync -a --exclude=/cache/ .next/ "$LASTGOOD_DIR.tmp/" 2>/dev/null && build_artifacts_ok "$LASTGOOD_DIR.tmp"; then
     rm -rf "$LASTGOOD_DIR.old" 2>/dev/null || true
     [ -d "$LASTGOOD_DIR" ] && mv "$LASTGOOD_DIR" "$LASTGOOD_DIR.old" 2>/dev/null
     if mv "$LASTGOOD_DIR.tmp" "$LASTGOOD_DIR" 2>/dev/null; then

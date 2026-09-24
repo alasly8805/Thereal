@@ -6,11 +6,16 @@ import { getConfigNumberClamped } from "@/lib/config";
 import { canBypassPayment } from "@/lib/demo";
 import { checkCourseEnrollment } from "@/lib/authorization";
 import { getCourseContentLocks } from "@/lib/content-access-engine";
+import { denyCenterIdOffHost, filterFoldersForGrant, getCenterPassGrant } from "@/lib/center-pass";
+import { assembleFolderContents } from "@/lib/folder-content-order";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getSession();
     if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
+
+    const hostDenied = denyCenterIdOffHost(req, session.accountMode);
+    if (hostDenied) return hostDenied;
 
     const { id } = await params;
     const role = session.role;
@@ -109,6 +114,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             });
             const canBypass = await canBypassPayment(role, targetCourseRow?.teacherId, session.accountMode);
             if (!canBypass) {
+              console.log("[center-video-access]", JSON.stringify({
+                event: "course_learn_denied",
+                phone: session.phone,
+                studentId: session.id,
+                courseId: id,
+                code: "NOT_ENROLLED",
+              }));
               return NextResponse.json(
                 { error: "لا يوجد صلاحية للوصول. فعّل كود الكورس أو تواصل مع المعلم.", code: "NOT_ENROLLED" },
                 { status: 403 }
@@ -151,11 +163,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 id: true,
                 title: true,
                 timeLimitMinutes: true,
+                closeAt: true,
+                enableAutoClose: true,
                 questions: { orderBy: { order: "asc" } },
               } as any),
             },
             homeworks: {
-              where: role === "student" ? { isPublished: true } : undefined,
+              where: role === "student" && session.accountMode !== "CENTER_ID" ? { isPublished: true } : undefined,
               orderBy: { createdAt: "asc" },
               select: {
                 id: true,
@@ -164,6 +178,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 type: true,
                 linkUrl: true,
                 dueAt: true,
+                closeAt: true,
+                enableAutoClose: true,
                 timeLimitMinutes: true,
                 isPublished: true,
                 videoId: true,
@@ -222,17 +238,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           .filter(Boolean) as any[]
       : course.folders;
 
+    const centerGrant = role === "student" ? await getCenterPassGrant(session.id) : null;
+    const grantedFolders = centerGrant?.isActive
+      ? filterFoldersForGrant(foldersToMap as any[], centerGrant)
+      : foldersToMap;
+
     // Teacher-panel content chain (مسار وفتح المحتوى): when the course has
     // prerequisite edges, evaluate them against the student's progress so the
     // client locks exactly what the chain locks — not whatever happens to be
     // the previous row in display order. chainActive=false means no edges
     // exist and the client keeps its legacy previous-video behaviour.
+    // Center-ID bundles skip the chain: superadmin already chose the set.
     let chainActive = false;
     let chainLocks = new Map<string, { id: string; title: string; type: string }>();
-    if (role === "student") {
+    let timedClosed = new Set<string>();
+    if (role === "student" && !centerGrant) {
       try {
         const allSourceIds: string[] = [];
-        for (const folder of course.folders) {
+        for (const folder of grantedFolders as typeof course.folders) {
           folder.videos.forEach((v) => allSourceIds.push(v.id));
           folder.quizzes.forEach((q) => allSourceIds.push(q.id));
           folder.homeworks.forEach((h) => allSourceIds.push(h.id));
@@ -241,18 +264,32 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const result = await getCourseContentLocks(session.id, allSourceIds);
         chainActive = result.active;
         chainLocks = result.locks as typeof chainLocks;
+        timedClosed = result.timedClosed;
       } catch (chainErr) {
         console.error("[courses/[id]] chain lock evaluation error:", chainErr);
       }
+    }
+
+    const grantedFolderIds = (grantedFolders as any[]).map((folder) => folder.id).filter(Boolean);
+    const contentOrderRows = grantedFolderIds.length
+      ? await prisma.folderContent.findMany({
+          where: { folderId: { in: grantedFolderIds } },
+          orderBy: { order: "asc" },
+        })
+      : [];
+    const ordersByFolder = new Map<string, typeof contentOrderRows>();
+    for (const row of contentOrderRows) {
+      const list = ordersByFolder.get(row.folderId) ?? [];
+      list.push(row);
+      ordersByFolder.set(row.folderId, list);
     }
 
     const safeCourse = {
       ...course,
       homeworkUrl: course.homeworkUrl,
       maxWatchCount: course.maxWatchCount,
-      folders: (foldersToMap as any[]).map((folder: any) => ({
-        ...folder,
-        videos: (folder.videos || []).map((video: any) => ({
+      folders: (grantedFolders as any[]).map((folder: any) => {
+        const videos = (folder.videos || []).map((video: any) => ({
           ...video,
           vdoCipherId: undefined,
           providerVideoId: undefined,
@@ -261,8 +298,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           watchSessions: undefined,
           chainLocked: chainActive ? chainLocks.has(video.id) : false,
           chainLockedBy: chainActive ? (chainLocks.get(video.id)?.title ?? null) : null,
-        })),
-        quizzes: (folder.quizzes || []).map((quiz: any) => {
+        }));
+        const quizzes = (folder.quizzes || []).map((quiz: any) => {
           const q = quiz as unknown as {
             id: string;
             title: string;
@@ -274,9 +311,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             title: q.title,
             timeLimitMinutes: q.timeLimitMinutes,
             questions: (q.questions ?? []).map((question) => ({ ...question, correctAnswer: undefined })),
+            chainLocked: chainActive ? chainLocks.has(q.id) : false,
+            chainLockedBy: chainActive ? (chainLocks.get(q.id)?.title ?? null) : null,
+            timedClosed: timedClosed.has(q.id),
           };
-        }),
-        homeworks: (folder.homeworks || []).map((hw: any) => ({
+        });
+        const homeworks = (folder.homeworks || []).map((hw: any) => ({
           id: hw.id,
           title: hw.title,
           description: hw.description,
@@ -288,8 +328,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           videoId: hw.videoId,
           allowedFileTypes: hw.allowedFileTypes,
           mySubmission: hw.submissions?.[0] || null,
-        })),
-      })),
+          chainLocked: chainActive ? chainLocks.has(hw.id) : false,
+          chainLockedBy: chainActive ? (chainLocks.get(hw.id)?.title ?? null) : null,
+          timedClosed: timedClosed.has(hw.id),
+        }));
+        const materials = (folder.materials || []).map((m: any) => ({
+          ...m,
+          chainLocked: chainActive ? chainLocks.has(m.id) : false,
+          chainLockedBy: chainActive ? (chainLocks.get(m.id)?.title ?? null) : null,
+        }));
+        const contents = assembleFolderContents({
+          orders: ordersByFolder.get(folder.id) ?? [],
+          videos,
+          homeworks,
+          quizzes,
+          materials,
+        });
+        return { ...folder, videos, quizzes, homeworks, materials, contents };
+      }),
     };
 
     // Mark-complete gate (% watched) is superadmin-configurable (was 80).

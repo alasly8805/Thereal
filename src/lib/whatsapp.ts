@@ -151,16 +151,26 @@ export async function sendOtpWhatsApp(phoneE164: string, code: string): Promise<
 
 import { sendVerificationSms } from "./aws-sms";
 
+/** Temporary kill switch: skip WhatsApp OTP and send ZADX SMS instead. */
+export function isWhatsAppOtpSkipped() {
+  return process.env.WHATSAPP_OFFLINE === "true";
+}
+
 /**
  * Orchestrator: Try to send via WhatsApp, and fall back to SMS on failure (or directly if forceChannel === 'sms').
- * Returns which channel was used.
+ * Set WHATSAPP_OFFLINE=true to skip WhatsApp without attempting it. Flip back to false to restore WhatsApp-first.
  */
 export async function sendVerificationCode(
   phone: string,
   code: string,
   forceChannel?: "sms" | "whatsapp"
 ): Promise<{ channel: "whatsapp" | "sms" }> {
-  if (forceChannel === "sms") {
+  const skipWhatsApp = isWhatsAppOtpSkipped() || forceChannel === "sms";
+
+  if (skipWhatsApp) {
+    if (isWhatsAppOtpSkipped() && forceChannel !== "sms") {
+      console.log("[OTP] WhatsApp skipped (WHATSAPP_OFFLINE=true) — sending SMS");
+    }
     await sendVerificationSms(phone, code);
     return { channel: "sms" };
   }

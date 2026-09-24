@@ -3,12 +3,26 @@
 import React, { useEffect, useRef, useState } from "react";
 
 export interface VideoQualityOption {
-  /** null = the original file, whatever height it happens to be. */
+  /** null = Auto — the original file, whatever height it happens to be. */
   height: number | null;
   label: string;
   note?: string;
   bytes?: number;
+  /** False until the transcoded file exists; the option is still shown. */
+  ready?: boolean;
 }
+
+/**
+ * The Native (alasly / Drive) player always offers this ladder, even before
+ * the /qualities probe returns. Matches RENDITION_LADDER on the server:
+ * Auto + 360p / 480p / 720p.
+ */
+export const DEFAULT_QUALITY_OPTIONS: VideoQualityOption[] = [
+  { height: null, label: "Auto", note: "تلقائي", ready: true },
+  { height: 360, label: "360p", note: "أقل استهلاك للإنترنت" },
+  { height: 480, label: "480p", note: "مناسب للإنترنت الضعيف" },
+  { height: 720, label: "720p", note: "جودة متوسطة" },
+];
 
 export const QUALITY_STORAGE_KEY = "codeup:video-quality";
 
@@ -58,12 +72,11 @@ function formatSize(bytes?: number): string | null {
 }
 
 /**
- * Quality picker overlay for the Native (alasly) player.
+ * Quality picker for the Native (alasly / Drive) player.
  *
- * Sits at the top of the video surface rather than in the control bar: the
- * native <video> chrome owns the bottom strip, and a student on a failing
- * connection needs this button to be the obvious thing on screen while the
- * lesson is still buffering.
+ * Always offers Auto / 360p / 480p / 720p. Sits in the custom control bar
+ * (inline) so it lines up with speed and fullscreen; the overlay variant is
+ * kept for any surface that still uses native <video> chrome.
  */
 export function VideoQualityMenu({
   options,
@@ -103,9 +116,8 @@ export function VideoQualityMenu({
     };
   }, [open]);
 
-  if (options.length < 2) return null;
-
-  const current = options.find((o) => o.height === value) ?? options[0];
+  const list = options.length > 0 ? options : DEFAULT_QUALITY_OPTIONS;
+  const current = list.find((o) => o.height === value) ?? list[0];
 
   return (
     <div
@@ -140,9 +152,11 @@ export function VideoQualityMenu({
       {open && (
         <div
           role="listbox"
+          aria-label="جودة الفيديو"
           className={`absolute ${isOverlay ? "top-full mt-1.5" : "bottom-full mb-1.5"} right-0 min-w-[190px] rounded-xl bg-slate-950/95 backdrop-blur-md border border-white/10 shadow-2xl overflow-hidden py-1 z-40`}
         >
-          {options.map((opt) => {
+          <div className="px-3 pt-1.5 pb-1 text-[10px] font-bold text-slate-400">جودة الفيديو</div>
+          {list.map((opt) => {
             const selected = opt.height === value;
             const size = formatSize(opt.bytes);
             return (
@@ -162,7 +176,9 @@ export function VideoQualityMenu({
               >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${selected ? "bg-sky-400" : "bg-transparent"}`} />
                 <span className="flex-1 min-w-0">
-                  <span className="block text-[12px] font-bold text-white leading-tight">{opt.label}</span>
+                  <span className="block text-[12px] font-bold text-white leading-tight" dir="ltr">
+                    {opt.label}
+                  </span>
                   {(opt.note || size) && (
                     <span className="block text-[10px] text-slate-400 leading-tight mt-0.5">
                       {[opt.note, size].filter(Boolean).join(" · ")}

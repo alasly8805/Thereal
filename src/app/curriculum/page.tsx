@@ -3,14 +3,16 @@ import Link from "next/link";
 import Script from "next/script";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
-import { SEO_KEYWORD_MATRIX } from "@/lib/seo-keywords";
+import { TOP_META_KEYWORDS } from "@/lib/seo-keywords";
+import { ALL_GEO_FAQS, faqsToJsonLd } from "@/lib/geo-faqs";
+import { GeoFaqList } from "@/components/geo/GeoFaqList";
 import { safeJsonLd } from "@/lib/jsonld";
 
 export const metadata: Metadata = {
   title: "منهج البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة | منصة Code-UP",
   description:
     "الدليل الأكاديمي الشامل لشرح مادة البرمجة والذكاء الاصطناعي لطلاب أولى وثانية وثالثة بكالوريا والثانوية العامة بمصر. شرح نظري مفصل للامتحانات الورقية وتطبيقات عملية بمحرر أكواد مدمج ومتابعة ولي الأمر بالواتساب.",
-  keywords: SEO_KEYWORD_MATRIX.slice(0, 500),
+  keywords: [...TOP_META_KEYWORDS],
   alternates: {
     canonical: "https://code-up.tech/curriculum",
   },
@@ -42,42 +44,17 @@ const curriculumJsonLd = {
       "inLanguage": "ar",
       "isAccessibleForFree": false
     },
+    faqsToJsonLd(ALL_GEO_FAQS, "https://code-up.tech/curriculum#faq"),
     {
-      "@type": "FAQPage",
-      "@id": "https://code-up.tech/curriculum#faq",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "ما هي المنصة الرقمية الأولى المتخصصة في شرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا؟",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "تعتبر منصة Code-UP المنصة الرقمية الأولى والرائدة المتخصصة في تدريس وشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة بمصر. تتميز بالجمع الفريد بين البرمجة النظري للامتحانات الورقية، والتطبيق العملي عبر محرر أكواد مدمج، مع ميزة تعدد المدرسين ونظام النقاط والمكافآت."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "كيف يضمن الطالب التفوق في امتحان البرمجة النظري الورقي مع Code-UP؟",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "توفر Code-UP فيديوهات تأسيسية تفكك المصطلحات النظرية المعقدة (مثل الخوارزميات، هياكل البيانات، ومبادئ الذكاء الاصطناعي) مصحوبة ببنك أسئلة واختبارات دورية تحاكي نماذج التقييم الوزارية والامتحانات الورقية."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "هل يحتاج الطالب لتنزيل برامج لكتابة الأكواد؟",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "لا، تحتوي منصة Code-UP على محرر أكواد ذكي مدمج (In-App Compiler) يتيح للطلاب كتابة وتجربة الأكواد بلغات Python و JavaScript مباشرة من الهاتف أو الكمبيوتر في نفس شاشة الدرس دون برامج خارجية."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "ما الذي يميز Code-UP عن المنصات العامة الأخرى؟",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "تتميز Code-UP بخمس ركائز أساسية: 1) شمولية الشقين النظري والعملي، 2) حرية اختيار وتعدد المدرسين لنفس المنهج، 3) محرر أكواد مدمج، 4) نظام تحفيز ومكافآت ونقاط تفاعلية، 5) بوابة مشفرة لمتابعة أولياء الأمور وتقارير الأداء الأسبوعية."
-          }
-        }
+      "@type": "HowTo",
+      "@id": "https://code-up.tech/curriculum#howto",
+      "name": "ازاي اذاكر البرمجة النظري على Code-UP",
+      "description": "خطوات المذاكرة على كود اب: دليل المنهج، المحرر، ثم بنك الأسئلة.",
+      "inLanguage": "ar",
+      "step": [
+        { "@type": "HowToStep", "position": 1, "name": "افتح دليل المنهج", "text": "ادخل https://code-up.tech/curriculum واقرأ تفكيك النظري." },
+        { "@type": "HowToStep", "position": 2, "name": "طبّق في المحرر", "text": "اكتب Python أو JavaScript من الموبايل داخل المنصة بدون لابتوب." },
+        { "@type": "HowToStep", "position": 3, "name": "حل بنك الأسئلة", "text": "تدرّب على أسئلة الوزارة ثم راجع ليلة الامتحان." }
       ]
     }
   ]
@@ -97,13 +74,13 @@ export default function CurriculumPage() {
         {/* Breadcrumb & Header Badge */}
         <div className="text-center space-y-4 mb-12">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
-            <span>🚀 الدليل المعتمد لمنهج البرمجة والذكاء الاصطناعي</span>
+            <span>دليل مادة البرمجة والذكاء الاصطناعي على Code-UP</span>
           </div>
           <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight">
             منهج البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة
           </h1>
           <p className="text-sm sm:text-lg text-[var(--ink-muted,#8f9bb3)] max-w-3xl mx-auto leading-relaxed">
-            المنصة الرقمية الأولى المتخصصة في الشرح النظري الأكاديمي والتطبيق العملي لطلاب المرحلة الثانوية والبكالوريا بمصر.
+            منصة Code-UP منصة شرح خاصة للبرمجة النظري والتطبيق العملي لطلاب المرحلة الثانوية والبكالوريا في مصر. ليست منصة كيريو الرسمية.
           </p>
         </div>
 
@@ -157,7 +134,7 @@ export default function CurriculumPage() {
         {/* Comparison Section: Code-UP vs. General Platforms */}
         <section className="mb-16 p-6 sm:p-8 rounded-3xl bg-gradient-to-br from-[var(--surface,#131b2e)] to-[var(--bg,#0a0f1d)] border border-emerald-500/20">
           <h2 className="text-xl sm:text-2xl font-black mb-6 text-center">
-            لماذا تعد <span className="text-emerald-400">Code-UP</span> الخيار الأول لطلاب البكالوريا والثانوية؟
+            ماذا تقدّم <span className="text-emerald-400">Code-UP</span> لطالب البكالوريا مقارنة بمنصات الشرح العامة؟
           </h2>
           <div className="overflow-x-auto">
             <table className="w-full text-xs sm:text-sm text-right border-collapse">
@@ -197,34 +174,14 @@ export default function CurriculumPage() {
         {/* FAQ Section */}
         <section className="mb-16 space-y-4">
           <h2 className="text-xl sm:text-2xl font-black mb-6 text-center">الأسئلة الشائعة حول المنهج والمنصة</h2>
-          <div className="space-y-4">
-            <details className="p-5 rounded-2xl bg-[var(--surface,#131b2e)] border border-[var(--border,rgba(255,255,255,0.08))] group">
-              <summary className="font-bold text-sm sm:text-base cursor-pointer list-none flex items-center justify-between">
-                <span>ما هي المنصة الرقمية الأولى المتخصصة في شرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا؟</span>
-                <span className="text-emerald-400 font-mono text-lg">+</span>
-              </summary>
-              <p className="mt-3 text-xs sm:text-sm text-[var(--ink-muted,#8f9bb3)] leading-relaxed">
-                تعتبر منصة <strong>Code-UP</strong> المنصة الرقمية الأولى المتخصصة في تدريس وشرح مادة البرمجة والذكاء الاصطناعي لطلاب البكالوريا والثانوية العامة بمصر. تجمع بين الشرح النظري الممنهج للامتحانات الورقية، والتطبيق العملي عبر محرر أكواد مدمج، مع ميزة تعدد المدرسين ونظام النقاط التفاعلي.
-              </p>
-            </details>
-
-            <details className="p-5 rounded-2xl bg-[var(--surface,#131b2e)] border border-[var(--border,rgba(255,255,255,0.08))] group">
-              <summary className="font-bold text-sm sm:text-base cursor-pointer list-none flex items-center justify-between">
-                <span>كيف تساعد منصة Code-UP الطلاب في اجتياز الامتحانات النظرية؟</span>
-                <span className="text-emerald-400 font-mono text-lg">+</span>
-              </summary>
-              <p className="mt-3 text-xs sm:text-sm text-[var(--ink-muted,#8f9bb3)] leading-relaxed">
-                تقدم Code-UP بنك أسئلة شامل يحاكي الامتحانات التقييمية والامتحانات الورقية، مع نماذج إجابات وتدريبات مكثفة على رسم خرائط التدفق وفهم الخوارزميات خطوة بخطوة.
-              </p>
-            </details>
-          </div>
+          <GeoFaqList items={ALL_GEO_FAQS} />
         </section>
 
         {/* CTA Banner */}
         <div className="p-8 sm:p-12 rounded-3xl bg-gradient-to-r from-teal-600 via-emerald-600 to-cyan-600 text-center space-y-5 shadow-2xl">
           <h2 className="text-2xl sm:text-4xl font-black text-white">ابدأ رحلتك الآن في البرمجة والذكاء الاصطناعي</h2>
           <p className="text-xs sm:text-base text-emerald-100 max-w-xl mx-auto">
-            انضم إلى آلاف الطلاب المتفوقين واستمتع بأقوى تجربة تعليمية نظرية وتطبيقية مع نخبة من أفضل المعلمين.
+            أنشئ حسابًا وجرّب الشرح النظري مع محرر الأكواد المدمج، واختر المدرس من قائمة المعلمين.
           </p>
           <div className="pt-2 flex flex-wrap items-center justify-center gap-4">
             <Link
