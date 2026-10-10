@@ -3,6 +3,8 @@ import { getSession } from "@/lib/auth";
 import { DiscountService, PurchaseType } from "@/services/discount/DiscountService";
 import { verifyAuthoritativePrice } from "@/lib/price-verifier";
 
+const CODE_MAX_LEN = 100;
+
 /**
  * POST /api/checkout/discount
  * Validates a discount code in checkout context and returns authoritative price breakdown.
@@ -21,32 +23,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "كود الخصم مطلوب" }, { status: 400 });
     }
 
-    // Determine purchase type and targetId
+    // Reject oversized codes before any DB work
+    if (code.trim().length > CODE_MAX_LEN) {
+      return NextResponse.json({ error: "كود الخصم غير صالح" }, { status: 400 });
+    }
+
     let purchaseType: PurchaseType | null = null;
     let targetId: string | null = null;
 
-    if (courseId) {
-      purchaseType = "COURSE";
-      targetId = courseId;
-    } else if (folderId) {
-      purchaseType = "FOLDER";
-      targetId = folderId;
-    } else if (videoId) {
-      purchaseType = "VIDEO";
-      targetId = videoId;
-    } else if (planId) {
-      purchaseType = "PLAN";
-      targetId = planId;
-    } else if (teacherId && planType) {
-      purchaseType = "TEACHER_SUB";
-      targetId = teacherId;
-    }
+    if (courseId) { purchaseType = "COURSE"; targetId = courseId; }
+    else if (folderId) { purchaseType = "FOLDER"; targetId = folderId; }
+    else if (videoId) { purchaseType = "VIDEO"; targetId = videoId; }
+    else if (planId) { purchaseType = "PLAN"; targetId = planId; }
+    else if (teacherId && planType) { purchaseType = "TEACHER_SUB"; targetId = teacherId; }
 
     if (!purchaseType || !targetId) {
       return NextResponse.json({ error: "يرجى تحديد المحتوى المراد تطبيق الخصم عليه" }, { status: 400 });
     }
 
-    // Fetch authoritative base price
     const priceRes = await verifyAuthoritativePrice({
       amount: 999999,
       courseId,
@@ -66,9 +60,8 @@ export async function POST(req: NextRequest) {
 
     const basePrice = priceRes.originalPrice ?? priceRes.expectedPrice;
 
-    // Validate discount code
     const validation = await DiscountService.validateDiscountCode({
-      code,
+      code: code.trim(),
       studentId: session.id,
       purchaseType,
       targetId,
@@ -91,7 +84,7 @@ export async function POST(req: NextRequest) {
       itemName: priceRes.itemName,
       message: `تم تطبيق الخصم بنجاح (-${validation.pricing.discountAmount} جنيه) 🎉`,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[checkout/discount] error:", error);
     return NextResponse.json({ error: "حدث خطأ أثناء فحص كود الخصم" }, { status: 500 });
   }

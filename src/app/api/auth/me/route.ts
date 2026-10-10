@@ -3,16 +3,16 @@ import { clearAuthCookie, getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkAndUpdateStreak } from "@/lib/streak-middleware";
 
+const NO_CACHE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+};
+
 export async function GET() {
   try {
     const session = await getSession();
 
     if (!session) {
-      return NextResponse.json({ user: null }, {
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-        },
-      });
+      return NextResponse.json({ user: null }, { headers: NO_CACHE_HEADERS });
     }
 
     // Lightweight streak check: runs on first authenticated request of the day.
@@ -21,29 +21,21 @@ export async function GET() {
       void checkAndUpdateStreak(session.id).catch(() => {/* non-critical */});
     }
 
-    return NextResponse.json({ user: session }, {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-      },
-    });
+    return NextResponse.json({ user: session }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     console.error("GET /api/auth/me error:", error);
-    return NextResponse.json({ user: null, dbError: true }, {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-      },
-    });
+    return NextResponse.json({ user: null }, { headers: NO_CACHE_HEADERS });
   }
 }
 
 export async function DELETE() {
-  const session = await getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
+    const session = await getSession();
+
+    if (!session) {
+      return NextResponse.json({ error: "يجب تسجيل الدخول أولاً" }, { status: 401 });
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: session.id },
     });
@@ -54,13 +46,9 @@ export async function DELETE() {
 
     await clearAuthCookie();
 
-    return NextResponse.json({ success: true }, {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-      },
-    });
+    return NextResponse.json({ success: true }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
-    console.error("Error deleting user:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    console.error("DELETE /api/auth/me error:", error);
+    return NextResponse.json({ error: "حدث خطأ داخلي" }, { status: 500 });
   }
 }

@@ -13,6 +13,10 @@ import {
   recordFailedLogin,
 } from "@/lib/login-guard";
 
+// Prevent bcrypt DoS: reject oversized inputs before the expensive hash compare
+const PHONE_MAX_LEN = 20;
+const PASSWORD_MAX_LEN = 128;
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => ({}))) as { phone?: string; password?: string; recaptchaToken?: string };
@@ -26,6 +30,11 @@ export async function POST(req: NextRequest) {
 
     if (!phone || !password) {
       return NextResponse.json({ error: "رقم الهاتف وكلمة المرور مطلوبان" }, { status: 400 });
+    }
+
+    // Reject oversized inputs before bcrypt and DB work
+    if (String(phone).length > PHONE_MAX_LEN || String(password).length > PASSWORD_MAX_LEN) {
+      return NextResponse.json({ error: "بيانات الدخول غير صحيحة" }, { status: 401 });
     }
 
     const normalizedPhone = normalizeEgyptPhone(String(phone));

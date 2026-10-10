@@ -11,7 +11,12 @@ import { invalidateUserSessionCache } from "@/lib/cache";
 
 export async function POST(req: NextRequest) {
   try {
-    const { phone, verificationCode, newPassword } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { phone, verificationCode, newPassword } = body as {
+      phone?: unknown;
+      verificationCode?: unknown;
+      newPassword?: unknown;
+    };
 
     if (!phone || !newPassword) {
       return NextResponse.json(
@@ -20,9 +25,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (String(newPassword).length < 6) {
+    const passwordStr = String(newPassword);
+    if (passwordStr.length < 6 || passwordStr.length > 128) {
       return NextResponse.json(
-        { error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" },
+        { error: "كلمة المرور يجب أن تكون بين 6 و 128 حرفًا" },
         { status: 400 }
       );
     }
@@ -36,7 +42,10 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      const isValid = await verifyPhoneVerificationCookie(normalized, String(verificationCode));
+      const isValid = await verifyPhoneVerificationCookie(
+        normalized,
+        String(verificationCode)
+      );
       if (!isValid) {
         return NextResponse.json(
           { error: "الكود غير صحيح أو انتهت صلاحيته" },
@@ -57,13 +66,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const hashed = await bcrypt.hash(String(newPassword), 10);
+    // Use bcrypt cost 12 (consistent with signup)
+    const hashed = await bcrypt.hash(passwordStr, 12);
     await prisma.user.update({
       where: { id: user.id },
       data: {
         password: hashed,
         tokenVersion: { increment: 1 },
-      } as any,
+      } as Parameters<typeof prisma.user.update>[0]["data"],
     });
     invalidateUserSessionCache(user.id);
 

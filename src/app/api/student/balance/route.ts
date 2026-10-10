@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStudentSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-/** GET — current balance + last 20 transactions */
+const CODE_MAX_LEN = 50;
+
+/** GET — current balance + last 50 transactions */
 export async function GET() {
   const { getSession } = await import("@/lib/auth");
   const session = await getSession();
@@ -18,11 +19,14 @@ export async function GET() {
     }),
   ]);
 
-  // Auto-reconcile recent pending transactions on visit (within 48h)
-  const pendingTxs = rawTransactions.filter(
-    tx => tx.type.toLowerCase().includes("pending") &&
-    (Date.now() - new Date(tx.createdAt).getTime()) < 48 * 60 * 60 * 1000
-  ).slice(0, 3);
+  // Reconcile recent pending transactions (within 48 h, max 3)
+  const pendingTxs = rawTransactions
+    .filter(
+      (tx) =>
+        tx.type.toLowerCase().includes("pending") &&
+        Date.now() - new Date(tx.createdAt).getTime() < 48 * 60 * 60 * 1000
+    )
+    .slice(0, 3);
 
   let didReconcileAny = false;
 
@@ -34,36 +38,58 @@ export async function GET() {
         if (!ref) continue;
 
         if (pTx.type.includes("shakeout")) {
-          const { getShakeOutPaymentInfo, SHAKEOUT_PAID_STATUSES, SHAKEOUT_CREDITED_TYPE } = await import("@/lib/shakeout");
-          const { fulfillPendingItemPurchase } = await import("@/lib/fulfillment");
+          const [
+            { getShakeOutPaymentInfo, SHAKEOUT_PAID_STATUSES, SHAKEOUT_CREDITED_TYPE },
+            { fulfillPendingItemPurchase },
+          ] = await Promise.all([
+            import("@/lib/shakeout"),
+            import("@/lib/fulfillment"),
+          ]);
           const info = await getShakeOutPaymentInfo(ref);
-          const normalizedStatus = (info.data?.status || "unknown").toString().toLowerCase();
+          const normalizedStatus = (info.data?.status ?? "unknown").toString().toLowerCase();
           if (SHAKEOUT_PAID_STATUSES.includes(normalizedStatus)) {
-            const processed = await prisma.$transaction(async (tx: any) => {
+            const processed = await prisma.$transaction(async (tx) => {
               const claim = await tx.balanceTransaction.updateMany({
                 where: { id: pTx.id, type: pTx.type },
-                data: { type: SHAKEOUT_CREDITED_TYPE, note: `${pTx.note} — سداد عبر Shake-Out (تأكيد تلقائي)` },
+                data: {
+                  type: SHAKEOUT_CREDITED_TYPE,
+                  note: `${pTx.note} — سداد عبر Shake-Out (تأكيد تلقائي)`,
+                },
               });
               if (claim.count === 0) return false;
-              await tx.user.update({ where: { id: session.id }, data: { balance: { increment: pTx.amount } } });
+              await tx.user.update({
+                where: { id: session.id },
+                data: { balance: { increment: pTx.amount } },
+              });
               await fulfillPendingItemPurchase({ userId: session.id, note: pTx.note, tx });
               return true;
             });
             if (processed) didReconcileAny = true;
           }
         } else if (pTx.type.includes("sha7nawy")) {
-          const { getSha7nawyPaymentInfo, SHA7NAWY_PAID_STATUSES, SHA7NAWY_CREDITED_TYPE } = await import("@/lib/sha7nawy");
-          const { fulfillPendingItemPurchase } = await import("@/lib/fulfillment");
+          const [
+            { getSha7nawyPaymentInfo, SHA7NAWY_PAID_STATUSES, SHA7NAWY_CREDITED_TYPE },
+            { fulfillPendingItemPurchase },
+          ] = await Promise.all([
+            import("@/lib/sha7nawy"),
+            import("@/lib/fulfillment"),
+          ]);
           const info = await getSha7nawyPaymentInfo(ref);
-          const normalizedStatus = (info.data?.status || "unknown").toString().toLowerCase();
+          const normalizedStatus = (info.data?.status ?? "unknown").toString().toLowerCase();
           if (SHA7NAWY_PAID_STATUSES.includes(normalizedStatus)) {
-            const processed = await prisma.$transaction(async (tx: any) => {
+            const processed = await prisma.$transaction(async (tx) => {
               const claim = await tx.balanceTransaction.updateMany({
                 where: { id: pTx.id, type: pTx.type },
-                data: { type: SHA7NAWY_CREDITED_TYPE, note: `${pTx.note} — سداد عبر Sha7nawy (تأكيد تلقائي)` },
+                data: {
+                  type: SHA7NAWY_CREDITED_TYPE,
+                  note: `${pTx.note} — سداد عبر Sha7nawy (تأكيد تلقائي)`,
+                },
               });
               if (claim.count === 0) return false;
-              await tx.user.update({ where: { id: session.id }, data: { balance: { increment: pTx.amount } } });
+              await tx.user.update({
+                where: { id: session.id },
+                data: { balance: { increment: pTx.amount } },
+              });
               await fulfillPendingItemPurchase({ userId: session.id, note: pTx.note, tx });
               return true;
             });
@@ -71,7 +97,8 @@ export async function GET() {
           }
         }
       } catch (err) {
-        // Safe skip on single error, do not block balance retrieval
+        // Log but continue — a single gateway error must not block the balance view
+        console.error("[balance] reconcile failed for tx", pTx.id, err);
       }
     }
 
@@ -88,7 +115,7 @@ export async function GET() {
     }
   }
 
-  const transactions = rawTransactions.map(tx => {
+  const transactions = rawTransactions.map((tx) => {
     const isPending = tx.type.toLowerCase().includes("pending");
     let url: string | null = null;
     let ref: string | null = null;
@@ -137,41 +164,39 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { code } = await req.json() as { code?: string };
-  if (!code?.trim()) return NextResponse.json({ error: "الكود مطلوب" }, { status: 400 });
+  const body = (await req.json().catch(() => ({}))) as { code?: unknown };
+  const { code } = body;
+
+  if (!code || typeof code !== "string" || !code.trim()) {
+    return NextResponse.json({ error: "الكود مطلوب" }, { status: 400 });
+  }
+
+  // Guard: prevent DoS via oversized strings before DB lookup
+  if (code.trim().length > CODE_MAX_LEN) {
+    return NextResponse.json({ error: "كود غير صالح" }, { status: 400 });
+  }
 
   const normalized = code.trim().toUpperCase();
 
   try {
-    const creditedAmount = await prisma.$transaction(async (tx: any) => {
+    const creditedAmount = await prisma.$transaction(async (tx) => {
       const moneyCode = await tx.moneyCode.findUnique({ where: { code: normalized } });
-      if (!moneyCode) {
-        throw new Error("NOT_FOUND");
-      }
-      if (moneyCode.isUsed) {
-        throw new Error("ALREADY_USED");
-      }
-      if (moneyCode.expiresAt && moneyCode.expiresAt < new Date()) {
-        throw new Error("EXPIRED");
-      }
+      if (!moneyCode) throw new Error("NOT_FOUND");
+      if (moneyCode.isUsed) throw new Error("ALREADY_USED");
+      if (moneyCode.expiresAt && moneyCode.expiresAt < new Date()) throw new Error("EXPIRED");
 
-      // Mark used conditionally - ensures that if another request updated it between findUnique and now, this updates 0 rows
+      // Optimistic lock — if another request already used it, count === 0
       const updateResult = await tx.moneyCode.updateMany({
         where: { id: moneyCode.id, isUsed: false },
         data: { isUsed: true, usedById: session.id, usedAt: new Date() },
       });
+      if (updateResult.count === 0) throw new Error("ALREADY_USED");
 
-      if (updateResult.count === 0) {
-        throw new Error("ALREADY_USED");
-      }
-
-      // Atomically increment user's balance
       await tx.user.update({
         where: { id: session.id },
         data: { balance: { increment: moneyCode.amount } },
       });
 
-      // Create ledger entry
       await tx.balanceTransaction.create({
         data: {
           userId: session.id,
@@ -194,18 +219,12 @@ export async function POST(req: NextRequest) {
       credited: creditedAmount,
       message: `تم إضافة ${creditedAmount} جنيه إلى رصيدك!`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     await AccessCodeGuard.logAttempt({ ip: clientIp, userId: session.id, codeAttempted: normalized, success: false });
-
-    if (error.message === "NOT_FOUND") {
-      return NextResponse.json({ error: "الكود غير صحيح" }, { status: 404 });
-    }
-    if (error.message === "ALREADY_USED") {
-      return NextResponse.json({ error: "هذا الكود مستخدم بالفعل" }, { status: 400 });
-    }
-    if (error.message === "EXPIRED") {
-      return NextResponse.json({ error: "الكود منتهي الصلاحية" }, { status: 400 });
-    }
+    const msg = error instanceof Error ? error.message : "";
+    if (msg === "NOT_FOUND") return NextResponse.json({ error: "الكود غير صحيح" }, { status: 404 });
+    if (msg === "ALREADY_USED") return NextResponse.json({ error: "هذا الكود مستخدم بالفعل" }, { status: 400 });
+    if (msg === "EXPIRED") return NextResponse.json({ error: "الكود منتهي الصلاحية" }, { status: 400 });
     console.error("[balance redemption] error:", error);
     return NextResponse.json({ error: "حدث خطأ داخلي" }, { status: 500 });
   }

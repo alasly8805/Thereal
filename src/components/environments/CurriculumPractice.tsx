@@ -542,7 +542,7 @@ export function CurriculumPractice() {
               className="flex-1 sm:flex-none min-h-10 sm:min-h-11 rounded-xl border border-sky-400/30 bg-sky-500/10 hover:bg-sky-500/20 px-3.5 py-2 text-xs sm:text-sm font-bold text-sky-200 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <span>💡</span>
-              <span>اسأل المساعد عن المفهوم</span>
+              <span>اسألي المساعد عن المفهوم</span>
             </button>
 
             {answer && (

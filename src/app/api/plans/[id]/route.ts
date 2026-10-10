@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getStudentSession } from "@/lib/auth";
 
+const ID_MAX_LEN = 100;
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+
+    // Guard against oversized IDs before DB work
+    if (!id || id.length > ID_MAX_LEN) {
+      return NextResponse.json({ error: "الخطة غير موجودة" }, { status: 404 });
+    }
+
     const session = await getStudentSession();
 
     const plan = await prisma.plan.findUnique({
