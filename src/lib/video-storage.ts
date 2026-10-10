@@ -129,6 +129,22 @@ export async function signedVideoUrl(filename: string, expiresAt: Date): Promise
   });
 }
 
+/**
+ * One CloudFront signature valid for every object under `<prefix>` (custom
+ * policy with a wildcard). Returns the URL base and the query string to append
+ * to each object name — an HLS lesson has ~1,000 segments and signing each one
+ * separately would cost seconds of CPU per playlist. Caller checks cloudFrontEnabled().
+ */
+export async function signedPrefixQuery(prefix: string, expiresAt: Date): Promise<{ base: string; query: string }> {
+  const { getSignedUrl } = await import("@aws-sdk/cloudfront-signer");
+  const base = `https://${CF_DOMAIN}/${prefix.replace(/^\/+/, "")}`;
+  const policy = JSON.stringify({
+    Statement: [{ Resource: `${base}*`, Condition: { DateLessThan: { "AWS:EpochTime": Math.floor(expiresAt.getTime() / 1000) } } }],
+  });
+  const signed = getSignedUrl({ url: `${base}*`, keyPairId: CF_KEY_PAIR_ID, privateKey: CF_PRIVATE_KEY, policy });
+  return { base, query: signed.slice(signed.indexOf("?")) };
+}
+
 // ── Background upload ────────────────────────────────────────────────────────
 const inflightUploads = new Map<string, Promise<boolean>>();
 

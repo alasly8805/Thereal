@@ -35,8 +35,13 @@ BUILD_HEAP=3072
 MIN_FREE_MB=2048
 PAGES=(/ /adminpanel /adminpanel/superadmin /adminpanel/assistant /adminpanel/teacher)
 
-cd "$(dirname "$0")/.."
+if [ -d "$APP_DIR" ]; then
+  cd "$APP_DIR"
+else
+  cd "$(dirname "$0")/.."
+fi
 unset NEXT_DIST_DIR   # pm2 --update-env must never pick up a staging dist dir
+unset TURBOPACK
 
 # ---- not the production box: plain build, original behaviour ----------------
 if [ "$(pwd -P)" != "$APP_DIR" ] || ! pm2 describe "$APP_NAME" >/dev/null 2>&1; then
@@ -163,7 +168,7 @@ kill "$SMOKE_PID" 2>/dev/null; wait "$SMOKE_PID" 2>/dev/null || true; SMOKE_PID=
 # ---- 4. swap and reload ------------------------------------------------------
 log "swapping builds and reloading $APP_NAME"
 rm -rf "$PREV"
-mv .next "$PREV"
+[ -d .next ] && mv .next "$PREV" || mkdir -p "$PREV"
 mv "$STAGE" .next
 reload_app
 

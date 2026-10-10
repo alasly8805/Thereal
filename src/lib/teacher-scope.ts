@@ -150,6 +150,7 @@ export function sectionAllowedForAssistant(
     "create-course": "createCourses",
     homework: "manageHomework",
     review: "gradeHomework",
+    "student-files": "gradeHomework",
     "quiz-results": "viewQuizResults",
     "in-video-responses": "viewQuizResults",
     "exam-dashboard": "viewQuizResults",

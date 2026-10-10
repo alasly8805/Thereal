@@ -26,12 +26,16 @@ export async function POST(req: NextRequest) {
 
     const latency = Date.now() - startTime;
 
+    const tokens = (response.telemetry?.inputTokens || 0) + (response.telemetry?.outputTokens || 0);
+    const content = response.formattedResponse?.renderedContent || response.formattedResponse?.rawContent || "";
+    if (!content) {
+      return NextResponse.json({ error: "لم يرجع المحرك أي إجابة" }, { status: 502 });
+    }
     return NextResponse.json({
-      response: response.formattedResponse?.renderedContent || response.formattedResponse?.rawContent || "تمت المعالجة بنجاح",
+      response: content,
       latency,
-      tokens: (response.telemetry?.inputTokens || 0) + (response.telemetry?.outputTokens || 0) || 300,
-      cost: 0.0003,
-      provider: response.telemetry?.provider || "DeepSeek",
+      tokens: tokens > 0 ? tokens : null,
+      provider: response.telemetry?.provider ?? null,
     });
   } catch (err) {
     console.error("AI Playground API error:", err);

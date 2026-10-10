@@ -78,7 +78,7 @@ export function HeroSection({ isLoggedIn, subtitle }: HeroSectionProps) {
   return (
     <MotionConfig reducedMotion="user">
       <section
-        className="relative overflow-hidden hero-bg min-h-[92vh] flex items-center justify-center pt-16 pb-24 md:pt-20 md:pb-32"
+        className="relative overflow-hidden hero-bg md:min-h-[86vh] flex items-center justify-center pt-14 pb-16 md:pt-20 md:pb-28"
         onPointerMove={spotlightEnabled ? trackSpotlight : undefined}
         onPointerEnter={spotlightEnabled ? wakeSpotlight : undefined}
         onPointerLeave={spotlightEnabled ? () => spotOpacity.set(0) : undefined}
@@ -113,8 +113,8 @@ export function HeroSection({ isLoggedIn, subtitle }: HeroSectionProps) {
             style={{ background: "var(--brand-soft)", border: "1px solid rgba(14,110,98,.3)", color: "var(--brand)" }}
           >
             <span className="relative flex w-2.5 h-2.5 shrink-0" aria-hidden>
-              <span className="motion-reduce:hidden animate-ping absolute inline-flex h-full w-full rounded-full opacity-40" style={{ background: "#10B981" }} />
-              <span className="relative inline-flex w-2.5 h-2.5 rounded-full" style={{ background: "#10B981" }} />
+              <span className="motion-reduce:hidden animate-ping absolute inline-flex h-full w-full rounded-full opacity-40" style={{ background: "var(--brand)" }} />
+              <span className="relative inline-flex w-2.5 h-2.5 rounded-full" style={{ background: "var(--brand)" }} />
             </span>
             🔥 أكثر من ١٬٠٠٠ طالب يتعلمون معنا
           </motion.div>
@@ -126,17 +126,7 @@ export function HeroSection({ isLoggedIn, subtitle }: HeroSectionProps) {
             style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}
           >
             كل ما تحتاجه{" "}
-            <span
-              className="hero-gradient-text"
-              style={{
-                backgroundImage: "linear-gradient(to left, #14B8A6, #10B981, #059669)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
-              للتفوّق
-            </span>
+            <span style={{ color: "var(--brand)" }}>للتفوّق</span>
             <br />
             <span>في </span>
             <span className="sr-only">جميع مشاريع البرمجة</span>
@@ -181,10 +171,11 @@ export function HeroSection({ isLoggedIn, subtitle }: HeroSectionProps) {
               <Link
                 href="/courses"
                 id="hero-cta-browse"
-                className="group relative px-8 py-4 font-bold rounded-full transition-shadow text-base flex items-center justify-center gap-2 overflow-hidden w-full sm:w-auto text-white hover:opacity-90"
+                className="group relative min-h-14 px-8 py-4 font-bold rounded-full transition-colors text-base flex items-center justify-center gap-2 overflow-hidden w-full sm:w-auto hover:bg-[var(--brand-strong)]"
                 style={{
-                  background: "linear-gradient(135deg, #10B981, #14B8A6)",
-                  boxShadow: "0 8px 32px -8px rgba(16, 185, 129, 0.4), 0 0 0 0 rgba(16, 185, 129, 0.15)",
+                  background: "var(--brand)",
+                  color: "var(--on-brand)",
+                  boxShadow: "0 8px 28px -10px var(--brand-shadow)",
                 }}
               >
                 <span className="relative z-10">تصفح الكورسات</span>

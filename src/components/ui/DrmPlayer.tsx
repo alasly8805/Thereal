@@ -76,6 +76,8 @@ export interface DrmPlayerProps {
   paused?: boolean;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  hideControls?: boolean;
+  maxAllowedSecond?: number | null;
   children?: React.ReactNode;
 }
 
@@ -315,6 +317,8 @@ export function DrmPlayer({
   paused,
   isFullscreen,
   onToggleFullscreen,
+  hideControls = false,
+  maxAllowedSecond = null,
   children,
 }: DrmPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -619,11 +623,19 @@ export function DrmPlayer({
     };
   }, []);
 
-  // Sync external paused prop
+  const prevPausedRef = useRef(paused);
+  // Sync external paused prop (pauses when question modal opens, resumes when answered)
   useEffect(() => {
-    if (paused && videoRef.current && !videoRef.current.paused) {
-      videoRef.current.pause();
+    const v = videoRef.current;
+    if (!v) return;
+    if (paused) {
+      if (!v.paused) v.pause();
+    } else if (prevPausedRef.current && !paused) {
+      if (v.paused && !v.ended) {
+        void v.play().catch(() => {});
+      }
     }
+    prevPausedRef.current = paused;
   }, [paused]);
 
   return (
@@ -639,6 +651,7 @@ export function DrmPlayer({
         playsInline
         className="w-full h-full object-contain bg-black cursor-pointer"
         onClick={(e) => {
+          if (paused) return;
           const v = e.currentTarget;
           if (v.paused || v.ended) void v.play().catch(() => {});
           else v.pause();
@@ -649,6 +662,14 @@ export function DrmPlayer({
         }}
         onPause={() => onPause?.()}
         onEnded={() => onEnded?.()}
+        onSeeking={(e) => {
+          const v = e.currentTarget;
+          if (!maxAllowedSecond) return;
+          if (v.currentTime > maxAllowedSecond + 1) { // +1 سماح
+            v.currentTime = maxAllowedSecond;
+            v.pause();
+          }
+        }}
         onTimeUpdate={(e) => onTimeUpdate?.((e.target as HTMLVideoElement).currentTime)}
         onLoadedMetadata={() => setIsLoading(false)}
       />
@@ -697,6 +718,8 @@ export function DrmPlayer({
           onPlaybackRateChange={setPlaybackRate}
           isFullscreen={isFullscreen}
           onToggleFullscreen={onToggleFullscreen}
+          hideControls={hideControls}
+          maxAllowedSecond={maxAllowedSecond}
         />
       )}
 

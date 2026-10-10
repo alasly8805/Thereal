@@ -5,6 +5,7 @@ import type { OverviewData } from "@/components/admin/superadmin/overview/types"
 import { persistOverviewSnapshot } from "@/lib/overview-snapshots";
 import { prisma } from "@/lib/prisma";
 import { getExpensesFromDb, getTeacherPercentagesFromDb } from "@/lib/money-control";
+import { bookingGrantsCourseAccess } from "@/lib/course-track";
 import { getPlanMonths } from "@/lib/subscription-terms";
 import { computeBookingIntelligence } from "@/lib/booking-intelligence";
 import {
@@ -149,7 +150,7 @@ export async function GET(req: NextRequest) {
     : { role: "teacher" as const, isDeleted: false, isDemo: false };
 
   try {
-    const [studentCreatedAts, totalTeachers, teachers, walletDeposits, expenses, percentages, manualLogs, balanceTxs, courseExclusions] = await Promise.all([
+    const [studentCreatedAts, totalTeachers, teachers, walletDeposits, expenses, percentages, manualLogs, balanceTxs, courseExclusions, courseTrackRows] = await Promise.all([
       // Real student accounts (not deleted, not QA tester) — used for the headline count and daily signups
       prisma.user.findMany({
         where: studentAudience,
@@ -221,6 +222,8 @@ export async function GET(req: NextRequest) {
               id: true,
               title: true,
               subject: true,
+              description: true,
+              deliveryMode: true,
               isPaid: true,
               price: true,
               discountPercent: true,
@@ -316,6 +319,11 @@ export async function GET(req: NextRequest) {
         where: { key: { startsWith: "course_excluded_" } },
         select: { key: true, value: true },
       }),
+
+      prisma.appSetting.findMany({
+        where: { key: { startsWith: "course_track_" } },
+        select: { key: true, value: true },
+      }),
     ]);
 
     const totalStudents = studentCreatedAts.length;
@@ -326,6 +334,9 @@ export async function GET(req: NextRequest) {
       (courseExclusions || [])
         .filter((e) => e.value === "true")
         .map((e) => e.key.replace("course_excluded_", ""))
+    );
+    const trackOverride = new Map(
+      (courseTrackRows || []).map((row) => [row.key.slice("course_track_".length), row.value])
     );
 
     // ── Live bookings (teacher subscriptions) — the headline "right now" metric ──
@@ -638,6 +649,7 @@ export async function GET(req: NextRequest) {
         const totalEnrolled = enrolledStudentIds.size;
 
         const isCourseActuallyPaid = Boolean(c.isPaid && c.price && c.price > 0);
+        let bookingOnlyCount = 0;
         let courseCalculatedRevenue = 0;
         let coursePaidStudentsCount = 0;
         let courseCoveredBySubCount = 0;
@@ -702,9 +714,31 @@ export async function GET(req: NextRequest) {
               });
             }
           }
+
+          const now = new Date();
+          for (const sub of paidSubs) {
+            if (sub.expiresAt && sub.expiresAt <= now) continue;
+            const sid = sub.student?.id;
+            if (!sid || sid === t.id || enrolledStudentIds.has(sid)) continue;
+            if (excludedSet.has(`${c.id}_${sid}`)) continue;
+            if (!bookingGrantsCourseAccess(c, sub.languageTrack, trackOverride.get(c.id), sub.planType)) continue;
+            bookingOnlyCount += 1;
+            coursePayments.push({
+              id: `${c.id}_${sid}_booking`,
+              studentId: sid,
+              studentName: sub.student?.name || sub.studentName || "طالب",
+              studentPhone: sub.student?.phone || sub.studentPhone || "—",
+              courseId: c.id,
+              courseTitle: c.title,
+              amount: 0,
+              coveredBySubscription: true,
+              source: "COVERED_BY_PACKAGE",
+              createdAt: sub.createdAt.toISOString(),
+            });
+          }
         }
 
-        const paidStudents = isCourseActuallyPaid ? (coursePaidStudentsCount + courseCoveredBySubCount) : 0;
+        const paidStudents = isCourseActuallyPaid ? (coursePaidStudentsCount + courseCoveredBySubCount + bookingOnlyCount) : 0;
         const freeStudents = !isCourseActuallyPaid ? totalEnrolled : 0;
 
         return {
@@ -720,10 +754,10 @@ export async function GET(req: NextRequest) {
           usedCodes,
           availableCodes,
           directEnrollments,
-          enrolledStudents: totalEnrolled,
+          enrolledStudents: totalEnrolled + bookingOnlyCount,
           paidStudents,
           coursePaidStudentsCount,
-          courseCoveredBySubCount,
+          courseCoveredBySubCount: courseCoveredBySubCount + bookingOnlyCount,
           freeStudents,
           revenue: courseCalculatedRevenue,
         };

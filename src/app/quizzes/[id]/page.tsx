@@ -7,6 +7,7 @@ import { Footer } from "@/components/ui/Footer";
 import { useToast } from "@/components/ui/Toast";
 import { EssayAIPanel, useEssayFeedback } from "@/components/student/EssayAIFeedback";
 import { clearLocalDraft, mergeDraftAnswers, readLocalDraft, writeLocalDraft } from "@/lib/quiz-attempt";
+import { WatermarkedText } from "@/components/content/WatermarkedText";
 
 type QuizQuestion = {
   id: string;
@@ -66,9 +67,40 @@ type QuizResult = {
   cooldownRemainingMs?: number;
   /** true when this is a revisit of a previously submitted attempt */
   isPrevious: boolean;
+  hideAnswersUntilEssayGraded?: boolean;
 };
 
 const optionLabels = ["A", "B", "C", "D"] as const;
+
+type LobbyTry = {
+  attemptNumber: number;
+  score: number | null;
+  totalQ: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  status: "submitted" | "paused" | "in_progress";
+};
+
+type QuizLobby = {
+  phase: "lobby";
+  canEnter: boolean;
+  canReview: boolean;
+  personalTimeOver: boolean;
+  teacherEnded: boolean;
+  allowRetake: boolean;
+  remainingSeconds: number;
+  timeLimitEnforced: boolean;
+  teacherEnd: { enableAutoClose: boolean; closeAt: string | null; extendedUntil: string | null };
+  quiz: { id: string; title: string; timeLimitMinutes: number; courseId: string; course: { title: string; subject: string } | null };
+  tries: LobbyTry[];
+};
+
+function formatWhen(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("ar-EG", { dateStyle: "medium", timeStyle: "short" });
+}
 
 export default function QuizPage() {
   const router = useRouter();
@@ -93,6 +125,9 @@ export default function QuizPage() {
   const [user, setUser] = useState<{ name: string; role: string } | null>(null);
   const [result, setResult] = useState<QuizResult | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [lobby, setLobby] = useState<QuizLobby | null>(null);
+  const [inExam, setInExam] = useState(false);
+  const [entering, setEntering] = useState(false);
   // AI essay feedback (only returns data when the course owner enabled it).
   const { state: essayAI } = useEssayFeedback(quizId, !!result && result.essayCount > 0);
   const essayAIByQuestion = useMemo(
@@ -144,6 +179,7 @@ export default function QuizPage() {
       allowRetake: data.allowRetake === true,
       cooldownRemainingMs: typeof data.cooldownRemainingMs === "number" ? data.cooldownRemainingMs : 0,
       isPrevious,
+      hideAnswersUntilEssayGraded: Boolean(data.hideAnswersUntilEssayGraded),
     };
   };
 
@@ -154,56 +190,128 @@ export default function QuizPage() {
       .catch(() => setUser(null));
   }, []);
 
-  useEffect(() => {
-    const loadQuiz = async () => {
-      try {
-        const res = await fetch(`/api/quizzes/${quizId}`);
-        const data = await res.json();
+  const applyExam = useCallback((data: Record<string, unknown>) => {
+    const serverDraft = (data.draftAnswers && typeof data.draftAnswers === "object")
+      ? (data.draftAnswers as Record<string, string>)
+      : {};
+    const localDraft = readLocalDraft(quizId);
+    setAnswers(mergeDraftAnswers(serverDraft, localDraft));
+    setQuiz(data.quiz as QuizPayload);
+    setTimeLimitEnforced(data.timeLimitEnforced === true);
+    if (data.startedAt) setStartedAt(new Date(data.startedAt as string).toISOString());
+    const minutes = Number((data.quiz as QuizPayload | undefined)?.timeLimitMinutes || data.timeLimitMinutes || 30);
+    setRemainingSeconds(typeof data.remainingSeconds === "number" ? data.remainingSeconds : minutes * 60);
+    setLobby(null);
+    setResult(null);
+    setSubmitted(false);
+    setInExam(true);
+  }, [quizId]);
 
-        if (!res.ok) {
-          if (res.status === 401) {
-            router.push("/login");
-            return;
-          }
-          throw new Error(data.error || "تعذر تحميل الاختبار");
-        }
-
-        if (data.alreadyCompleted) {
-          setSubmitted(true);
-          setAllowRetake(data.allowRetake === true || data.result?.allowRetake === true);
-          setCooldownRemainingMs(Number(data.cooldownRemainingMs ?? data.result?.cooldownRemainingMs ?? 0));
-          setResult(
-            toResult(
-              { ...data.result, quizTitle: data.quiz.title, courseId: data.quiz.courseId },
-              { quizTitle: data.quiz.title, courseId: data.quiz.courseId },
-              true
-            )
-          );
-          return;
-        }
-
-        const serverDraft = (data.draftAnswers && typeof data.draftAnswers === "object")
-          ? (data.draftAnswers as Record<string, string>)
-          : {};
-        const localDraft = readLocalDraft(quizId);
-        setAnswers(mergeDraftAnswers(serverDraft, localDraft));
-        setQuiz(data.quiz);
-        setTimeLimitEnforced(data.timeLimitEnforced === true);
-        if (data.startedAt) setStartedAt(new Date(data.startedAt).toISOString());
-        setRemainingSeconds(
-          typeof data.remainingSeconds === "number"
-            ? data.remainingSeconds
-            : (data.timeLimitMinutes || 30) * 60
-        );
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "تعذر تحميل الاختبار");
-      } finally {
-        setLoading(false);
+  const loadLobby = useCallback(async () => {
+    const res = await fetch(`/api/quizzes/${quizId}`);
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) {
+        router.push("/login");
+        return;
       }
-    };
+      throw new Error(data.error || "تعذر تحميل الاختبار");
+    }
+    if (data.phase === "lobby") {
+      setLobby(data as QuizLobby);
+      setQuiz(null);
+      setResult(null);
+      setSubmitted(false);
+      setInExam(false);
+      return;
+    }
+    if (data.alreadyCompleted) {
+      setSubmitted(true);
+      setInExam(false);
+      setAllowRetake(data.allowRetake === true || data.result?.allowRetake === true);
+      setCooldownRemainingMs(Number(data.cooldownRemainingMs ?? data.result?.cooldownRemainingMs ?? 0));
+      setResult(
+        toResult(
+          { ...data.result, quizTitle: data.quiz.title, courseId: data.quiz.courseId },
+          { quizTitle: data.quiz.title, courseId: data.quiz.courseId },
+          true
+        )
+      );
+      return;
+    }
+    applyExam(data);
+  }, [applyExam, quizId, router]);
 
-    if (quizId) loadQuiz();
-  }, [quizId, router]);
+  useEffect(() => {
+    if (!quizId) return;
+    setLoading(true);
+    loadLobby()
+      .catch((err) => setError(err instanceof Error ? err.message : "تعذر تحميل الاختبار"))
+      .finally(() => setLoading(false));
+  }, [quizId, loadLobby]);
+
+  useEffect(() => {
+    if (!inExam || !quizId) return;
+    const pause = () => {
+      fetch(`/api/quizzes/${quizId}/pause`, { method: "POST", keepalive: true, credentials: "include" }).catch(() => undefined);
+    };
+    const onHide = () => {
+      if (document.visibilityState !== "hidden") return;
+      pause();
+      setInExam(false);
+      setQuiz(null);
+      void loadLobby().catch(() => undefined);
+    };
+    window.addEventListener("pagehide", pause);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", pause);
+      document.removeEventListener("visibilitychange", onHide);
+      pause();
+    };
+  }, [inExam, loadLobby, quizId]);
+
+  const enterExam = useCallback(async () => {
+    if (!quizId || entering) return;
+    setEntering(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/quizzes/${quizId}/enter`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "تعذر دخول الاختبار");
+      applyExam(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "تعذر دخول الاختبار");
+    } finally {
+      setEntering(false);
+    }
+  }, [applyExam, entering, quizId]);
+
+  const viewResult = useCallback(async () => {
+    if (!quizId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/quizzes/${quizId}?review=1`);
+      const data = await res.json();
+      if (!res.ok || !data.alreadyCompleted) throw new Error(data.error || "تعذر عرض النتيجة");
+      setSubmitted(true);
+      setInExam(false);
+      setAllowRetake(data.allowRetake === true || data.result?.allowRetake === true);
+      setCooldownRemainingMs(Number(data.cooldownRemainingMs ?? data.result?.cooldownRemainingMs ?? 0));
+      setResult(
+        toResult(
+          { ...data.result, quizTitle: data.quiz.title, courseId: data.quiz.courseId },
+          { quizTitle: data.quiz.title, courseId: data.quiz.courseId },
+          true
+        )
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "تعذر عرض النتيجة");
+    } finally {
+      setLoading(false);
+    }
+  }, [quizId]);
 
   const submitQuiz = useCallback(
     async (isAutoSubmit = false) => {
@@ -222,9 +330,10 @@ export default function QuizPage() {
         if (!res.ok) {
           if (res.status === 409 && data.alreadySubmitted && data.result) {
             setSubmitted(true);
+            setInExam(false);
             // Reload the saved sheet so the student sees their answers, not just a number.
             try {
-              const again = await fetch(`/api/quizzes/${quiz.id}`);
+              const again = await fetch(`/api/quizzes/${quiz.id}?review=1`);
               const saved = await again.json();
               if (again.ok && saved.alreadyCompleted) {
                 setResult(
@@ -247,6 +356,7 @@ export default function QuizPage() {
         }
 
         setSubmitted(true);
+        setInExam(false);
         clearLocalDraft(quiz.id);
         const nextResult = toResult(data, { quizTitle: quiz.title, courseId: quiz.courseId }, false);
         setResult(nextResult);
@@ -273,7 +383,7 @@ export default function QuizPage() {
   const startNewAttempt = useCallback(async () => {
     if (!quizId || startingRetake) return;
     const confirmed = window.confirm(
-      "هتبدأ محاولة جديدة. ورقتك القديمة هتفضل ظاهرة هنا لحد ما تضغط الزر. بعد البدء هتظهر أسئلة فاضية، والتسليم الجديد هيستبدل الإجابات القديمة."
+      "هتبدأ محاولة جديدة من صفحة الانتظار. الساعة تبدأ لما تدخل الاختبار. ورقتك القديمة تفضل في قائمة المحاولات."
     );
     if (!confirmed) return;
     setStartingRetake(true);
@@ -282,27 +392,11 @@ export default function QuizPage() {
       const res = await fetch(`/api/quizzes/${quizId}/start-retake`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "تعذر بدء المحاولة الجديدة");
-      const again = await fetch(`/api/quizzes/${quizId}`);
-      const next = await again.json();
-      if (!again.ok) throw new Error(next.error || "تعذر تحميل الاختبار");
-      if (next.alreadyCompleted) {
-        throw new Error("ما زال الاختبار محسوبًا. حدّث الصفحة وحاول مرة أخرى.");
-      }
       clearLocalDraft(quizId);
-      setResult(null);
-      setSubmitted(false);
-      setAllowRetake(false);
       setAnswers({});
-      setQuiz(next.quiz);
-      setTimeLimitEnforced(next.timeLimitEnforced === true);
-      setStartedAt(next.startedAt ? new Date(next.startedAt).toISOString() : new Date().toISOString());
-      setRemainingSeconds(
-        typeof next.remainingSeconds === "number"
-          ? next.remainingSeconds
-          : (next.timeLimitMinutes || 30) * 60
-      );
       setDraftStatus("idle");
-      toastSuccess("تم فتح محاولة جديدة — إجاباتك هتتحفظ تلقائيًا أثناء الكتابة");
+      await loadLobby();
+      toastSuccess("المحاولة الجديدة جاهزة. ادخل من صفحة الانتظار لما تكون مستعد.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "تعذر بدء المحاولة الجديدة";
       setError(message);
@@ -310,7 +404,7 @@ export default function QuizPage() {
     } finally {
       setStartingRetake(false);
     }
-  }, [quizId, startingRetake, toastError, toastSuccess]);
+  }, [loadLobby, quizId, startingRetake, toastError, toastSuccess]);
 
   const persistEssayDraft = useCallback(
     (payload: Record<string, string>, keepalive = false) => {
@@ -397,7 +491,7 @@ export default function QuizPage() {
     allowRetake ? (
       <div className="mt-4 space-y-3">
         <p className="text-sm font-bold text-sky-700 dark:text-sky-300">
-          المعلم سمح لك بإعادة هذا الاختبار. ورقتك الحالية للقراءة فقط.
+          الامتحان اتفتح لك. ورقتك الحالية للقراءة فقط لحد ما تبدأ محاولة جديدة.
         </p>
         {cooldownRemainingMs > 0 && (
           <p className="text-xs text-slate-500">
@@ -443,6 +537,91 @@ export default function QuizPage() {
               العودة للكورسات
             </button>
           </div>
+        ) : lobby && !inExam && !result ? (
+          <section className="rounded-[2rem] border border-white/50 bg-white/85 p-6 shadow-xl backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/85 sm:p-8">
+            <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">صفحة الانتظار</p>
+            <h1 className="text-2xl font-black text-slate-900 dark:text-white sm:text-3xl">{lobby.quiz.title}</h1>
+            {lobby.quiz.course?.title && (
+              <p className="mt-1 text-sm text-slate-500">{lobby.quiz.course.title}</p>
+            )}
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-slate-950/40">
+                <p className="text-xs font-bold text-slate-500">وقت المعلم</p>
+                {lobby.teacherEnded ? (
+                  <p className="mt-1 text-sm font-black text-rose-600">انتهى وقت الامتحان</p>
+                ) : lobby.teacherEnd.enableAutoClose && lobby.teacherEnd.closeAt ? (
+                  <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">ينتهي {formatWhen(lobby.teacherEnd.closeAt)}</p>
+                ) : (
+                  <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">المعلم لم يحدد وقت إغلاق</p>
+                )}
+                {lobby.teacherEnd.extendedUntil && (
+                  <p className="mt-1 text-xs text-sky-600">مفتوح حتى {formatWhen(lobby.teacherEnd.extendedUntil)}</p>
+                )}
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-slate-950/40">
+                <p className="text-xs font-bold text-slate-500">ساعة الاختبار</p>
+                <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-100">
+                  {lobby.timeLimitEnforced ? `${lobby.quiz.timeLimitMinutes} دقيقة` : "مفتوحة حتى تسلّم بنفسك"}
+                </p>
+                {lobby.tries.some((tryRow) => tryRow.status === "paused") && (
+                  <p className="mt-1 text-xs font-bold text-amber-600">
+                    متوقف — المتبقي {formatTime(lobby.remainingSeconds)}. لما تدخل تكمل من نفس المكان.
+                  </p>
+                )}
+                {lobby.personalTimeOver && (
+                  <p className="mt-1 text-xs font-bold text-rose-600">انتهى وقت هذه المحاولة</p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <p className="mb-2 text-sm font-black text-slate-800 dark:text-slate-100">كل المحاولات</p>
+              {lobby.tries.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-white/10">
+                  لا توجد محاولة بعد. الساعة لا تبدأ إلا لما تدخل الاختبار.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {lobby.tries.map((tryRow) => (
+                    <li key={`${tryRow.status}-${tryRow.attemptNumber}`} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm dark:border-white/10">
+                      <span className="font-bold text-slate-800 dark:text-slate-100">محاولة {tryRow.attemptNumber}</span>
+                      <span className="text-slate-500">
+                        {tryRow.status === "submitted"
+                          ? `${Math.round(tryRow.score ?? 0)}% · ${formatWhen(tryRow.completedAt)}`
+                          : tryRow.status === "paused"
+                            ? "متوقفة"
+                            : "جارية"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-2">
+              {lobby.canEnter && (
+                <button
+                  type="button"
+                  onClick={() => void enterExam()}
+                  disabled={entering}
+                  className="rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-sky-500 disabled:opacity-60"
+                >
+                  {entering ? "جارٍ الدخول..." : lobby.tries.some((tryRow) => tryRow.status === "paused") ? "كمّل المحاولة" : "ادخل الاختبار"}
+                </button>
+              )}
+              {lobby.canReview && (
+                <button type="button" onClick={() => void viewResult()} className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-bold text-slate-700 dark:border-white/10 dark:text-slate-200">
+                  عرض النتيجة
+                </button>
+              )}
+              {lobby.allowRetake && (
+                <button type="button" onClick={() => void startNewAttempt()} disabled={startingRetake} className="rounded-xl border border-sky-300 px-5 py-2.5 text-sm font-bold text-sky-700 disabled:opacity-60">
+                  {startingRetake ? "جارٍ التجهيز..." : "بدء محاولة جديدة"}
+                </button>
+              )}
+            </div>
+          </section>
         ) : result ? (
           <div className="space-y-6">
             <section className="rounded-[2rem] border border-white/50 bg-white/85 p-6 shadow-xl backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/85 sm:p-8">
@@ -463,7 +642,9 @@ export default function QuizPage() {
                   </p>
                   {result.mcqCount > 0 && (
                     <p className="mt-2 text-sm font-bold text-slate-700 dark:text-slate-300">
-                      الأسئلة الاختيارية: {result.mcqCorrect} صحيحة من {result.mcqCount}
+                      {result.hideAnswersUntilEssayGraded
+                        ? "درجات وإجابات الأسئلة الاختيارية محجوبة حتى يكتمل تصحيح المقالي 🔒"
+                        : `الأسئلة الاختيارية: ${result.mcqCorrect} صحيحة من ${result.mcqCount}`}
                     </p>
                   )}
                   {result.completedAt && (
@@ -547,14 +728,19 @@ export default function QuizPage() {
                     : item.status === "DISAPPROVED"
                       ? "rejected"
                       : "pending";
-                const good = isEssay ? essayState === "approved" : item.isCorrect;
-                const pending = essayState === "pending";
-                const frame = pending
+                const isHiddenUntilGraded = Boolean(result.hideAnswersUntilEssayGraded && result.pendingEssays > 0);
+                const good = isHiddenUntilGraded ? false : (isEssay ? essayState === "approved" : item.isCorrect);
+                const pending = isHiddenUntilGraded || essayState === "pending";
+                const frame = isHiddenUntilGraded
+                  ? "border-slate-200 bg-white/70 dark:border-slate-800 dark:bg-slate-900/60"
+                  : pending
                   ? "border-violet-200 bg-violet-50/50 dark:border-violet-900/40 dark:bg-violet-950/20"
                   : good
                     ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
                     : "border-rose-200 bg-rose-50/50 dark:border-rose-900/40 dark:bg-rose-950/20";
-                const badge = pending
+                const badge = isHiddenUntilGraded
+                  ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  : pending
                   ? "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
                   : good
                     ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
@@ -566,9 +752,9 @@ export default function QuizPage() {
                       {index + 1}
                     </span>
                     <h3 className="flex-1 text-lg font-bold leading-relaxed text-slate-900 dark:text-white">
-                      {item.question}
+                      <WatermarkedText text={item.question} />
                     </h3>
-                    <span className="text-xl">{pending ? "⏳" : good ? "✓" : "✕"}</span>
+                    <span className="text-xl">{isHiddenUntilGraded ? "🔒" : pending ? "⏳" : good ? "✓" : "✕"}</span>
                   </div>
 
                   {item.imageUrl && (
@@ -620,13 +806,17 @@ export default function QuizPage() {
                     {optionLabels
                       .filter((label) => !!optionText(item, label).trim())
                       .map((label) => {
-                      const isCorrectOption = item.correctAnswer === label;
+                      const isCorrectOption = !isHiddenUntilGraded && item.correctAnswer === label;
                       const isYourAnswer = item.yourAnswer === label;
                       return (
                         <div
                           key={label}
                           className={`rounded-2xl border px-4 py-3 text-sm ${
-                            isCorrectOption
+                            isHiddenUntilGraded
+                              ? isYourAnswer
+                                ? "border-sky-500 bg-sky-500/10 text-sky-900 dark:text-sky-200 font-bold"
+                                : "border-slate-200 bg-white/80 text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 opacity-70"
+                              : isCorrectOption
                               ? "border-emerald-500 bg-emerald-100/80 text-emerald-900 dark:border-emerald-400 dark:bg-emerald-500/15 dark:text-emerald-100"
                               : isYourAnswer
                                 ? "border-rose-500 bg-rose-100/80 text-rose-900 dark:border-rose-400 dark:bg-rose-500/15 dark:text-rose-100"
@@ -634,11 +824,13 @@ export default function QuizPage() {
                           }`}
                         >
                           <div className="mb-1 text-xs font-bold opacity-70">{label}</div>
-                          <div>{optionText(item, label)}</div>
-                          {isYourAnswer && !isCorrectOption && (
-                            <div className="mt-1 text-xs font-medium text-rose-600 dark:text-rose-400">إجابتك</div>
+                          <div><WatermarkedText text={optionText(item, label)} /></div>
+                          {isYourAnswer && (
+                            <div className={`mt-1 text-xs font-medium ${isHiddenUntilGraded ? "text-sky-600 dark:text-sky-400" : isCorrectOption ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                              {isHiddenUntilGraded ? "إجابتك المسلمة" : isCorrectOption ? "الإجابة الصحيحة" : "إجابتك"}
+                            </div>
                           )}
-                          {isCorrectOption && (
+                          {!isHiddenUntilGraded && isCorrectOption && !isYourAnswer && (
                             <div className="mt-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                               الإجابة الصحيحة
                             </div>
@@ -662,7 +854,7 @@ export default function QuizPage() {
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="mb-2 text-sm text-slate-500 dark:text-slate-400">اختبار الكورس</p>
-                  <h1 className="text-2xl font-black text-slate-900 dark:text-white sm:text-3xl">{quiz.title}</h1>
+                  <h1 className="text-2xl font-black text-slate-900 dark:text-white sm:text-3xl"><WatermarkedText text={quiz.title} /></h1>
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
                     {quiz.course.title} • {quiz.course.subject}
                   </p>
@@ -709,7 +901,7 @@ export default function QuizPage() {
                         {index + 1}
                       </span>
                       <h2 className="text-lg font-bold leading-relaxed text-slate-900 dark:text-white">
-                        {question.question}
+                        <WatermarkedText text={question.question} />
                       </h2>
                     </div>
 
@@ -764,7 +956,7 @@ export default function QuizPage() {
                             }`}
                           >
                             <div className="mb-2 text-xs font-bold tracking-[0.2em] opacity-70">{label}</div>
-                            <div className="text-sm leading-7">{question[fieldName]}</div>
+                            <div className="text-sm leading-7"><WatermarkedText text={question[fieldName] || ""} /></div>
                           </button>
                         );
                       })}

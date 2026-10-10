@@ -89,10 +89,10 @@ const egp = (n: number) => `${(Math.round((n ?? 0) * 100) / 100).toLocaleString(
 
 /** Green when the student can reach everything they paid for, red when most of it does not exist yet. */
 function coverageColor(percent: number): string {
-  if (percent >= 100) return "#22c55e";
-  if (percent >= 60) return "#eab308";
-  if (percent >= 30) return "#f97316";
-  return "#ef4444";
+  if (percent >= 100) return "var(--ok)";
+  if (percent >= 60) return "var(--warn)";
+  if (percent >= 30) return "var(--orange)";
+  return "var(--danger)";
 }
 
 function CoverageBar({ percent }: { percent: number }) {
@@ -104,7 +104,7 @@ function CoverageBar({ percent }: { percent: number }) {
           style={{ width: `${Math.min(100, Math.max(0, percent))}%`, background: coverageColor(percent) }}
         />
       </div>
-      <span className="text-[11px] font-bold tabular-nums" style={{ color: coverageColor(percent) }}>
+      <span className="text-xs font-bold tabular-nums" style={{ color: coverageColor(percent) }}>
         {ar(percent)}٪
       </span>
     </div>
@@ -158,21 +158,21 @@ export default function BookingIntelligenceSection({
       label: "شهور تم تسليمها فعلياً",
       value: `${ar(t.monthsDelivered)} شهر`,
       sub: `إيراد مُستحق: ${egp(t.deliveredValue)}`,
-      color: "#22c55e",
+      color: "var(--ok)",
     },
     {
       icon: "⏳",
       label: "شهور لم تُنشر بعد",
       value: `${ar(t.monthsOutstanding)} شهر`,
       sub: `التزام محتوى على المنصة`,
-      color: "#f97316",
+      color: "var(--orange)",
     },
     {
       icon: "🧾",
       label: "أموال مقابل محتوى غير منشور",
       value: egp(t.outstandingValue),
       sub: `من إجمالي ${egp(t.revenue)} محصلة`,
-      color: "#ef4444",
+      color: "var(--danger)",
     },
     {
       icon: "📊",
@@ -196,7 +196,7 @@ export default function BookingIntelligenceSection({
               الفرق بينهما هو محتوى ما زال مستحقاً للطالب — والمبلغ المقابل له ليس إيراداً مكتسباً بعد.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
             <span className="px-2 py-1 rounded" style={{ background: "var(--surface-2)", color: "var(--ink-2)" }}>
               شهر = {ar(pm.monthly)}
             </span>
@@ -216,10 +216,10 @@ export default function BookingIntelligenceSection({
               <div className="text-lg font-black leading-none tabular-nums" style={{ color: c.color, fontFamily: "var(--font-head)" }}>
                 {c.value}
               </div>
-              <div className="text-[10px] mt-1 font-semibold truncate" title={c.sub} style={{ color: "var(--ink-3)" }}>
+              <div className="text-xs mt-1 font-semibold truncate" title={c.sub} style={{ color: "var(--ink-3)" }}>
                 {c.sub}
               </div>
-              <div className="text-[11px] mt-1 font-medium" style={{ color: "var(--ink-2)" }}>
+              <div className="text-xs mt-1 font-medium" style={{ color: "var(--ink-2)" }}>
                 {c.label}
               </div>
             </div>
@@ -227,7 +227,7 @@ export default function BookingIntelligenceSection({
         </div>
 
         <div className="mt-3">
-          <div className="flex items-center justify-between text-[11px] mb-1.5 font-semibold" style={{ color: "var(--ink-3)" }}>
+          <div className="flex items-center justify-between text-xs mb-1.5 font-semibold" style={{ color: "var(--ink-3)" }}>
             <span>
               تغطية المنهج: {ar(t.monthsDelivered)} من {ar(t.monthsBooked)} شهر مدفوع
             </span>
@@ -265,7 +265,7 @@ export default function BookingIntelligenceSection({
         {tab === "plans" && (
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10" style={{ background: "var(--surface-2)" }}>
-              <tr className="text-[11px]" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
+              <tr className="text-xs" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
                 <th className="px-3 py-2 text-right font-medium">الباقة</th>
                 <th className="px-3 py-2 text-center font-medium">شهور/حجز</th>
                 <th className="px-3 py-2 text-center font-medium">الحجوزات</th>
@@ -286,10 +286,10 @@ export default function BookingIntelligenceSection({
                   <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ink-2)" }}>{ar(p.bookings)}</td>
                   <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--gold-2)" }}>{egp(p.revenue)}</td>
                   <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ink-2)" }}>{ar(p.monthsBooked)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "#22c55e" }}>{ar(p.monthsDelivered)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "#f97316" }}>{ar(p.monthsOutstanding)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "#22c55e" }}>{egp(p.deliveredValue)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "#ef4444" }}>{egp(p.outstandingValue)}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--ok)" }}>{ar(p.monthsDelivered)}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--orange)" }}>{ar(p.monthsOutstanding)}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ok)" }}>{egp(p.deliveredValue)}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--danger)" }}>{egp(p.outstandingValue)}</td>
                   <td className="px-3 py-2.5"><CoverageBar percent={p.coveragePercent} /></td>
                 </tr>
               ))}
@@ -300,7 +300,7 @@ export default function BookingIntelligenceSection({
         {tab === "teachers" && (
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10" style={{ background: "var(--surface-2)" }}>
-              <tr className="text-[11px]" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
+              <tr className="text-xs" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
                 <th className="px-3 py-2 text-right font-medium">المعلم</th>
                 <th className="px-3 py-2 text-center font-medium">شهور منشورة</th>
                 <th className="px-3 py-2 text-center font-medium">الحجوزات</th>
@@ -317,10 +317,10 @@ export default function BookingIntelligenceSection({
                   <td className="px-3 py-2.5 font-bold" style={{ color: "var(--ink)" }}>{tr.teacherName}</td>
                   <td className="px-3 py-2.5 text-center">
                     <span
-                      className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold"
+                      className="inline-flex px-2 py-0.5 rounded text-xs font-bold"
                       style={{
                         background: tr.monthsPublished === 0 ? "rgba(239,68,68,.12)" : "rgba(99,102,241,.12)",
-                        color: tr.monthsPublished === 0 ? "#ef4444" : "var(--brand)",
+                        color: tr.monthsPublished === 0 ? "var(--danger)" : "var(--brand)",
                       }}
                     >
                       {ar(tr.monthsPublished)} شهر
@@ -329,8 +329,8 @@ export default function BookingIntelligenceSection({
                   <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ink-2)" }}>{ar(tr.bookings)}</td>
                   <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--gold-2)" }}>{egp(tr.revenue)}</td>
                   <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ink-2)" }}>{ar(tr.monthsBooked)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "#f97316" }}>{ar(tr.monthsOutstanding)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "#ef4444" }}>{egp(tr.outstandingValue)}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--orange)" }}>{ar(tr.monthsOutstanding)}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--danger)" }}>{egp(tr.outstandingValue)}</td>
                   <td className="px-3 py-2.5"><CoverageBar percent={tr.coveragePercent} /></td>
                 </tr>
               ))}
@@ -341,7 +341,7 @@ export default function BookingIntelligenceSection({
         {tab === "students" && (
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10" style={{ background: "var(--surface-2)" }}>
-              <tr className="text-[11px]" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
+              <tr className="text-xs" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
                 <th className="px-3 py-2 text-right font-medium">الطالب</th>
                 <th className="px-3 py-2 text-right font-medium">المعلم</th>
                 <th className="px-3 py-2 text-center font-medium">الباقة</th>
@@ -360,20 +360,20 @@ export default function BookingIntelligenceSection({
                   <td className="px-3 py-2.5 font-bold max-w-[180px] truncate" style={{ color: "var(--ink)" }} title={`${s.studentName} · ${s.studentPhone}`}>
                     {s.studentName}
                   </td>
-                  <td className="px-3 py-2.5 text-[11px] max-w-[130px] truncate" style={{ color: "var(--ink-2)" }}>{s.teacherName}</td>
+                  <td className="px-3 py-2.5 text-xs max-w-[130px] truncate" style={{ color: "var(--ink-2)" }}>{s.teacherName}</td>
                   <td className="px-3 py-2.5 text-center">
-                    <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold" style={{ background: "rgba(99,102,241,.12)", color: "var(--brand)" }}>
+                    <span className="inline-flex px-2 py-0.5 rounded text-xs font-bold" style={{ background: "rgba(99,102,241,.12)", color: "var(--brand)" }}>
                       {s.planLabel}
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--gold-2)" }}>{egp(s.amountPaid)}</td>
                   <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--ink-2)" }}>
-                    {ar(s.monthsBooked)} / <span style={{ color: "#22c55e" }}>{ar(s.monthsDelivered)}</span>
+                    {ar(s.monthsBooked)} / <span style={{ color: "var(--ok)" }}>{ar(s.monthsDelivered)}</span>
                   </td>
                   <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ink-3)" }}>{egp(s.valuePerMonth)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "#22c55e" }}>{egp(s.deliveredValue)}</td>
-                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "#ef4444" }}>{egp(s.outstandingValue)}</td>
-                  <td className="px-3 py-2.5 text-center text-[10px]" style={{ color: s.isExpired ? "#ef4444" : "var(--ink-3)" }}>
+                  <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ok)" }}>{egp(s.deliveredValue)}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: "var(--danger)" }}>{egp(s.outstandingValue)}</td>
+                  <td className="px-3 py-2.5 text-center text-xs" style={{ color: s.isExpired ? "var(--danger)" : "var(--ink-3)" }}>
                     {s.expiresAt ? new Date(s.expiresAt).toLocaleDateString("ar-EG", { year: "numeric", month: "short", day: "numeric" }) : "—"}
                   </td>
                   <td className="px-3 py-2.5"><CoverageBar percent={s.coveragePercent} /></td>
@@ -385,13 +385,13 @@ export default function BookingIntelligenceSection({
 
         {tab === "drift" && (
           <div>
-            <div className="px-4 py-2.5 text-[11px] leading-relaxed" style={{ background: "rgba(249,115,22,.07)", color: "var(--ink-2)" }}>
+            <div className="px-4 py-2.5 text-xs leading-relaxed" style={{ background: "rgba(249,115,22,.07)", color: "var(--ink-2)" }}>
               حجوزات مدة صلاحيتها المخزّنة لا تطابق طول الباقة المعتمد. نشأت قبل توحيد حساب الشهور،
               وتظهر هنا للمراجعة فقط — لم يتم تعديل أي صف تلقائياً.
             </div>
             <table className="w-full text-xs">
               <thead className="sticky top-0 z-10" style={{ background: "var(--surface-2)" }}>
-                <tr className="text-[11px]" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
+                <tr className="text-xs" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
                   <th className="px-3 py-2 text-right font-medium">الطالب</th>
                   <th className="px-3 py-2 text-right font-medium">المعلم</th>
                   <th className="px-3 py-2 text-center font-medium">الباقة</th>
@@ -405,14 +405,14 @@ export default function BookingIntelligenceSection({
                 {data.drift.map((d) => (
                   <tr key={d.subscriptionId} className="hover:bg-[var(--surface-2)]/50 transition-colors">
                     <td className="px-3 py-2.5 font-bold max-w-[190px] truncate" style={{ color: "var(--ink)" }} title={d.studentName}>{d.studentName}</td>
-                    <td className="px-3 py-2.5 text-[11px] max-w-[140px] truncate" style={{ color: "var(--ink-2)" }}>{d.teacherName}</td>
-                    <td className="px-3 py-2.5 text-center text-[11px]" style={{ color: "var(--ink-2)" }}>{d.planType}</td>
+                    <td className="px-3 py-2.5 text-xs max-w-[140px] truncate" style={{ color: "var(--ink-2)" }}>{d.teacherName}</td>
+                    <td className="px-3 py-2.5 text-center text-xs" style={{ color: "var(--ink-2)" }}>{d.planType}</td>
                     <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--gold-2)" }}>{egp(d.amountPaid)}</td>
                     <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ink-2)" }}>{ar(d.expectedMonths)} شهر</td>
                     <td className="px-3 py-2.5 text-center tabular-nums" style={{ color: "var(--ink-2)" }}>
                       {d.actualMonths === null ? "—" : `${d.actualMonths.toLocaleString("ar-EG")} شهر`}
                     </td>
-                    <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: d.driftMonths > 0 ? "#eab308" : "#ef4444" }}>
+                    <td className="px-3 py-2.5 text-center tabular-nums font-bold" style={{ color: d.driftMonths > 0 ? "var(--warn)" : "var(--danger)" }}>
                       {d.driftMonths > 0 ? "+" : ""}
                       {d.driftMonths.toLocaleString("ar-EG")}
                     </td>

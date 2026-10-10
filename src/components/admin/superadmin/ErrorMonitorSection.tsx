@@ -1,6 +1,23 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, Copy, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import {
+  Badge,
+  Button,
+  Chip,
+  EmptyState,
+  Modal,
+  Notice,
+  PageHeader,
+  Pagination,
+  Panel,
+  SkeletonRows,
+  fmtDateTime,
+  fmtNum,
+  readJson,
+  type Tone,
+} from "@/components/admin/ui/kit";
 
 interface ClientError {
   id: string;
@@ -14,11 +31,11 @@ interface ClientError {
   createdAt: string;
 }
 
-const TYPE_META: Record<string, { label: string; color: string; icon: string }> = {
-  error:             { label: "خطأ",            color: "bg-red-500/15 text-red-400 border-red-500/30",    icon: "🔴" },
-  warning:           { label: "تحذير",          color: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30", icon: "🟡" },
-  unhandled_promise: { label: "Promise غير معالج", color: "bg-orange-500/15 text-orange-400 border-orange-500/30", icon: "🟠" },
-  api_error:         { label: "خطأ API",        color: "bg-purple-500/15 text-purple-400 border-purple-500/30", icon: "🟣" },
+const TYPE_META: Record<string, { label: string; tone: Tone }> = {
+  error: { label: "خطأ", tone: "bad" },
+  warning: { label: "تحذير", tone: "warn" },
+  unhandled_promise: { label: "Promise غير معالج", tone: "warn" },
+  api_error: { label: "خطأ API", tone: "info" },
 };
 
 const TYPE_FILTERS = [
@@ -31,225 +48,207 @@ const TYPE_FILTERS = [
 
 const PAGE_SIZE = 50;
 
-function fmtDate(d: string) {
-  return new Date(d).toLocaleString("ar-EG", {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
-}
-
 export function ErrorMonitorSection() {
   const { success: toastSuccess, error: toastError } = useToast();
   const [errors, setErrors] = useState<ClientError[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [page, setPage] = useState(0);
   const [typeFilter, setTypeFilter] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
 
   const fetchErrors = useCallback(async (type: string, pageOffset: number) => {
     setLoading(true);
+    setLoadError("");
     const params = new URLSearchParams();
     if (type) params.set("type", type);
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String(pageOffset * PAGE_SIZE));
     try {
       const res = await fetch(`/api/admin/superadmin/errors?${params}`, { credentials: "include" });
-      const data = (await res.json()) as { errors?: ClientError[]; total?: number };
-      setErrors(data.errors ?? []);
-      setTotal(data.total ?? 0);
+      const data = await readJson<{ errors?: ClientError[]; total?: number; error?: string }>(res);
+      if (!res.ok) {
+        setLoadError(data?.error || "تعذر تحميل السجلات");
+        return;
+      }
+      setErrors(data?.errors ?? []);
+      setTotal(data?.total ?? 0);
+    } catch {
+      setLoadError("تعذر الاتصال بالخادم");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const load = async () => { await fetchErrors(typeFilter, page); };
-    void load();
+    void fetchErrors(typeFilter, page);
   }, [fetchErrors, typeFilter, page]);
 
-  const handleTypeFilter = (type: string) => {
-    setTypeFilter(type);
-    setPage(0);
-  };
-
   const handleClearAll = async () => {
-    if (!confirm("هل تريد مسح جميع السجلات نهائياً؟ لا يمكن التراجع.")) return;
     setClearing(true);
     try {
-      const res = await fetch("/api/admin/superadmin/errors", {
-        method: "DELETE",
-        credentials: "include",
-      });
-      const data = (await res.json()) as { cleared?: number; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "تعذر المسح");
-      toastSuccess(`تم مسح ${data.cleared ?? 0} سجل`);
+      const res = await fetch("/api/admin/superadmin/errors", { method: "DELETE", credentials: "include" });
+      const data = await readJson<{ cleared?: number; error?: string }>(res);
+      if (!res.ok) throw new Error(data?.error ?? "تعذر المسح");
+      toastSuccess(`تم مسح ${fmtNum(data?.cleared ?? 0)} سجل`);
       setErrors([]);
       setTotal(0);
       setPage(0);
+      setConfirmClear(false);
     } catch (e) {
-      toastError((e as Error).message);
+      toastError(e instanceof Error ? e.message : "تعذر المسح");
     } finally {
       setClearing(false);
+    }
+  };
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toastSuccess("نُسخ إلى الحافظة");
+    } catch {
+      toastError("تعذر النسخ");
     }
   };
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
-    <div dir="rtl">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-white">مراقبة الأخطاء والتحذيرات</h2>
-          <p className="text-sm text-gray-400 mt-1">
-            {loading ? "جارٍ التحميل..." : `${total} سجل`}
-          </p>
-        </div>
-        <div className="flex gap-2 items-center flex-wrap">
-          <button
-            onClick={() => void fetchErrors(typeFilter, page)}
-            disabled={loading}
-            className="px-3 py-2 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors disabled:opacity-50"
-          >
-            ↻ تحديث
-          </button>
-          {total > 0 && (
-            <button
-              onClick={() => void handleClearAll()}
-              disabled={clearing}
-              className="px-3 py-2 text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-600/30 rounded-lg transition-colors disabled:opacity-50"
-            >
-              {clearing ? "جارٍ المسح..." : "🗑️ مسح الكل"}
-            </button>
-          )}
-        </div>
-      </div>
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="الأخطاء"
+        description="أخطاء المتصفح والـ API التي واجهها المستخدمون. افتح أي سجل لرؤية الـ Stack والصفحة والجهاز."
+        actions={
+          <>
+            <Button onClick={() => void fetchErrors(typeFilter, page)} loading={loading} icon={<RefreshCw size={15} />}>
+              تحديث
+            </Button>
+            {total > 0 && (
+              <Button variant="danger" onClick={() => setConfirmClear(true)} icon={<Trash2 size={15} />}>
+                مسح الكل
+              </Button>
+            )}
+          </>
+        }
+      />
 
-      {/* Type filter tabs */}
-      <div className="flex gap-2 mb-4 flex-wrap">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="نوع السجل">
         {TYPE_FILTERS.map((f) => (
-          <button
+          <Chip
             key={f.value}
-            onClick={() => handleTypeFilter(f.value)}
-            className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
-              typeFilter === f.value
-                ? "bg-blue-600 border-blue-500 text-white"
-                : "bg-gray-800 border-gray-700 text-gray-400 hover:text-white"
-            }`}
+            pressed={typeFilter === f.value}
+            onClick={() => {
+              setTypeFilter(f.value);
+              setPage(0);
+            }}
           >
             {f.label}
-          </button>
+          </Chip>
         ))}
       </div>
 
-      {/* Table */}
-      <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-        {loading ? (
-          <div className="p-12 text-center text-gray-500">جارٍ التحميل...</div>
-        ) : errors.length === 0 ? (
-          <div className="p-12 text-center">
-            <div className="text-5xl mb-3">✅</div>
-            <p className="text-gray-400">لا توجد أخطاء مسجّلة</p>
+      <Panel
+        padded={false}
+        title={loading && errors.length === 0 ? "جارٍ التحميل" : `${fmtNum(total)} سجل`}
+        footer={
+          totalPages > 1 ? (
+            <Pagination page={page} pageCount={totalPages} total={total} unit="سجل" onPage={setPage} disabled={loading} />
+          ) : undefined
+        }
+      >
+        {loadError ? (
+          <div className="p-4">
+            <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchErrors(typeFilter, page)}>إعادة المحاولة</Button>} />
           </div>
+        ) : loading && errors.length === 0 ? (
+          <SkeletonRows rows={6} h={60} />
+        ) : errors.length === 0 ? (
+          <EmptyState icon={<ShieldCheck size={22} />} title="لا توجد أخطاء مسجّلة" text="كل شيء يعمل. أي خطأ جديد يواجهه مستخدم سيظهر هنا." />
         ) : (
-          <div className="divide-y divide-slate-200 dark:divide-gray-700">
+          <ul className="adm-list" style={{ opacity: loading ? 0.6 : 1 }}>
             {errors.map((err) => {
               const meta = TYPE_META[err.type] ?? TYPE_META.error;
               const isExpanded = expandedId === err.id;
               return (
-                <div key={err.id} className="p-4">
-                  {/* Main row */}
-                  <div
-                    className="flex items-start gap-3 cursor-pointer select-none"
+                <li key={err.id}>
+                  <button
+                    type="button"
                     onClick={() => setExpandedId(isExpanded ? null : err.id)}
+                    aria-expanded={isExpanded}
+                    className="adm-row w-full text-start cursor-pointer hover:bg-[var(--adm-hover)]"
+                    style={{ alignItems: "flex-start" }}
                   >
-                    <span className="text-base mt-0.5 shrink-0">{meta.icon}</span>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${meta.color}`}>
-                          {meta.label}
-                        </span>
-                        {err.userRole && (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-300">
-                            {err.userRole}
-                          </span>
-                        )}
-                        <span className="text-xs text-gray-500 mr-auto">
-                          {fmtDate(err.createdAt)}
-                        </span>
+                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                        <Badge tone={meta.tone} dot>{meta.label}</Badge>
+                        {err.userRole && <Badge>{err.userRole}</Badge>}
+                        <span className="text-xs adm-muted">{fmtDateTime(err.createdAt)}</span>
                       </div>
-                      <p className="text-white text-sm font-mono break-all leading-relaxed">
+                      <p className="adm-mono text-[13px] leading-relaxed break-all text-start" style={{ direction: "ltr" }}>
                         {err.message}
                       </p>
-                      {err.url && (
-                        <p className="text-gray-500 text-xs mt-1 truncate">{err.url}</p>
-                      )}
+                      {err.url && <p className="text-xs adm-muted mt-1 truncate" style={{ direction: "ltr", textAlign: "right" }}>{err.url}</p>}
                     </div>
-                    <span className="text-gray-500 text-xs shrink-0 mt-1">
-                      {isExpanded ? "▲" : "▼"}
-                    </span>
-                  </div>
+                    <ChevronDown
+                      size={16}
+                      className="shrink-0 mt-1"
+                      style={{ color: "var(--ink-3)", transform: isExpanded ? "rotate(180deg)" : undefined, transition: "transform 180ms" }}
+                      aria-hidden
+                    />
+                  </button>
 
-                  {/* Expanded detail */}
                   {isExpanded && (
-                    <div className="mt-3 space-y-3 pl-7">
+                    <div className="px-4 pb-4 sm:px-[18px] flex flex-col gap-3">
                       {err.stack && (
                         <div>
-                          <p className="text-xs text-gray-500 mb-1 font-semibold">Stack Trace</p>
-                          <pre className="text-xs text-gray-300 bg-gray-900/70 rounded-lg p-3 overflow-x-auto border border-gray-700 whitespace-pre-wrap break-all">
-                            {err.stack}
-                          </pre>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="adm-label">Stack trace</span>
+                            <Button size="sm" variant="ghost" icon={<Copy size={13} />} onClick={() => void copy(`${err.message}\n\n${err.stack}`)}>
+                              نسخ
+                            </Button>
+                          </div>
+                          <pre className="adm-code">{err.stack}</pre>
                         </div>
                       )}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <dl className="adm-kv text-xs">
                         {err.userId && (
-                          <div>
-                            <span className="text-gray-500">User ID: </span>
-                            <span className="text-gray-300 font-mono">{err.userId}</span>
-                          </div>
+                          <>
+                            <dt>المستخدم</dt>
+                            <dd className="adm-mono">{err.userId}</dd>
+                          </>
                         )}
                         {err.userAgent && (
-                          <div className="col-span-2">
-                            <span className="text-gray-500">User Agent: </span>
-                            <span className="text-gray-400 break-all">{err.userAgent}</span>
-                          </div>
+                          <>
+                            <dt>الجهاز</dt>
+                            <dd className="adm-mono" style={{ fontWeight: 400 }}>{err.userAgent}</dd>
+                          </>
                         )}
-                      </div>
+                      </dl>
                     </div>
                   )}
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
-      </div>
+      </Panel>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between">
-          <span className="text-xs text-gray-400">
-            صفحة {page + 1} من {totalPages}
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPage((p) => p - 1)}
-              disabled={page === 0 || loading}
-              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs rounded-lg"
-            >
-              السابق
-            </button>
-            <button
-              onClick={() => setPage((p) => p + 1)}
-              disabled={page >= totalPages - 1 || loading}
-              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs rounded-lg"
-            >
-              التالي
-            </button>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={confirmClear}
+        onClose={() => !clearing && setConfirmClear(false)}
+        size="sm"
+        title="مسح كل السجلات؟"
+        description={`سيُحذف ${fmtNum(total)} سجل نهائياً. لا يمكن التراجع.`}
+        footer={
+          <>
+            <Button onClick={() => setConfirmClear(false)} disabled={clearing}>إلغاء</Button>
+            <Button variant="danger-solid" onClick={() => void handleClearAll()} loading={clearing}>مسح الكل</Button>
+          </>
+        }
+      />
     </div>
   );
 }

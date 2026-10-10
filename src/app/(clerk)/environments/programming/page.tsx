@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { ProfileGuard } from "@/components/auth/ProfileGuard";
@@ -14,7 +15,15 @@ import {
   type Difficulty, type IQData, type GameResult,
 } from "@/lib/iq-system";
 import { GameFeedback } from "@/components/ai/GameFeedback";
-import { CurriculumPractice } from "@/components/environments/CurriculumPractice";
+
+// The curriculum bank holds ~1000 questions; only download it when that tab is opened.
+const CurriculumPractice = dynamic(
+  () => import("@/components/environments/CurriculumPractice").then((mod) => mod.CurriculumPractice),
+  {
+    ssr: false,
+    loading: () => <div className="h-80 sm:h-96 animate-pulse rounded-3xl bg-slate-800/70" aria-busy="true" />,
+  }
+);
 
 /* ─── Sandbox Languages ────────────────────────────────────────────────── */
 const LANGUAGES = [

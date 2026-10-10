@@ -27,11 +27,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const existing = await prisma.quizResult.findUnique({
     where: { studentId_quizId: { studentId: session.id, quizId } },
-    select: { id: true, completedAt: true, startedAt: true },
+    select: { id: true, completedAt: true, startedAt: true, pausedAt: true },
   });
 
   if (!existing || !existing.startedAt) {
     return NextResponse.json({ error: "لم يتم بدء الاختبار" }, { status: 400 });
+  }
+  if (existing.pausedAt) {
+    return NextResponse.json({ error: "الاختبار متوقف. ادخل مرة أخرى للمتابعة." }, { status: 409 });
   }
   if (existing.completedAt) {
     return NextResponse.json({ error: "الاختبار مكتمل ولا يمكن تعديل المسودة" }, { status: 409 });

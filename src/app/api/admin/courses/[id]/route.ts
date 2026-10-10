@@ -5,6 +5,7 @@ import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/te
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma";
 import { invalidateCourseCache } from "@/lib/cache";
+import { inferCoursePlacement } from "@/lib/teacher-terms";
 
 const MAX_TITLE_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 1000;
@@ -23,6 +24,8 @@ type CoursePatchInput = {
   sequentialAccess?: boolean;
   enableWatchedButton?: boolean;
   deliveryMode?: string;
+  bookingKind?: string | null;
+  bookingTerm?: number | null;
 };
 
 function validateCourseData(data: CoursePatchInput): { valid: boolean; error?: string } {
@@ -200,6 +203,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const mode = typeof data.deliveryMode === "string" ? data.deliveryMode.toUpperCase().trim() : "ONLINE";
       if (["ONLINE", "CENTER", "BOTH"].includes(mode)) {
         updateData.deliveryMode = mode;
+      }
+    }
+    if (data.bookingKind !== undefined) {
+      updateData.bookingKind = data.bookingKind ? data.bookingKind.trim() : null;
+      if (data.bookingTerm !== undefined) {
+        updateData.bookingTerm = data.bookingTerm;
+      } else if (updateData.bookingKind) {
+        const monthMatch = (updateData.bookingKind as string).match(/month:(\d+)/);
+        if (monthMatch) {
+          updateData.bookingTerm = Number(monthMatch[1]) >= 5 ? 2 : 1;
+        } else if ((updateData.bookingKind as string).includes(":2")) {
+          updateData.bookingTerm = 2;
+        } else {
+          updateData.bookingTerm = 1;
+        }
+      } else {
+        updateData.bookingTerm = null;
+      }
+    } else if (data.title !== undefined) {
+      if (!course.bookingKind) {
+        const inferred = inferCoursePlacement(data.title.trim());
+        if (inferred) {
+          updateData.bookingKind = inferred.bookingKind;
+          updateData.bookingTerm = inferred.bookingTerm;
+        }
       }
     }
 

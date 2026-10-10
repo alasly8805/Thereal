@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/components/ui/Toast";
+import { admConfirm } from "@/components/admin/ui/kit";
 
 export function PlanLinksTab({ planId }: { planId: string }) {
   const { success, error: toastError } = useToast();
@@ -78,7 +79,7 @@ export function PlanLinksTab({ planId }: { planId: string }) {
   };
 
   const handleDelete = async (linkId: string) => {
-    if (!confirm("هل أنت متأكد من حذف هذا الارتباط؟ سيتم إبقاء الفيديوهات الحالية ولكن لن يتم مزامنة الفيديوهات الجديدة.")) {
+    if (!(await admConfirm({ title: "حذف ارتباط الكورس؟", text: "تبقى الفيديوهات الحالية، لكن الفيديوهات الجديدة في الكورس لن تُضاف للخطة.", confirmLabel: "حذف الارتباط", danger: true }))) {
       return;
     }
 
@@ -169,7 +170,7 @@ export function PlanLinksTab({ planId }: { planId: string }) {
         <button
           type="submit"
           disabled={submitting}
-          className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm border-none cursor-pointer disabled:opacity-50"
+          className="px-5 py-2 bg-[var(--brand)] hover:bg-[var(--brand-strong)] text-[var(--on-brand)] font-bold rounded-xl text-sm border-none cursor-pointer disabled:opacity-50"
         >
           {submitting ? "جاري الحفظ والربط..." : "ربط الدورة الآن"}
         </button>
@@ -180,7 +181,7 @@ export function PlanLinksTab({ planId }: { planId: string }) {
         <h4 className="font-bold text-base text-[var(--ink)]">الدورات المرتبطة حالياً ({links.length})</h4>
         
         {links.length === 0 ? (
-          <div className="text-center py-10 text-gray-500 bg-gray-50/50 dark:bg-gray-900/10 rounded-xl border border-dashed" style={{ borderColor: "var(--border)" }}>
+          <div className="text-center py-10 text-[var(--ink-3)] bg-[var(--surface-2)] rounded-xl border border-dashed" style={{ borderColor: "var(--border)" }}>
             لا توجد دورات مرتبطة بهذه الخطة بعد.
           </div>
         ) : (
@@ -196,13 +197,13 @@ export function PlanLinksTab({ planId }: { planId: string }) {
               </thead>
               <tbody>
                 {links.map(link => (
-                  <tr key={link.id} className="border-b hover:bg-gray-50/40 dark:hover:bg-gray-800/10" style={{ borderColor: "var(--border)" }}>
+                  <tr key={link.id} className="border-b hover:bg-[var(--adm-hover)]" style={{ borderColor: "var(--border)" }}>
                     <td className="py-3 font-semibold text-[var(--ink)]">{link.course?.title}</td>
                     <td className="py-3 text-[var(--ink-2)]">{link.course?.teacher?.name || "—"}</td>
                     <td className="py-3 text-[var(--ink-2)] text-xs">
                       {link.folderId ? `مجلد: ${link.folderId}` : "كل المجلدات"}
                       {link.startIndex !== null || link.endIndex !== null ? (
-                        <span className="mr-2 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">
+                        <span className="mr-2 bg-[var(--surface-2)] px-1.5 py-0.5 rounded text-xs">
                           الفهارس: [{link.startIndex ?? 0} إلى {link.endIndex ?? "نهاية"}]
                         </span>
                       ) : null}
@@ -210,7 +211,7 @@ export function PlanLinksTab({ planId }: { planId: string }) {
                     <td className="py-3">
                       <button
                         onClick={() => handleDelete(link.id)}
-                        className="text-red-500 hover:text-red-700 bg-transparent border-none cursor-pointer font-bold text-xs"
+                        className="text-[var(--danger)] hover:text-[var(--danger)] bg-transparent border-none cursor-pointer font-bold text-xs"
                       >
                         حذف الارتباط
                       </button>

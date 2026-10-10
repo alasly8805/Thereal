@@ -11,7 +11,7 @@ const NO_STORE = { "Cache-Control": "no-store, max-age=0" };
 
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "غير مصحح" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
   if (!hasPermission(session.role, "view_teachers")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
         });
       } catch (e) {}
     }
-  if (!session) return NextResponse.json({ error: "غير مصحح" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
   if (session.demoTour) {
     return NextResponse.json({ ok: true, success: true });
   }

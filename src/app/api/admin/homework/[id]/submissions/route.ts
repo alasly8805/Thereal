@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 
 /** GET /api/admin/homework/[id]/submissions — teacher views all submissions for a homework */
@@ -11,6 +11,8 @@ export async function GET(
   const session = await getSession();
   if (!session || !isTeacherLike(session.role))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  if (!hasAssistantPermission(session, "gradeHomework"))
+    return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تصحيح الواجبات" }, { status: 403 });
 
   const { id: homeworkId } = await params;
 
@@ -22,7 +24,7 @@ export async function GET(
     return NextResponse.json({ error: "غير موجود" }, { status: 404 });
 
   const submissions = await prisma.homeworkSubmission.findMany({
-    where: { homeworkId },
+    where: { homeworkId, student: { accountMode: { not: "TESTER" } } },
     include: {
       student: { select: { id: true, name: true, email: true } },
       review: true,

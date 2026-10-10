@@ -11,6 +11,7 @@ import { extractYouTubeVideoId } from "@/lib/youtube";
 import {
   type VideoQualityOption,
   DEFAULT_QUALITY_OPTIONS,
+  nearestReadyQuality,
   readStoredQuality,
   storeQuality,
   connectionLooksSlow,
@@ -265,6 +266,11 @@ function IframeSecureEmbed({
  * quality menu appears and re-requests the same lesson with ?q=<height>; the
  * position is carried across the switch so it feels like changing quality
  * rather than restarting the lesson.
+ *
+ * Once a lesson has its AES-128 HLS package the server refuses students the
+ * MP4, so a Native lesson waits for the /qualities probe before loading
+ * anything and then plays the encrypted stream: hls.js where MSE exists,
+ * Safari's own HLS on iPhone. The quality menu then switches HLS levels.
  */
 function DirectVideoEmbed({
   embedUrl,
@@ -275,6 +281,9 @@ function DirectVideoEmbed({
   onError,
   isFullscreen,
   onToggleFullscreen,
+  paused = false,
+  hideControls = false,
+  maxAllowedSecond = null,
 }: {
   embedUrl: string;
   onPlay?: () => void;
@@ -284,9 +293,31 @@ function DirectVideoEmbed({
   onError?: () => void;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  paused?: boolean;
+  hideControls?: boolean;
+  maxAllowedSecond?: number | null;
 }) {
   const [playbackError, setPlaybackError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const prevPausedRef = useRef(paused);
+
+  // Sync external paused prop (pauses when question modal opens, resumes when answered)
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (paused) {
+      if (!v.paused) {
+        v.pause();
+      }
+    } else if (prevPausedRef.current && !paused) {
+      if (v.paused && !v.ended) {
+        void v.play().catch(() => {});
+      }
+    }
+    prevPausedRef.current = paused;
+  }, [paused]);
+
   // Playback speed — remembered per browser; re-applied after a quality swap
   // because changing `src` resets the element's playbackRate to 1.
   const [playbackRate, setPlaybackRate] = usePlaybackRate();
@@ -304,55 +335,159 @@ function DirectVideoEmbed({
   });
   // Position + play state to restore on the other side of a quality switch.
   const resumeRef = useRef<{ time: number; playing: boolean } | null>(null);
+  // Native lessons: undefined while probing, then the encrypted master
+  // playlist URL or null (plain MP4). Nothing loads until it is known.
+  const [hlsUrl, setHlsUrl] = useState<string | null | undefined>(isNativeStream ? undefined : null);
+  const hlsRef = useRef<import("hls.js").default | null>(null);
+  // HLS level index per height, for the quality menu.
+  const hlsLevelsRef = useRef<Map<number, number>>(new Map());
+  // Bumped by "retry": the error screen unmounts the <video>, so the stream must be rebuilt.
+  const [hlsAttempt, setHlsAttempt] = useState(0);
 
   const streamPath = isNativeStream ? embedUrl.split("?")[0] : "";
 
   useEffect(() => {
     if (!streamPath) {
       setQualities([]);
+      setHlsUrl(null);
       return;
     }
     setQualities(DEFAULT_QUALITY_OPTIONS);
+    setHlsUrl(undefined);
     let cancelled = false;
     fetch(`${streamPath}/qualities`, { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { qualities?: VideoQualityOption[] } | null) => {
+      .then((data: { qualities?: VideoQualityOption[]; hlsUrl?: string | null } | null) => {
         if (cancelled) return;
+        if (data?.hlsUrl) {
+          // Encrypted lesson: the HLS effect below owns qualities from here.
+          const token = new URL(embedUrl, window.location.origin).searchParams.get("token");
+          setHlsUrl(token ? `${data.hlsUrl}?token=${encodeURIComponent(token)}` : data.hlsUrl);
+          return;
+        }
+        setHlsUrl(null);
         const list =
           data?.qualities && data.qualities.length >= 2 ? data.qualities : DEFAULT_QUALITY_OPTIONS;
         setQualities(list);
 
+        // Only ever land on a tier that is built. The remembered choice stays
+        // in storage untouched, so it applies once that tier is ready.
+        const switchTo = (height: number | null) => {
+          setQuality((prev) => {
+            if (prev === height) return prev;
+            const v = videoRef.current;
+            resumeRef.current = v ? { time: v.currentTime, playing: !v.paused } : null;
+            return height;
+          });
+        };
         const stored = readStoredQuality();
-        if (stored !== undefined && list.some((o) => o.height === stored)) {
-          setQuality(stored);
+        if (stored !== undefined) {
+          switchTo(nearestReadyQuality(list, stored));
           return;
         }
         // Nobody who is struggling with the connection goes hunting for a
         // settings button, so start them low when the browser says the link is
         // weak. They can always raise it, and the choice is then remembered.
-        if (stored === undefined && connectionLooksSlow()) {
-          const lightest = list
-            .filter((o) => o.height !== null)
-            .sort((a, b) => (a.height as number) - (b.height as number))[0];
-          if (lightest) {
-            const v = videoRef.current;
-            resumeRef.current = v ? { time: v.currentTime, playing: !v.paused } : null;
-            setQuality(lightest.height);
-          }
+        if (connectionLooksSlow()) {
+          switchTo(nearestReadyQuality(list, 0));
         }
       })
       .catch(() => {
         // A player that cannot list qualities still offers the default ladder.
+        if (!cancelled) setHlsUrl(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [streamPath]);
+  }, [streamPath, embedUrl]);
 
+  // ── Encrypted HLS playback ──
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!hlsUrl || !v) return;
+    let destroyed = false;
+    let networkRetries = 0;
+
+    (async () => {
+      const Hls = (await import("hls.js")).default;
+      if (destroyed) return;
+      if (!Hls.isSupported()) {
+        // iPhone Safari: native HLS fetches the AES key itself (same origin,
+        // session cookie + token in the key URI). Levels are not selectable.
+        if (v.canPlayType("application/vnd.apple.mpegurl")) {
+          setQualities([DEFAULT_QUALITY_OPTIONS[0]]);
+          setQuality(null);
+          v.src = hlsUrl;
+        } else {
+          setPlaybackError(true);
+        }
+        return;
+      }
+
+      // Workers would need a blob: worker-src in the CSP; main thread is fine
+      // for one 720p stream.
+      const hls = new Hls({ enableWorker: false, maxBufferLength: 30 });
+      hlsRef.current = hls;
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        const byHeight = new Map<number, number>();
+        hls.levels.forEach((l, i) => {
+          if (l.height) byHeight.set(l.height, i);
+        });
+        hlsLevelsRef.current = byHeight;
+        const list: VideoQualityOption[] = [
+          DEFAULT_QUALITY_OPTIONS[0],
+          ...[...byHeight.keys()]
+            .sort((a, b) => a - b)
+            .map((h) => ({ height: h, label: `${h}p`, note: DEFAULT_QUALITY_OPTIONS.find((o) => o.height === h)?.note, ready: true })),
+        ];
+        setQualities(list);
+        const stored = readStoredQuality();
+        const wanted =
+          stored !== undefined ? nearestReadyQuality(list, stored) : connectionLooksSlow() ? nearestReadyQuality(list, 0) : null;
+        setQuality(wanted);
+        hls.currentLevel = wanted === null ? -1 : byHeight.get(wanted) ?? -1;
+      });
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRetries++ < 3) {
+          hls.startLoad();
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError();
+        } else {
+          hls.destroy();
+          hlsRef.current = null;
+          onError?.();
+          setPlaybackError(true);
+        }
+      });
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(v);
+    })();
+
+    return () => {
+      destroyed = true;
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+    };
+    // onError is a parent callback; re-creating the stream on its identity would restart playback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hlsUrl, hlsAttempt]);
+
+  // HLS (or still probing) → no src prop; hls.js / Safari attach the stream.
   const src =
-    quality === null ? embedUrl : `${embedUrl}${embedUrl.includes("?") ? "&" : "?"}q=${quality}`;
+    hlsUrl !== null
+      ? undefined
+      : quality === null
+        ? embedUrl
+        : `${embedUrl}${embedUrl.includes("?") ? "&" : "?"}q=${quality}`;
 
   const changeQuality = (height: number | null) => {
+    if (hlsRef.current) {
+      storeQuality(height);
+      setQuality(height);
+      hlsRef.current.currentLevel = height === null ? -1 : hlsLevelsRef.current.get(height) ?? -1;
+      return;
+    }
     const v = videoRef.current;
     resumeRef.current = v ? { time: v.currentTime, playing: !v.paused } : null;
     storeQuality(height);
@@ -395,7 +530,10 @@ function DirectVideoEmbed({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setPlaybackError(false)}
+            onClick={() => {
+              setPlaybackError(false);
+              setHlsAttempt((n) => n + 1);
+            }}
             className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all cursor-pointer border border-slate-700"
           >
             إعادة المحاولة
@@ -423,6 +561,7 @@ function DirectVideoEmbed({
         playsInline
         className="absolute inset-0 w-full h-full object-contain cursor-pointer"
         onClick={(e) => {
+          if (paused) return;
           const v = e.currentTarget;
           if (v.paused || v.ended) void v.play().catch(() => {});
           else v.pause();
@@ -432,6 +571,14 @@ function DirectVideoEmbed({
         onEnded={() => onEnded?.()}
         onError={handleVideoError}
         onLoadedMetadata={handleLoadedMetadata}
+        onSeeking={(e) => {
+          const v = e.currentTarget;
+          if (!maxAllowedSecond) return;
+          if (v.currentTime > maxAllowedSecond + 1) { // +1 سماح
+            v.currentTime = maxAllowedSecond;
+            v.pause();
+          }
+        }}
         onTimeUpdate={(e) => onProgress?.((e.target as HTMLVideoElement).currentTime)}
       />
       <VideoControlBar
@@ -443,6 +590,8 @@ function DirectVideoEmbed({
         onQualityChange={isNativeStream ? changeQuality : undefined}
         isFullscreen={isFullscreen}
         onToggleFullscreen={onToggleFullscreen}
+        hideControls={hideControls}
+        maxAllowedSecond={maxAllowedSecond}
       />
     </>
   );
@@ -472,7 +621,10 @@ export interface SecurePlayerProps {
   className?: string;
   paused?: boolean;
   noNativeSecurity?: boolean;
+  hideControls?: boolean;
+  maxAllowedSecond?: number | null;
   children?: React.ReactNode;
+  videoId?: string;
 }
 
 /**
@@ -494,12 +646,19 @@ export function SecurePlayer({
   className = "",
   paused = false,
   noNativeSecurity = false,
+  hideControls = false,
+  maxAllowedSecond = null,
   children,
+  videoId,
 }: SecurePlayerProps) {
   const driveFileId = extractDriveFileId(embedUrl);
-  const [useDriveDirect, setUseDriveDirect] = useState(noNativeSecurity);
+  const [useDriveDirect] = useState(noNativeSecurity);
   const [isBlackoutActive, setIsBlackoutActive] = useState(false);
   const { ref: wrapRef, isFs, cssFs, toggle: toggleFs } = useFullscreen<HTMLDivElement>();
+
+  const resolvedVideoId =
+    videoId ||
+    (embedUrl ? embedUrl.match(/\/videos\/(?:stream|hls)?\/([^/?#]+)/)?.[1] : undefined);
 
   // Visibility and security guards
   useEffect(() => {
@@ -624,6 +783,8 @@ export function SecurePlayer({
           onPause={onPause}
           onPlay={onPlay}
           paused={paused}
+          hideControls={hideControls}
+          maxAllowedSecond={maxAllowedSecond}
         >
           {children}
         </YouTubeSecurePlayer>
@@ -671,6 +832,8 @@ export function SecurePlayer({
             paused={paused}
             isFullscreen={isFs}
             onToggleFullscreen={toggleFs}
+            hideControls={hideControls}
+            maxAllowedSecond={maxAllowedSecond}
           />
         </div>
       ) : driveFileId && useDriveDirect ? (
@@ -690,6 +853,9 @@ export function SecurePlayer({
           onProgress={onProgress}
           isFullscreen={isFs}
           onToggleFullscreen={toggleFs}
+          paused={paused}
+          hideControls={hideControls}
+          maxAllowedSecond={maxAllowedSecond}
         />
       ) : (
         <IframeSecureEmbed
@@ -717,14 +883,14 @@ export function SecurePlayer({
       )}
 
       {/* ── Unified Forensic Watermark ── */}
-      <VideoWatermark label={watermark} />
+      <VideoWatermark label={watermark} videoId={resolvedVideoId} />
 
       {/* Interactive overlays & modals */}
       {children}
 
       {/* ── Fullscreen Toggle Button — iframe providers only; the HTML5 players
            (axinom / direct) carry it inside their own VideoControlBar. ── */}
-      {!hasOwnControlBar && (
+      {!hasOwnControlBar && !hideControls && (
       <button
         type="button"
         onClick={toggleFs}

@@ -61,6 +61,11 @@ export const CONFIG_DEFINITIONS: ConfigDef[] = [
   { key: "ai_essay_grading_enabled", type: "boolean", category: "ai", label: "السماح بتصحيح الأسئلة المقالية بالذكاء الاصطناعي (مفتاح إيقاف عام)", default: "true" },
   { key: "ai_essay_max_chars", type: "number", category: "ai", label: "أقصى طول لإجابة مقالية تُرسل للذكاء الاصطناعي (حرف)", default: "6000" },
   { key: "ai_essay_explain_daily_limit", type: "number", category: "ai", label: "أقصى عدد شروحات «لماذا حصلت على هذه الدرجة» لكل طالب يومياً", default: "20" },
+  // Daily practice (/practice). Questions are written at 02:00 Cairo; each
+  // batch is one AI call of up to 6 questions (Arabic + English versions). Off = no new questions, no new
+  // daily sets and no essay grading (cost kill switch).
+  { key: "practice_enabled", type: "boolean", category: "ai", label: "تفعيل التدريبات اليومية للطلاب (مفتاح إيقاف عام)", default: "true" },
+  { key: "practice_ai_batches_per_night", type: "number", category: "ai", label: "عدد دفعات توليد أسئلة التدريبات كل ليلة (6 أسئلة عربي + لغات لكل دفعة)", default: "40" },
 
   // ── Rate Limiting ──
   { key: "rate_max_requests_per_minute", type: "number", category: "rate", label: "أقصى عدد طلبات في الدقيقة لكل مستخدم", default: "120" },
@@ -101,6 +106,8 @@ const ENFORCED_KEYS = new Set([
   "ai_essay_grading_enabled",
   "ai_essay_max_chars",
   "ai_essay_explain_daily_limit",
+  "practice_enabled",
+  "practice_ai_batches_per_night",
   "trash_purge_days",
 ]);
 

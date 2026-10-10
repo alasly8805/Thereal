@@ -225,7 +225,7 @@ export default async function LeaderboardPage({
         </div>
 
         {/* Two-column grid / Full-width when streak */}
-        <div className={`grid grid-cols-1 ${activeTab === "points" ? "lg:grid-cols-3" : "lg:grid-cols-1 max-w-4xl mx-auto"} gap-6 items-start`}>
+        <div className={`grid grid-cols-1 min-w-0 ${activeTab === "points" ? "lg:grid-cols-3" : "lg:grid-cols-1 max-w-4xl mx-auto"} gap-6 items-start`}>
 
           {/* Leaderboard card */}
           <div className={activeTab === "points" ? "lg:col-span-2" : "w-full"} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
@@ -435,30 +435,29 @@ export default async function LeaderboardPage({
             )}
           </div>
 
-          {/* Right column — Points tab only */}
+          {/* Prizes — above the ranking on phones so the list is not pushed off screen */}
           {activeTab === "points" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+            <div className="min-w-0 order-first lg:order-none" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
 
-              {/* Prizes */}
-              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
-                <div className="flex items-center justify-between" style={{ padding: "18px 22px", borderBottom: "1px solid var(--border)" }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <div className="min-w-0" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 18, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+                <div className="flex items-center gap-3" style={{ padding: "18px 22px", borderBottom: "1px solid var(--border)" }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
                     <path d="M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>
                   </svg>
-                  <div className="text-right">
-                    <h3 style={{ fontFamily: "var(--font-head)", fontWeight: 800, fontSize: 18, margin: 0, color: "var(--ink)" }}>جوائز الـ 24 ساعة</h3>
-                    <p style={{ fontSize: 11, color: "var(--ink-3)", margin: "2px 0 0" }}>المراكز العشرة الأولى (تحديث يومي 3:00 ص)</p>
+                  <div className="min-w-0 text-right flex-1">
+                    <h3 style={{ fontFamily: "var(--font-head)", fontWeight: 800, fontSize: 18, margin: 0, color: "var(--ink)" }}>المراكز العشرة الأولى</h3>
+                    <p style={{ fontSize: 12, color: "var(--ink-3)", margin: "2px 0 0" }}>تحديث يومي 3:00 ص</p>
                   </div>
                 </div>
-                <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8, maxHeight: "560px", overflowY: "auto" }}>
+                <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
                   {dynamicPrizes.map((p) => {
                     const isTop3 = p.rank <= 3;
                     const isGold = p.highlight || isTop3;
                     const b = prizeBadge(p.rank, p.highlight);
                     const arabicRank = ["١","٢","٣","٤","٥","٦","٧","٨","٩","١٠"][p.rank - 1] ?? p.rank;
                     return (
-                      <div key={p.rank} className="flex items-center gap-[11px]"
-                        style={{ padding: "10px 12px", borderRadius: 12, border: `1px solid ${isGold ? "var(--gold-2)" : "var(--border)"}`, background: isGold ? "var(--gold-soft)" : "var(--surface-2)" }}>
+                      <div key={p.rank} className="flex items-start gap-3 min-w-0"
+                        style={{ padding: "12px", borderRadius: 12, border: `1px solid ${isGold ? "var(--gold-2)" : "var(--border)"}`, background: isGold ? "var(--gold-soft)" : "var(--surface-2)" }}>
                         <span className="flex items-center justify-center shrink-0 font-black text-[12.5px]"
                           style={{
                             width: 30, height: 30, borderRadius: 8,
@@ -469,11 +468,11 @@ export default async function LeaderboardPage({
                           {arabicRank}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5" style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)" }}>
-                            <span>{p.icon || "🎁"}</span>
-                            <span className="truncate">{p.title || p.rankLabel || `المركز ${p.rank}`}</span>
+                          <div className="flex items-center gap-1.5" style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)" }}>
+                            <span className="shrink-0">{p.icon || "🎁"}</span>
+                            <span>{p.title || p.rankLabel || `المركز ${p.rank}`}</span>
                           </div>
-                          <div className="truncate" style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 2 }}>{p.prize}</div>
+                          <div style={{ fontSize: 13, color: "var(--ink-2)", marginTop: 4, lineHeight: 1.6, whiteSpace: "normal", overflowWrap: "anywhere" }}>{p.prize}</div>
                         </div>
                       </div>
                     );

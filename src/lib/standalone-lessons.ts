@@ -43,8 +43,11 @@ export function isSeparatelySoldLecture(course: LessonCourseRef | null | undefin
   return /المحاضرة\s*(الثانية|الثالثة|الرابعة|الخامسة)/.test(title);
 }
 
-/** True when a teacher subscription (حجز) should grant access to this course. */
-export function teacherSubscriptionCoversCourse(course: LessonCourseRef | null | undefined): boolean {
-  if (!course) return true;
-  return !isTeaserLesson(course) && !isSeparatelySoldLecture(course);
+/**
+ * UNLINKED: Teacher subscriptions (حجوزات / باقات) DO NOT automatically grant access to courses.
+ * Course access is strictly explicit via CourseEnrollment or AccessCode.
+ */
+export function teacherSubscriptionCoversCourse(_course: LessonCourseRef | null | undefined): boolean {
+  return false;
 }
+

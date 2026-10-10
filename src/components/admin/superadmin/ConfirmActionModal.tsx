@@ -1,5 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, BellRing } from "lucide-react";
+import { Button, Field, Input, Modal } from "@/components/admin/ui/kit";
 
 interface ExtraField {
   label: string;
@@ -21,20 +23,29 @@ interface Props {
   onClose: () => void;
 }
 
-export function ConfirmActionModal({
-  title,
-  description,
-  actionLabel,
-  variant,
-  extraField,
-  onConfirm,
-  onClose,
-}: Props) {
+function storedActionPassword() {
+  try {
+    return sessionStorage.getItem("admin_action_password") || "";
+  } catch {
+    return "";
+  }
+}
+
+export function ConfirmActionModal({ title, description, actionLabel, variant, extraField, onConfirm, onClose }: Props) {
   const [password, setPassword] = useState("");
+  const [fromKey, setFromKey] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-
   const isDanger = variant === "danger";
+
+  // Pre-fill from the header "action key" when the owner saved it this session.
+  useEffect(() => {
+    const saved = storedActionPassword();
+    if (saved) {
+      setPassword(saved);
+      setFromKey(true);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,117 +59,82 @@ export function ConfirmActionModal({
       await onConfirm(password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ غير متوقع");
+      setFromKey(false);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose();
-  };
-
   return (
-    <div
-      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-60 flex items-center justify-center p-4"
-      onClick={handleBackdropClick}
-    >
-      <div
-        className="bg-gray-800 rounded-2xl border border-gray-700 w-full max-w-md"
-        dir="rtl"
-      >
-        {/* Header */}
-        <div
-          className={`flex items-center gap-3 p-5 border-b border-gray-700 rounded-t-2xl ${
-            isDanger ? "bg-red-950/40" : "bg-yellow-950/30"
-          }`}
+    <Modal
+      open
+      onClose={() => !submitting && onClose()}
+      size="sm"
+      title={title}
+      icon={
+        <span
+          className="w-9 h-9 rounded-[10px] grid place-items-center"
+          style={{
+            background: isDanger ? "var(--danger-soft)" : "var(--warn-soft)",
+            color: isDanger ? "var(--danger)" : "var(--warn)",
+          }}
         >
-          <span className="text-2xl">{isDanger ? "⚠️" : "🔔"}</span>
-          <h2
-            className={`font-bold text-lg ${
-              isDanger ? "text-red-400" : "text-yellow-400"
-            }`}
-          >
-            {title}
-          </h2>
-          <button
-            onClick={onClose}
-            className="mr-auto text-gray-400 hover:text-white text-2xl leading-none transition-colors"
-            aria-label="إغلاق"
-          >
-            ×
-          </button>
-        </div>
+          {isDanger ? <AlertTriangle size={18} /> : <BellRing size={18} />}
+        </span>
+      }
+      footer={
+        <>
+          <Button onClick={onClose} disabled={submitting}>
+            إلغاء
+          </Button>
+          <Button type="submit" form="adm-confirm-action" variant={isDanger ? "danger-solid" : "primary"} loading={submitting}>
+            {actionLabel}
+          </Button>
+        </>
+      }
+    >
+      <form id="adm-confirm-action" onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <p className="text-sm leading-relaxed" style={{ color: "var(--ink-2)" }}>
+          {description}
+        </p>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Description */}
-          <p className="text-gray-300 text-sm leading-relaxed">{description}</p>
-
-          {/* Optional extra field (e.g. new name) */}
-          {extraField && (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                {extraField.label}
-              </label>
-              <input
-                type={extraField.type ?? "text"}
-                required
-                value={extraField.value}
-                onChange={(e) => extraField.onChange(e.target.value)}
-                placeholder={extraField.placeholder}
-                className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-600 text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-          )}
-
-          {/* Admin password */}
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">
-              كلمة مرور المشرف للتأكيد
-            </label>
-            <input
-              type="password"
+        {extraField && (
+          <Field label={extraField.label} htmlFor="adm-confirm-extra">
+            <Input
+              id="adm-confirm-extra"
+              data-autofocus
+              type={extraField.type ?? "text"}
               required
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                if (error) setError("");
-              }}
-              placeholder="••••••••"
-              className={`w-full px-3 py-2 rounded-lg bg-gray-900 border text-white text-sm focus:outline-none focus:ring-1 ${
-                error
-                  ? "border-red-500 focus:ring-red-500"
-                  : "border-gray-600 focus:ring-blue-500"
-              }`}
+              value={extraField.value}
+              onChange={(e) => extraField.onChange(e.target.value)}
+              placeholder={extraField.placeholder}
             />
-            {error && (
-              <p className="mt-1 text-xs text-red-400">{error}</p>
-            )}
-          </div>
+          </Field>
+        )}
 
-          {/* Actions */}
-          <div className="flex gap-2 pt-1">
-            <button
-              type="submit"
-              disabled={submitting}
-              className={`flex-1 py-2 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors ${
-                isDanger
-                  ? "bg-red-600 hover:bg-red-700"
-                  : "bg-yellow-600 hover:bg-yellow-700"
-              }`}
-            >
-              {submitting ? "جارٍ التنفيذ..." : actionLabel}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="px-5 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-60 text-gray-300 text-sm rounded-xl transition-colors"
-            >
-              إلغاء
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <Field
+          label="كلمة مرور المشرف للتأكيد"
+          htmlFor="adm-confirm-pass"
+          error={error || undefined}
+          hint={fromKey ? "مُعبّأة من مفتاح الإجراءات المحفوظ في هذه الجلسة." : undefined}
+        >
+          <Input
+            id="adm-confirm-pass"
+            {...(extraField || fromKey ? {} : { "data-autofocus": true })}
+            type="password"
+            required
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setFromKey(false);
+              if (error) setError("");
+            }}
+            placeholder="••••••••"
+            autoComplete="current-password"
+            aria-invalid={error ? true : undefined}
+          />
+        </Field>
+      </form>
+    </Modal>
   );
 }

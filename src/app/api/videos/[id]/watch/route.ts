@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, getStudentSession } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveEmbedUrl } from "@/lib/video-provider";
 import { isScheduledLocked, unlockAtISO } from "@/lib/publish";
@@ -23,6 +23,11 @@ function withWatchToken(embedUrl: string, token: string): string {
   if (!embedUrl || !token) return embedUrl;
   if (!embedUrl.startsWith("/api/videos/stream/")) return embedUrl;
   return `${embedUrl}${embedUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+}
+
+function formatWatermark(name?: string | null, phone?: string | null): string {
+  const parts = [name?.trim(), phone?.trim()].filter(Boolean);
+  return parts.length > 0 ? parts.join(" • ") : "01012345678";
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -78,7 +83,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       provider: embedResult.provider,
       drm: embedResult.drm || null,
       resumeSeconds: 0,
-      watermark: session ? (session.phone || session.name || "01012345678") : "01012345678",
+      watermark: formatWatermark(session?.name, session?.phone),
       studentName: session ? (session.name || "طالب المنصة") : "طالب المنصة",
       studentPhone: session ? (session.phone || "01012345678") : "01012345678",
       video: {
@@ -210,7 +215,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     provider: embedResult.provider,
     drm: embedResult.drm || null,
     resumeSeconds: progress?.lastPositionSeconds ?? 0,
-    watermark: session.phone || session.name || "",
+    watermark: formatWatermark(session.name, session.phone),
     studentName: session.name || "",
     studentPhone: session.phone || "",
     video: {
@@ -366,7 +371,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       provider: embedResult.provider,
       drm: embedResult.drm || null,
       resumeSeconds: 0,
-      watermark: session.phone || session.name || "",
+      watermark: formatWatermark(session.name, session.phone),
       studentName: session.name || "",
       studentPhone: session.phone || "",
       video: {
@@ -492,7 +497,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       domain,
       apiKey: activeVdoSelection?.apiKey,
       playerId: activeVdoSelection?.playerId,
-      watermarkText: session.phone || session.name || "",
+      watermarkText: formatWatermark(session.name, session.phone),
     });
 
     const profile = await prisma.teacherProfile.findUnique({
@@ -563,7 +568,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       provider: embedResult.provider,
       drm: embedResult.drm || null,
       resumeSeconds: progress?.lastPositionSeconds ?? 0,
-      watermark: session.phone || session.name || "",
+      watermark: formatWatermark(session.name, session.phone),
       studentName: session.name || "",
       studentPhone: session.phone || "",
       video: {
@@ -702,7 +707,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       domain,
       apiKey: vdoAccountSelection?.apiKey,
       playerId: vdoAccountSelection?.playerId,
-      watermarkText: session.phone || session.name || "",
+      watermarkText: formatWatermark(session.name, session.phone),
     });
     const progress = await prisma.progress.findUnique({
       where: { studentId_videoId: { studentId: session.id, videoId } },
@@ -722,7 +727,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       provider: embedResult.provider,
       drm: embedResult.drm || null,
       resumeSeconds: progress?.lastPositionSeconds ?? 0,
-      watermark: session.phone || session.name || "",
+      watermark: formatWatermark(session.name, session.phone),
       studentName: session.name || "",
       studentPhone: session.phone || "",
       video: {

@@ -1,3 +1,5 @@
+import { EXTRA_CURRICULUM_QUESTIONS } from "./curriculum-programming-questions-extra";
+
 export type CurriculumChapter =
   | "community"
   | "cybersecurity"
@@ -41,7 +43,7 @@ export const CURRICULUM_CHAPTERS: Array<{
 const PART_ONE = "Programming-ArtificialIntelligence-Ar-EB-part1.pdf";
 const PART_TWO = "Programming-ArtificialIntelligence-Ar-EB-part2_260819_202159.pdf";
 
-export const CURRICULUM_QUESTIONS: readonly CurriculumQuestion[] = [
+const BASE_QUESTIONS: readonly CurriculumQuestion[] = [
   // ═══════════════════════════════════════════════════════════════════════════
   // الفصل 1: تكنولوجيا المعلومات والمجتمع (15 سؤالاً تغطي الدروس 1-1 إلى 1-4)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2071,6 +2073,11 @@ export const CURRICULUM_QUESTIONS: readonly CurriculumQuestion[] = [
     revisionPrompt: "راجعي مفهوم تعدد الوسائط في الدرس 7-3 (صـ 70).",
   },
 ];
+
+export const CURRICULUM_QUESTIONS: readonly CurriculumQuestion[] = [...BASE_QUESTIONS, ...EXTRA_CURRICULUM_QUESTIONS]
+  .map((question, index) => ({ question, index }))
+  .sort((a, b) => a.question.lessonNumber.localeCompare(b.question.lessonNumber) || a.index - b.index)
+  .map(({ question }) => question);
 
 export function getCurriculumQuestion(id: string): CurriculumQuestion | undefined {
   const exact = CURRICULUM_QUESTIONS.find((question) => question.id === id);

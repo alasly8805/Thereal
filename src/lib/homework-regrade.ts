@@ -19,6 +19,7 @@ import {
   ContentType,
   syncHomeworkContentProgress,
 } from "@/lib/content-access-engine";
+import { parsePresentation, questionsInAttempt } from "@/lib/attempt-presentation";
 
 export type HomeworkExamQuestion = {
   id: string;
@@ -112,6 +113,7 @@ export async function regradeCompletedHomeworkAttempts(
       homeworkId: homework.id,
       homeworkTitle: homework.title,
       questions: homework.questions,
+      questionId: job.questionId,
     });
     if (did) updated++;
   }
@@ -123,8 +125,9 @@ async function regradeOneHomeworkSubmission(params: {
   homeworkId: string;
   homeworkTitle: string;
   questions: HomeworkExamQuestion[];
+  questionId: string;
 }): Promise<boolean> {
-  const { submissionId, homeworkId, homeworkTitle, questions } = params;
+  const { submissionId, homeworkId, homeworkTitle, questions, questionId } = params;
 
   return prisma.$transaction(async (tx) => {
     await acquireAdvisoryLock(`homework-grade:${submissionId}`, tx);
@@ -134,12 +137,19 @@ async function regradeOneHomeworkSubmission(params: {
         id: true,
         studentId: true,
         answers: true,
+        presentation: true,
         completedAt: true,
       },
     });
     if (!submission?.answers) return false;
 
-    const graded = scoreHomeworkExam(questions, parseHomeworkAnswers(submission.answers));
+    // A bank draw is graded out of the questions this student was given.
+    const presentation = parsePresentation(submission.presentation);
+    if (presentation?.pool && !presentation.questionIds.includes(questionId)) return false;
+    const graded = scoreHomeworkExam(
+      questionsInAttempt(questions, presentation),
+      parseHomeworkAnswers(submission.answers)
+    );
     // Only score / totalQ / status. HomeworkReview.note and verdict stay as
     // the teacher wrote them — this job never deletes or rewrites the review.
     await tx.homeworkSubmission.update({

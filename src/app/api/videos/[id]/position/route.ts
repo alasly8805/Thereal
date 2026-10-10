@@ -42,9 +42,42 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     select: { lastPositionSeconds: true, watched: true },
   });
 
+  let resumeSeconds = progress?.lastPositionSeconds ?? 0;
+
+  // Check unanswered required questions
+  const requiredQuestions = await prisma.videoQuestion.findMany({
+    where: { videoId, isRequired: true },
+    orderBy: [{ timestamp: "asc" }, { triggerSecond: "asc" }],
+    select: {
+      id: true,
+      timestamp: true,
+      triggerSecond: true,
+      progress: {
+        where: { userId: session.id },
+        select: { attempts: true },
+      },
+    },
+  });
+
+  const firstUnanswered = requiredQuestions.find(
+    (q) => !q.progress.length || q.progress[0].attempts === 0
+  );
+
+  if (firstUnanswered) {
+    const qTime = typeof firstUnanswered.timestamp === "number" && firstUnanswered.timestamp > 0
+      ? firstUnanswered.timestamp
+      : (firstUnanswered.triggerSecond || 0);
+
+    if (resumeSeconds > qTime) {
+      // If student closed the page after the question, restart from right before the question
+      resumeSeconds = Math.max(0, qTime - 2);
+    }
+  }
+
   return NextResponse.json({
-    seconds: progress?.lastPositionSeconds ?? 0,
+    seconds: resumeSeconds,
     watched: progress?.watched ?? false,
+    unansweredQuestionTimestamp: firstUnanswered ? (firstUnanswered.timestamp || firstUnanswered.triggerSecond) : null,
   });
 }
 
@@ -167,7 +200,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ? seconds >= requiredSeconds || (progressRecord.watchedSecondsTotal || 0) >= requiredSeconds
         : seconds >= 30;
 
-    if (reachedThreshold) {
+    // Guard: Video CANNOT be marked complete until all required questions have been answered
+    const hasUnansweredRequired = await prisma.videoQuestion.findFirst({
+      where: {
+        videoId,
+        isRequired: true,
+        progress: {
+          none: {
+            userId: session.id,
+            attempts: { gt: 0 },
+          },
+        },
+      },
+    });
+
+    if (reachedThreshold && !hasUnansweredRequired) {
       const completedAt = new Date();
       await prisma.progress.update({
         where: { id: progressRecord.id },

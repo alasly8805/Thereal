@@ -1,5 +1,23 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { ClipboardList, RefreshCw, RotateCcw, Search } from "lucide-react";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Input,
+  Notice,
+  PageHeader,
+  Pagination,
+  Panel,
+  Select,
+  SkeletonRows,
+  fmtDateTime,
+  fmtNum,
+  readJson,
+  type Tone,
+} from "@/components/admin/ui/kit";
 
 interface LogEntry {
   id: string;
@@ -13,242 +31,238 @@ interface LogEntry {
   createdAt: string;
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  SUSPEND_STUDENT: "تعليق طالب",
-  UNSUSPEND_STUDENT: "رفع تعليق طالب",
-  SOFT_DELETE_STUDENT: "أرشفة طالب",
-  RESTORE_STUDENT: "استعادة طالب",
-  HARD_DELETE_STUDENT: "حذف نهائي لطالب",
-  EDIT_TEACHER_NAME: "تعديل اسم مدرس",
-  DELETE_TEACHER: "حذف مدرس",
-  RESET_TEACHER_PASSWORD: "إعادة تعيين كلمة مرور مدرس",
-  CREATE_TEACHER: "إنشاء حساب مدرس",
+const ACTIONS: Record<string, { label: string; tone: Tone }> = {
+  SUSPEND_STUDENT: { label: "إيقاف متعلم", tone: "warn" },
+  UNSUSPEND_STUDENT: { label: "إعادة تفعيل متعلم", tone: "ok" },
+  SOFT_DELETE_STUDENT: { label: "أرشفة متعلم", tone: "warn" },
+  RESTORE_STUDENT: { label: "استعادة متعلم", tone: "info" },
+  HARD_DELETE_STUDENT: { label: "حذف نهائي لمتعلم", tone: "bad" },
+  CREATE_TEACHER: { label: "إنشاء معلم", tone: "ok" },
+  EDIT_TEACHER_NAME: { label: "تعديل اسم معلم", tone: "info" },
+  RESET_TEACHER_PASSWORD: { label: "تغيير كلمة مرور معلم", tone: "warn" },
+  DELETE_TEACHER: { label: "حذف معلم", tone: "bad" },
+  HARD_DELETE_TEACHER: { label: "حذف نهائي لمعلم", tone: "bad" },
+  RESTORE_TEACHER: { label: "استعادة معلم", tone: "info" },
+  TOGGLE_TEACHER_PROMO_PROGRAM: { label: "تبديل إحالة معلم", tone: "neutral" },
+  CREATE_STAFF_ACCOUNT: { label: "إنشاء حساب موظف", tone: "ok" },
+  DELETE_STAFF_ACCOUNT: { label: "حذف حساب موظف", tone: "bad" },
+  SUSPEND_STAFF_ACCOUNT: { label: "إيقاف موظف", tone: "warn" },
+  UNSUSPEND_STAFF_ACCOUNT: { label: "إعادة تفعيل موظف", tone: "ok" },
+  RESET_STAFF_PASSWORD: { label: "تغيير كلمة مرور موظف", tone: "warn" },
+  BULK_DELETE_SCHEDULED: { label: "جدولة حذف جماعي", tone: "warn" },
+  BULK_DELETE_INSTANT: { label: "حذف جماعي فوري", tone: "bad" },
+  BULK_DELETE_CANCELLED: { label: "إلغاء حذف جماعي", tone: "info" },
+  BULK_DELETE_EXECUTED: { label: "تنفيذ حذف جماعي", tone: "bad" },
+  SUPERADMIN_MANUAL_ENROLL: { label: "تسجيل يدوي في كورس", tone: "info" },
+  MANUAL_TEACHER_SUBSCRIPTION: { label: "حجز معلم يدوي", tone: "info" },
+  SUPERADMIN_ACTION: { label: "طلب API للمشرف", tone: "neutral" },
 };
 
-const ACTION_COLORS: Record<string, string> = {
-  SUSPEND_STUDENT: "text-yellow-400 bg-yellow-500/10",
-  UNSUSPEND_STUDENT: "text-green-400 bg-green-500/10",
-  SOFT_DELETE_STUDENT: "text-orange-400 bg-orange-500/10",
-  RESTORE_STUDENT: "text-blue-400 bg-blue-500/10",
-  HARD_DELETE_STUDENT: "text-red-400 bg-red-500/10",
-  EDIT_TEACHER_NAME: "text-purple-400 bg-purple-500/10",
-  DELETE_TEACHER: "text-red-400 bg-red-500/10",
-  RESET_TEACHER_PASSWORD: "text-yellow-400 bg-yellow-500/10",
-  CREATE_TEACHER: "text-green-400 bg-green-500/10",
-};
+const PAGE_SIZE = 25;
 
-const PAGE_SIZE = 20;
+interface Filters {
+  action: string;
+  q: string;
+  from: string;
+  to: string;
+  includeRouteHits: boolean;
+}
 
-function fmtDate(d: string) {
-  return new Date(d).toLocaleString("ar-EG", {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+const EMPTY: Filters = { action: "", q: "", from: "", to: "", includeRouteHits: false };
+
+function describeMeta(raw: string | null) {
+  if (!raw) return null;
+  try {
+    const meta = JSON.parse(raw) as Record<string, unknown>;
+    const parts = Object.entries(meta)
+      .filter(([, v]) => v !== null && v !== undefined && v !== "")
+      .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+    return parts.length ? parts.join(" · ") : null;
+  } catch {
+    return raw;
+  }
 }
 
 export function ActivityLogsSection() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [page, setPage] = useState(0);
+  const [draft, setDraft] = useState<Filters>(EMPTY);
+  const [applied, setApplied] = useState<Filters>(EMPTY);
 
-  const [filterAction, setFilterAction] = useState("");
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterTo, setFilterTo] = useState("");
-
-  const fetchLogs = useCallback(async (action: string, from: string, to: string, pageOffset: number) => {
+  const fetchLogs = useCallback(async (f: Filters, pageOffset: number) => {
     setLoading(true);
+    setLoadError("");
     const params = new URLSearchParams();
-    if (action) params.set("action", action);
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
+    if (f.action) params.set("action", f.action);
+    if (f.q.trim()) params.set("q", f.q.trim());
+    if (f.from) params.set("from", f.from);
+    if (f.to) params.set("to", f.to);
+    if (f.includeRouteHits) params.set("includeRouteHits", "1");
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String(pageOffset * PAGE_SIZE));
-
     try {
-      const res = await fetch(`/api/admin/superadmin/logs?${params.toString()}`, {
-        credentials: "include",
-      });
-      const data = (await res.json()) as { logs?: LogEntry[]; total?: number };
-      if (res.ok) {
-        setLogs(data.logs ?? []);
-        setTotal(data.total ?? 0);
-        setSearched(true);
+      const res = await fetch(`/api/admin/superadmin/logs?${params.toString()}`, { credentials: "include" });
+      const data = await readJson<{ logs?: LogEntry[]; total?: number; error?: string }>(res);
+      if (!res.ok) {
+        setLoadError(data?.error || "تعذر تحميل السجلات");
+        return;
       }
+      setLogs(data?.logs ?? []);
+      setTotal(data?.total ?? 0);
+    } catch {
+      setLoadError("تعذر الاتصال بالخادم");
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    void fetchLogs(EMPTY, 0);
+  }, [fetchLogs]);
+
+  const apply = (f: Filters) => {
+    setApplied(f);
     setPage(0);
-    void fetchLogs(filterAction, filterFrom, filterTo, 0);
+    void fetchLogs(f, 0);
   };
 
-  const handlePageChange = (newPage: number) => {
-    setPage(newPage);
-    void fetchLogs(filterAction, filterFrom, filterTo, newPage);
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    apply(draft);
+  };
+
+  const reset = () => {
+    setDraft(EMPTY);
+    apply(EMPTY);
   };
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const filtered = JSON.stringify(applied) !== JSON.stringify(EMPTY);
 
   return (
-    <div dir="rtl" className="space-y-4">
-      {/* Filters */}
-      <form
-        onSubmit={handleSubmit}
-        className="bg-gray-800 rounded-2xl border border-gray-700 p-4"
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="سجل النشاط"
+        description="كل إجراء حساس نفّذه المشرفون والموظفون: الحذف والاستعادة وتغيير كلمات المرور والتسجيل اليدوي."
+        actions={
+          <Button onClick={() => void fetchLogs(applied, page)} loading={loading} icon={<RefreshCw size={15} />}>
+            تحديث
+          </Button>
+        }
+      />
+
+      <Panel>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}>
+            <Field label="بحث بالاسم" htmlFor="log-q">
+              <Input id="log-q" value={draft.q} onChange={(e) => setDraft({ ...draft, q: e.target.value })} placeholder="اسم المشرف أو الهدف" />
+            </Field>
+            <Field label="نوع الإجراء" htmlFor="log-action">
+              <Select id="log-action" value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value })}>
+                <option value="">كل الإجراءات</option>
+                {Object.entries(ACTIONS).map(([key, meta]) => (
+                  <option key={key} value={key}>
+                    {meta.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="من تاريخ" htmlFor="log-from">
+              <Input id="log-from" type="date" value={draft.from} max={draft.to || undefined} onChange={(e) => setDraft({ ...draft, from: e.target.value })} />
+            </Field>
+            <Field label="إلى تاريخ" htmlFor="log-to">
+              <Input id="log-to" type="date" value={draft.to} min={draft.from || undefined} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
+            </Field>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" variant="primary" icon={<Search size={15} />} loading={loading}>
+              عرض السجلات
+            </Button>
+            {filtered && (
+              <Button variant="ghost" onClick={reset} icon={<RotateCcw size={14} />}>
+                مسح الفلاتر
+              </Button>
+            )}
+            <label className="adm-check ms-auto">
+              <input
+                type="checkbox"
+                checked={draft.includeRouteHits}
+                onChange={(e) => setDraft({ ...draft, includeRouteHits: e.target.checked })}
+              />
+              إظهار طلبات الـ API العامة
+            </label>
+          </div>
+        </form>
+      </Panel>
+
+      <Panel
+        padded={false}
+        title={loading && logs.length === 0 ? "جارٍ التحميل" : `${fmtNum(total)} سجل`}
+        footer={
+          totalPages > 1 ? (
+            <Pagination page={page} pageCount={totalPages} total={total} unit="سجل" disabled={loading} onPage={(p) => { setPage(p); void fetchLogs(applied, p); }} />
+          ) : undefined
+        }
       >
-        <h3 className="text-white font-bold mb-4">سجلات النشاط</h3>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div className="flex-1 min-w-44">
-            <label className="block text-xs text-gray-400 mb-1">نوع الإجراء</label>
-            <select
-              value={filterAction}
-              onChange={(e) => setFilterAction(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-            >
-              <option value="">الكل</option>
-              {Object.entries(ACTION_LABELS).map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </select>
+        {loadError ? (
+          <div className="p-4">
+            <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchLogs(applied, page)}>إعادة المحاولة</Button>} />
           </div>
-
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">من تاريخ</label>
-            <input
-              type="date"
-              value={filterFrom}
-              onChange={(e) => setFilterFrom(e.target.value)}
-              className="px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-400 mb-1">إلى تاريخ</label>
-            <input
-              type="date"
-              value={filterTo}
-              onChange={(e) => setFilterTo(e.target.value)}
-              className="px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
-          >
-            {loading ? "جارٍ البحث..." : "عرض السجلات"}
-          </button>
-        </div>
-      </form>
-
-      {/* Results */}
-      {searched && (
-        <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
-            <p className="text-sm text-gray-400">
-              {total === 0 ? "لا توجد سجلات" : `${total} سجل`}
-            </p>
-          </div>
-
-          {logs.length === 0 ? (
-            <div className="p-10 text-center text-gray-500">
-              <div className="text-4xl mb-2">📋</div>
-              <p>لا توجد سجلات تطابق الفلتر</p>
-            </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-700 text-gray-500 text-xs">
-                      <th className="text-right px-4 py-3 font-medium">الوقت</th>
-                      <th className="text-right px-4 py-3 font-medium">المشرف</th>
-                      <th className="text-right px-4 py-3 font-medium">الإجراء</th>
-                      <th className="text-right px-4 py-3 font-medium">الهدف</th>
-                      <th className="text-right px-4 py-3 font-medium">تفاصيل</th>
+        ) : loading && logs.length === 0 ? (
+          <SkeletonRows rows={6} />
+        ) : logs.length === 0 ? (
+          <EmptyState
+            icon={<ClipboardList size={22} />}
+            title={filtered ? "لا توجد سجلات تطابق الفلتر" : "لا توجد سجلات بعد"}
+            text={filtered ? "وسّع نطاق التاريخ أو امسح الفلاتر." : "ستظهر هنا الإجراءات الحساسة فور تنفيذها."}
+          />
+        ) : (
+          <div className="adm-table-wrap" style={{ opacity: loading ? 0.6 : 1 }}>
+            <table className="adm-table" style={{ minWidth: 760 }}>
+              <thead>
+                <tr>
+                  <th>الوقت</th>
+                  <th>المشرف</th>
+                  <th>الإجراء</th>
+                  <th>الهدف</th>
+                  <th>تفاصيل</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => {
+                  const meta = ACTIONS[log.action];
+                  const details = describeMeta(log.metadata);
+                  return (
+                    <tr key={log.id}>
+                      <td className="whitespace-nowrap adm-muted text-[13px]">{fmtDateTime(log.createdAt)}</td>
+                      <td className="font-semibold">{log.adminName}</td>
+                      <td>
+                        <Badge tone={meta?.tone ?? "neutral"}>{meta?.label ?? log.action}</Badge>
+                      </td>
+                      <td>
+                        <p className="font-semibold">{log.targetName || "—"}</p>
+                        <p className="text-xs adm-muted">{log.targetType}</p>
+                      </td>
+                      <td className="text-xs adm-muted" style={{ maxWidth: 320 }}>
+                        {details ? (
+                          <span className="line-clamp-2" title={details}>
+                            {details}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-gray-700">
-                    {logs.map((log) => {
-                      const meta = log.metadata
-                        ? (() => { try { return JSON.parse(log.metadata) as Record<string, unknown>; } catch { return null; } })()
-                        : null;
-                      return (
-                        <tr key={log.id} className="hover:bg-gray-700/30 transition-colors">
-                          <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-xs">
-                            {fmtDate(log.createdAt)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <p className="text-white text-xs font-medium">{log.adminName}</p>
-                            <p className="text-gray-500 text-xs font-mono">{log.adminId.slice(0, 8)}…</p>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`text-xs font-semibold px-2 py-1 rounded-full ${
-                                ACTION_COLORS[log.action] ?? "text-gray-400 bg-gray-700"
-                              }`}
-                            >
-                              {ACTION_LABELS[log.action] ?? log.action}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <p className="text-white text-xs">{log.targetName}</p>
-                            <p className="text-gray-500 text-xs">{log.targetType}</p>
-                          </td>
-                          <td className="px-4 py-3 text-gray-400 text-xs max-w-48 truncate">
-                            {meta
-                              ? Object.entries(meta)
-                                  .map(([k, v]) => `${k}: ${String(v)}`)
-                                  .join(" · ")
-                              : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {totalPages > 1 && (
-                <div className="px-4 py-3 border-t border-gray-700 flex items-center justify-between">
-                  <p className="text-xs text-gray-500">
-                    صفحة {page + 1} من {totalPages}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handlePageChange(page - 1)}
-                      disabled={page === 0}
-                      className="px-3 py-1.5 text-xs bg-gray-700 disabled:opacity-40 hover:bg-gray-600 text-white rounded-lg transition-colors"
-                    >
-                      السابق
-                    </button>
-                    <button
-                      onClick={() => handlePageChange(page + 1)}
-                      disabled={page >= totalPages - 1}
-                      className="px-3 py-1.5 text-xs bg-gray-700 disabled:opacity-40 hover:bg-gray-600 text-white rounded-lg transition-colors"
-                    >
-                      التالي
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {!searched && !loading && (
-        <div className="bg-gray-800 rounded-2xl border border-gray-700 p-10 text-center text-gray-500">
-          <div className="text-4xl mb-2">📋</div>
-          <p>اضغط &quot;عرض السجلات&quot; لتحميل سجلات النشاط</p>
-        </div>
-      )}
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }

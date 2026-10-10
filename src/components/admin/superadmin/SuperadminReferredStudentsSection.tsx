@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Copy, RefreshCw, Share2 } from "lucide-react";
+import { useToast } from "@/components/ui/Toast";
+import { Button, EmptyState, IconButton, Notice, PageHeader, Panel, SkeletonRows, Stat, fmtMoney, fmtNum, readJson } from "@/components/admin/ui/kit";
 
 interface TeacherSummary {
   teacherId: string;
@@ -14,107 +17,106 @@ interface TeacherSummary {
 }
 
 export function SuperadminReferredStudentsSection() {
+  const { success, error: toastError } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [teachers, setTeachers] = useState<TeacherSummary[]>([]);
   const [platformTotal, setPlatformTotal] = useState(0);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const res = await fetch("/api/admin/superadmin/referred-students", { credentials: "include" });
-        const data = await res.json();
-        if (res.ok && Array.isArray(data.teachers)) {
-          setTeachers(data.teachers);
-          setPlatformTotal(data.platformTotalAmount || 0);
-        }
-      } catch (err) {
-        console.error("Failed to load superadmin referred-students data:", err);
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const res = await fetch("/api/admin/superadmin/referred-students", { credentials: "include" });
+      const data = await readJson<{ teachers?: TeacherSummary[]; platformTotalAmount?: number; error?: string }>(res);
+      if (!res.ok || !Array.isArray(data?.teachers)) {
+        setLoadError(data?.error || "تعذر تحميل بيانات الإحالات");
+        return;
       }
+      setTeachers([...data.teachers].sort((a, b) => b.totalAmount - a.totalAmount));
+      setPlatformTotal(data.platformTotalAmount || 0);
+    } catch {
+      setLoadError("تعذر الاتصال بالخادم");
+    } finally {
+      setLoading(false);
     }
-    void loadData();
   }, []);
 
-  if (loading) {
-    return (
-      <div dir="rtl" className="p-8 text-center text-sm font-bold text-[var(--ink-3)] animate-pulse">
-        جارٍ تحميل نظرة عامة على برامج الإحالة للمعلمين...
-      </div>
-    );
-  }
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const totalStudents = teachers.reduce((s, t) => s + t.referredStudentsCount, 0);
+  const totalSales = teachers.reduce((s, t) => s + t.attributionsCount, 0);
+
+  const copy = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      success(`نُسخ ${code}`);
+    } catch {
+      toastError("تعذر النسخ");
+    }
+  };
 
   return (
-    <div dir="rtl" className="space-y-6">
-      {/* Top Banner KPI */}
-      <div className="rounded-2xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="font-black text-lg mb-1" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
-              برامج إحالة المعلمين (Referred Students)
-            </h2>
-            <p className="text-xs" style={{ color: "var(--ink-2)" }}>
-              متابعة شاملة لجميع المعلمين المفعل لديهم برنامج الإحالة وإجمالي الإيرادات الناتجة عن أكوادهم.
-            </p>
-          </div>
-          <div className="bg-[var(--surface-2)] p-4 rounded-xl text-center shrink-0 border border-[var(--border)]">
-            <div className="text-xs font-bold text-[var(--ink-3)] mb-0.5">إجمالي الإيرادات العامة</div>
-            <div className="text-2xl font-black text-[var(--brand)] font-mono">
-              {platformTotal.toLocaleString("ar-EG")} ج.م
-            </div>
-          </div>
-        </div>
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="إحالات المعلمين"
+        description="المعلمون المفعّل لهم برنامج الإحالة، وكم طالباً ومبيعة جاءت من أكوادهم. فعّل البرنامج لأي معلم من قسم «المعلمون»."
+        actions={<Button onClick={() => void load()} loading={loading} icon={<RefreshCw size={15} />}>تحديث</Button>}
+      />
+
+      {loadError && <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void load()}>إعادة المحاولة</Button>} />}
+
+      <div className="adm-stats">
+        <Stat label="إجمالي إيرادات الإحالات" value={fmtMoney(platformTotal)} tone="brand" />
+        <Stat label="معلمون مشاركون" value={fmtNum(teachers.length)} />
+        <Stat label="طلاب محالون" value={fmtNum(totalStudents)} tone="gold" />
+        <Stat label="مبيعات" value={fmtNum(totalSales)} />
       </div>
 
-      {/* Teachers Overview Table */}
-      <div className="rounded-2xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-        <div className="p-4" style={{ borderBottom: "1px solid var(--border)" }}>
-          <h3 className="font-black text-base" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
-            المعلمون المشاركون في البرنامج ({teachers.length})
-          </h3>
-        </div>
-
-        {teachers.length === 0 ? (
-          <div className="p-8 text-center text-sm" style={{ color: "var(--ink-3)" }}>
-            لا يوجد معلمون مفعل لديهم برنامج الإحالة حالياً. يمكنك تفعيل البرنامج من جدول المعلمين.
-          </div>
+      <Panel padded={false} title="المعلمون المشاركون" icon={<Share2 size={16} />}>
+        {loading && teachers.length === 0 ? (
+          <SkeletonRows rows={4} />
+        ) : teachers.length === 0 ? (
+          <EmptyState icon={<Share2 size={22} />} title="لا يوجد معلمون في برنامج الإحالة" text="فعّل البرنامج لمعلم من قسم «المعلمون» ليحصل على كود إحالة." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-right">
+          <div className="adm-table-wrap">
+            <table className="adm-table" style={{ minWidth: 620 }}>
               <thead>
-                <tr className="text-xs" style={{ borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>
-                  <th className="px-4 py-3 font-medium">اسم المعلم</th>
-                  <th className="px-4 py-3 font-medium">كود الخصم</th>
-                  <th className="px-4 py-3 font-medium">الطلاب المحالون</th>
-                  <th className="px-4 py-3 font-medium">عدد المبيعات</th>
-                  <th className="px-4 py-3 font-medium text-left">إجمالي المبالغ</th>
+                <tr>
+                  <th>المعلم</th>
+                  <th>كود الإحالة</th>
+                  <th className="is-num">طلاب محالون</th>
+                  <th className="is-num">مبيعات</th>
+                  <th className="is-num">الإيراد</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--border)]">
+              <tbody>
                 {teachers.map((t) => (
-                  <tr key={t.teacherId} className="hover:bg-[var(--surface-2)] transition-colors">
-                    <td className="px-4 py-3 font-bold" style={{ color: "var(--ink)" }}>
-                      {t.teacherName}
+                  <tr key={t.teacherId}>
+                    <td>
+                      <p className="font-bold">{t.teacherName}</p>
+                      <p className="text-xs adm-muted adm-mono">{t.teacherEmail}</p>
                     </td>
-                    <td className="px-4 py-3 text-xs font-mono" style={{ color: "var(--brand)" }}>
-                      {t.promoCode}
+                    <td>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="adm-mono font-bold" style={{ color: "var(--brand)" }}>{t.promoCode}</span>
+                        <IconButton label="نسخ الكود" size="sm" onClick={() => void copy(t.promoCode)}>
+                          <Copy size={14} />
+                        </IconButton>
+                      </span>
                     </td>
-                    <td className="px-4 py-3 text-xs font-bold" style={{ color: "var(--gold-2)" }}>
-                      {t.referredStudentsCount} طالب
-                    </td>
-                    <td className="px-4 py-3 text-xs font-mono" style={{ color: "var(--ink-2)" }}>
-                      {t.attributionsCount} عملية
-                    </td>
-                    <td className="px-4 py-3 font-black text-left font-mono" style={{ color: "var(--brand)" }}>
-                      {t.totalAmount.toLocaleString("ar-EG")} ج.م
-                    </td>
+                    <td className="is-num font-semibold">{fmtNum(t.referredStudentsCount)}</td>
+                    <td className="is-num">{fmtNum(t.attributionsCount)}</td>
+                    <td className="is-num font-bold" style={{ color: "var(--brand)" }}>{fmtMoney(t.totalAmount)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }

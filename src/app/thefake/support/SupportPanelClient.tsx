@@ -2016,7 +2016,7 @@ function ReopenClosedContentSection({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      say("ok", "تم فتح المحتوى بعد الإغلاق");
+      say("ok", "تمت إعادة الفتح. من سلّم يقدر يبدأ محاولة جديدة لحد الوقت المحدد");
       setReason("");
       setPicked(null);
       void loadExtensions();
@@ -2049,8 +2049,8 @@ function ReopenClosedContentSection({
       <SectionHead
         icon="⏱️"
         tint={C.roseSoft}
-        title="فتح بعد الإغلاق"
-        hint="يعيد فتح اختبار أو واجب بعد close_at لطالب واحد أو لكل الطلاب حتى الوقت المحدد"
+        title="إعادة فتح الامتحان"
+        hint="فتح بعد الإغلاق لطالب أو لكل الطلاب حتى وقت تحدده. من سلّم يشوف درجته ويقدر يبدأ محاولة جديدة"
       />
 
       {(closedQuizzes.length > 0 || closedHomework.length > 0) && (
@@ -2082,7 +2082,7 @@ function ReopenClosedContentSection({
                     setPicked({ id: q.id, title: q.title, subtitle: "اختبار", type: "QUIZ" });
                   }}
                 >
-                  فتح بعد الإغلاق
+                  إعادة فتح
                 </button>
               </li>
             ))}
@@ -2109,7 +2109,7 @@ function ReopenClosedContentSection({
                     setPicked({ id: h.id, title: h.title, subtitle: "واجب", type: "HOMEWORK" });
                   }}
                 >
-                  فتح بعد الإغلاق
+                  إعادة فتح
                 </button>
               </li>
             ))}
@@ -2261,7 +2261,7 @@ function ReopenClosedContentSection({
         className={`${btn} mt-3`}
         style={btnPrimary}
       >
-        {busy ? "..." : "فتح بعد الإغلاق"}
+        {busy ? "..." : "إعادة فتح"}
       </button>
 
       {extensions.length > 0 && (

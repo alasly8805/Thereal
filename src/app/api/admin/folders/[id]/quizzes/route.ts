@@ -15,7 +15,7 @@ import { appendFolderContent } from "@/lib/folder-content-order";
 
 // Validation constants
 const MIN_QUESTIONS = 1;
-const MAX_QUESTIONS = 50;
+const MAX_QUESTIONS = 200;
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 4;
 const MAX_QUESTION_LENGTH = 500;
@@ -103,6 +103,7 @@ function validateQuizData(title: string, questions: any[]): { valid: boolean; er
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const { id: folderId } = await params;
     const session = await getSession();
 
     if (session && session.role === "superadmin") {
@@ -124,8 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية تعديل الكورسات" }, { status: 403 });
     }
 
-    const { id: folderId } = await params;
-    const { title, questions, timeLimitMinutes, closeAt, enableAutoClose } = await req.json();
+    const { title, questions, timeLimitMinutes, closeAt, enableAutoClose, hideAnswersUntilEssayGraded } = await req.json();
 
     // Validate quiz data
     const validation = validateQuizData(title, questions);
@@ -165,32 +165,54 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         timeLimitMinutes: normalizedLimit,
         closeAt: closeSchedule.closeAt,
         enableAutoClose: closeSchedule.enableAutoClose,
+        hideAnswersUntilEssayGraded: Boolean(hideAnswersUntilEssayGraded),
         questions: {
           create: questions.map(
             (
               q: {
                 question: string;
                 questionType?: string;
+                type?: string;
                 imageUrl?: string;
                 optionA?: string;
                 optionB?: string;
                 optionC?: string;
                 optionD?: string;
+                options?: string[];
                 correctAnswer?: string;
+                correctIndex?: number;
+                explanation?: string;
+                modelNumber?: number;
               },
               i: number
-            ) => ({
-              question: q.question.trim(),
-              questionType: q.questionType === "essay" ? "essay" : "mcq",
-              imageUrl: q.imageUrl?.trim() || null,
-              optionA: q.questionType === "essay" ? "" : (q.optionA?.trim() || ""),
-              optionB: q.questionType === "essay" ? "" : (q.optionB?.trim() || ""),
-              optionC: q.questionType === "essay" ? "" : (q.optionC?.trim() || ""),
-              optionD: q.questionType === "essay" ? "" : (q.optionD?.trim() || ""),
-              correctAnswer: q.questionType === "essay" ? "A" : (q.correctAnswer || "A"),
-              degree: parseDegree((q as { degree?: unknown }).degree),
-              order: i,
-            })
+            ) => {
+              const isEssay = q.questionType === "essay" || q.type === "ESSAY" || q.type === "essay";
+              const optA = isEssay ? "" : (q.optionA?.trim() || (Array.isArray(q.options) ? q.options[0]?.trim() : "") || "");
+              const optB = isEssay ? "" : (q.optionB?.trim() || (Array.isArray(q.options) ? q.options[1]?.trim() : "") || "");
+              const optC = isEssay ? "" : (q.optionC?.trim() || (Array.isArray(q.options) ? q.options[2]?.trim() : "") || "");
+              const optD = isEssay ? "" : (q.optionD?.trim() || (Array.isArray(q.options) ? q.options[3]?.trim() : "") || "");
+              const optionsArr = Array.isArray(q.options) ? q.options : [optA, optB, optC, optD].filter(Boolean);
+              const corrAns = isEssay ? "A" : (q.correctAnswer || (typeof q.correctIndex === "number" ? ["A", "B", "C", "D"][q.correctIndex] : "A"));
+              const corrIdx = typeof q.correctIndex === "number" ? q.correctIndex : ["A", "B", "C", "D"].indexOf(corrAns);
+
+              return {
+                question: q.question.trim(),
+                questionType: isEssay ? "essay" : "mcq",
+                type: isEssay ? "ESSAY" : "MCQ",
+                imageUrl: q.imageUrl?.trim() || null,
+                optionA: optA,
+                optionB: optB,
+                optionC: optC,
+                optionD: optD,
+                options: optionsArr,
+                correctAnswer: corrAns,
+                correctIndex: corrIdx >= 0 ? corrIdx : 0,
+                explanation: q.explanation || null,
+                degree: parseDegree((q as { degree?: unknown }).degree),
+                modelNumber: Number(q.modelNumber) || 1,
+                order: i,
+              };
+            }
           ),
         },
       },
@@ -229,6 +251,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     quizId?: string;
     closeAt?: string | null;
     enableAutoClose?: boolean;
+    hideAnswersUntilEssayGraded?: boolean;
   };
   if (!body.quizId) return NextResponse.json({ error: "quizId مطلوب" }, { status: 400 });
 
@@ -251,6 +274,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     data: {
       closeAt: closeSchedule.closeAt,
       enableAutoClose: closeSchedule.enableAutoClose,
+      ...(body.hideAnswersUntilEssayGraded !== undefined ? { hideAnswersUntilEssayGraded: Boolean(body.hideAnswersUntilEssayGraded) } : {}),
     },
   });
 

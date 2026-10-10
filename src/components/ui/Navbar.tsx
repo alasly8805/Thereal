@@ -36,6 +36,8 @@ const NAV_LINKS = [
   { href: "/environments", label: "بيئات" },
 ];
 
+const PRACTICE_LINK = { href: "/practice", label: "التدريبات", highlight: true };
+
 const NOTIF_ICON: Record<string, string> = {
   payment_success:  "🎉",
   course_enrollment:"🎓",
@@ -260,12 +262,15 @@ export function Navbar({ user: propUser }: NavbarProps) {
     searchResults.videos.length > 0
   );
 
+  const isStudent = user?.role === "student";
   const navLinks = useMemo(() => {
-    if (isCenterMode) {
-      return NAV_LINKS.filter((l) => l.href !== "/plans");
-    }
-    return NAV_LINKS;
-  }, [isCenterMode]);
+    const links: { href: string; label: string; highlight?: boolean }[] = isCenterMode
+      ? NAV_LINKS.filter((l) => l.href !== "/plans")
+      : [...NAV_LINKS];
+    // Daily practice sits in the middle of the bar, students only.
+    if (isStudent) links.splice(Math.ceil(links.length / 2), 0, PRACTICE_LINK);
+    return links;
+  }, [isCenterMode, isStudent]);
 
   return (
     <>
@@ -284,7 +289,15 @@ export function Navbar({ user: propUser }: NavbarProps) {
 
         {/* Desktop nav */}
         <nav className="hidden lg:flex items-center gap-1 justify-self-center" role="navigation">
-          {navLinks.map((link) => (
+          {navLinks.map((link) => link.highlight ? (
+            <Link key={link.href} href={link.href} aria-current={isActive(link.href) ? "page" : undefined}
+              className="no-underline whitespace-nowrap transition-all hover:-translate-y-px hover:shadow-md mx-1"
+              style={{ padding: "8px 16px", borderRadius: 999, fontSize: 15, fontWeight: 800, color: "#fff",
+                background: "linear-gradient(135deg, var(--brand), var(--gold-2))",
+                boxShadow: isActive(link.href) ? "0 0 0 3px var(--brand-soft)" : "var(--shadow-sm)" }}>
+              ✍️ {link.label}
+            </Link>
+          ) : (
             <Link key={link.href} href={link.href} aria-current={isActive(link.href) ? "page" : undefined} className="no-underline whitespace-nowrap transition-colors"
               style={{ padding: "9px 15px", borderRadius: 10, fontSize: 15, fontWeight: 600,
                 color: isActive(link.href) ? "var(--brand)" : "var(--ink-2)",

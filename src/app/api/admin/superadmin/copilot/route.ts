@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { logAdminAction } from "@/lib/admin-auth";
 import { cairoDateKey } from "@/lib/superadmin-copilot/dates";
-import { COPILOT_TOOLS, type CopilotChart, type CopilotKpi, type CopilotMessage, type CopilotTable } from "@/lib/superadmin-copilot/types";
+import { COPILOT_TOOLS, type CopilotChart, type CopilotKpi, type CopilotMessage, type CopilotProposal, type CopilotTable } from "@/lib/superadmin-copilot/types";
 import { executeCopilotTool, TOOL_LABELS } from "@/lib/superadmin-copilot/tools";
 import { copilotChat, listCopilotModels, preferredCopilotModel } from "@/lib/superadmin-copilot/provider";
 
@@ -24,15 +24,20 @@ function systemPrompt(): string {
   const today = cairoDateKey();
   return `You are the Superadmin HQ copilot for Code-UP (منصة Code-UP). Superadmin only.
 
-HARD RULE — READ ONLY. You NEVER take actions:
+HARD RULE — you never edit code, files, money, or SQL yourself:
 - never write/edit/delete files
 - never run shell that changes state
 - never restart PM2, nginx, postgres
 - never deploy, migrate, commit, push
-- never confirm payments, change money, delete users
+- never confirm payments, change wallet balances, delete users
 If the user asks you to fix/restart/deploy, inspect the problem, then tell THEM the exact command or file to change. Do not do it.
 
-You MAY: read source files (read_file), search code (search_code), list dirs, tail named logs, inspect_health, inspect_git, and all HQ money/student/price tools (those are database reads).
+You MAY prepare exactly two student edits. Preparing does NOT save. Nothing changes until the superadmin presses the confirm button in the chat:
+- propose_points_change: leaderboard points only. mode "add" for "plus 100" / "زود 100" (negative amount subtracts). mode "set" for "make the points 500".
+- propose_grade_change: one quiz or homework official percentage (الدرجة), 0 to 100. Call list_student_grades first and pass its targetId. Use which "latest" only when they explicitly said the latest exam. Do not rewrite individual answers.
+If more than one student or exam matches, ask which one. Never guess. After a proposal, say what will change and that it is NOT saved yet. Never claim the change is done.
+
+You MAY also: read source files (read_file), search code (search_code), list dirs, tail named logs, inspect_health, inspect_git, and all HQ money/student/price tools (those are database reads).
 
 Jail: only files under Thefake. .env, keys, credentials, node_modules, .git objects are blocked. Log secrets are redacted.
 
@@ -66,6 +71,8 @@ export async function GET() {
       { label: "افحص صحة السيرفر", prompt: "افحص صحة السيرفر: PM2، الذاكرة، القرص، وBUILD_ID. قراءة فقط." },
       { label: "آخر أخطاء PM2", prompt: "اقرأ آخر أخطاء pm2-error وقل لي ما المشكلة — بدون أي إجراء." },
       { label: "ابحث في الكود عن الدفع", prompt: "ابحث في الكود عن pending payment وافتح الملف المسؤول. لا تعدّل شيئاً." },
+      { label: "زوّد نقاط طالب", prompt: "ابحث عن الطالب بالاسم الذي سأكتبه، ثم جهّز زيادة نقاطه 100. لا تحفظ قبل ما أضغط تأكيد." },
+      { label: "عدّل درجة اختبار", prompt: "اعرض درجات الطالب الذي سأسميه، ثم جهّز جعل درجة الاختبار الذي أحدده 30٪. لا تحفظ قبل التأكيد." },
     ],
   });
 }
@@ -114,6 +121,7 @@ export async function POST(req: NextRequest) {
         const charts: CopilotChart[] = [];
         const tables: CopilotTable[] = [];
         const kpis: CopilotKpi[] = [];
+        const proposals: CopilotProposal[] = [];
         const toolsUsed: Array<{ name: string; label: string; ok: boolean; summary: string }> = [];
         let usedModel = primary;
 
@@ -142,6 +150,7 @@ export async function POST(req: NextRequest) {
               charts,
               tables,
               kpis,
+              proposals,
               toolsUsed,
             });
             controller.close();
@@ -170,6 +179,7 @@ export async function POST(req: NextRequest) {
             if (toolResult.charts) charts.push(...toolResult.charts);
             if (toolResult.tables) tables.push(...toolResult.tables);
             if (toolResult.kpis) kpis.push(...toolResult.kpis);
+            if (toolResult.proposal) proposals.push(toolResult.proposal);
             toolsUsed.push({
               name: call.function.name,
               label,
@@ -183,6 +193,7 @@ export async function POST(req: NextRequest) {
               content: JSON.stringify({
                 summary: toolResult.summary,
                 data: toolResult.data,
+                awaitingConfirm: Boolean(toolResult.proposal),
               }).slice(0, 12000),
             });
           }
@@ -195,6 +206,7 @@ export async function POST(req: NextRequest) {
           charts,
           tables,
           kpis,
+          proposals,
           toolsUsed,
         });
         controller.close();

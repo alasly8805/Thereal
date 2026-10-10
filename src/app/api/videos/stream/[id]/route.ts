@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { checkVideoAccess } from "@/lib/authorization";
-import { PREVIEW_COOKIE_NAME, verifyPreviewCookie } from "@/lib/preview-auth";
+import { authorizeNativeStream, isStudentViewer } from "@/lib/native-stream-auth";
 import fs from "fs";
 import path from "path";
 
@@ -10,100 +7,22 @@ const UPLOAD_DIR = path.join(process.cwd(), "uploads", "videos");
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getSession();
-    const isPreviewAuthorized = verifyPreviewCookie(req.cookies.get(PREVIEW_COOKIE_NAME)?.value);
-    if (!session && !isPreviewAuthorized) {
-      return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
-    }
-
     const { id } = await params;
     // Sanitize filename to prevent directory traversal
     const safeFilename = path.basename(id);
 
-    // ── Authorization ────────────────────────────────────────────────────────
-    // The path segment is a *provider asset id*, not a Video row id, so resolve
-    // the owning lesson first. When a token is provided, resolve the exact video
-    // bound to this watch session to avoid ambiguity if multiple lessons share
-    // the same providerVideoId (e.g. duplicate uploads or across courses).
-    const token = req.nextUrl.searchParams.get("token");
-    let video: { id: string; isFree: boolean } | null = null;
-    let watchSession: { studentId: string; videoId: string; expiresAt: Date; endedAt: Date | null } | null = null;
+    const access = await authorizeNativeStream(req, safeFilename);
+    if (access instanceof NextResponse) return access;
+    const { watchSession } = access;
 
-    if (token) {
-      watchSession = await prisma.videoWatchSession.findUnique({
-        where: { sessionToken: token },
-        select: { studentId: true, videoId: true, expiresAt: true, endedAt: true },
-      });
-      if (watchSession) {
-        const candidate = await prisma.video.findUnique({
-          where: { id: watchSession.videoId },
-          select: { id: true, isFree: true, providerVideoId: true, vdoCipherId: true },
-        });
-        if (candidate && (candidate.providerVideoId === safeFilename || candidate.vdoCipherId === safeFilename)) {
-          video = { id: candidate.id, isFree: candidate.isFree };
-        }
+    // Once a lesson has its AES-128 HLS package, students only get that: a
+    // plain MP4 beside it would make the encryption pointless.
+    if (isStudentViewer(access)) {
+      const { hlsReady } = await import("@/lib/hls-package");
+      if (await hlsReady(safeFilename)) {
+        return NextResponse.json({ error: "هذا الدرس يُعرض بالمشغل المشفّر فقط", hls: true }, { status: 403 });
       }
     }
-
-    if (!video) {
-      video = await prisma.video.findFirst({
-        where: { OR: [{ providerVideoId: safeFilename }, { vdoCipherId: safeFilename }] },
-        select: { id: true, isFree: true },
-      });
-    }
-
-    if (video) {
-      // Preview-cookie access is intentionally limited to Drive-backed previews.
-      if (!session && (!isPreviewAuthorized || !safeFilename.startsWith("gdrive_"))) {
-        return NextResponse.json({ error: "لا توجد صلاحية" }, { status: 403 });
-      }
-
-      const hasAccess = session ? await checkVideoAccess(session.id, session.role, video.id) : true;
-      if (!hasAccess) {
-        return NextResponse.json({ error: "لا يوجد صلاحية للوصول لهذا الفيديو" }, { status: 403 });
-      }
-
-      // A student must present the watch-session token they were issued.
-      //
-      // Enrollment alone used to be enough here, which quietly voided the whole
-      // per-video watch limit: this URL is what the player loads, so a student
-      // could lift it from their own network tab on the first legitimate watch
-      // and replay the lesson forever without ever consuming another slot.
-      // /api/videos/[id]/secure-url already required a token; this path did not.
-      if (session?.role === "student" && !video.isFree) {
-        if (!token) {
-          return NextResponse.json(
-            { error: "يجب بدء جلسة مشاهدة أولاً" },
-            { status: 403 }
-          );
-        }
-        if (!watchSession) {
-          watchSession = await prisma.videoWatchSession.findUnique({
-            where: { sessionToken: token },
-            select: { studentId: true, videoId: true, expiresAt: true, endedAt: true },
-          });
-        }
-        if (
-          !watchSession ||
-          watchSession.studentId !== session.id ||
-          watchSession.videoId !== video.id ||
-          watchSession.endedAt ||
-          watchSession.expiresAt < new Date()
-        ) {
-          return NextResponse.json(
-            { error: "جلسة المشاهدة غير صالحة أو منتهية" },
-            { status: 403 }
-          );
-        }
-      }
-    } else {
-      // Newly imported video not yet saved in a lecture folder: only allow teacher/admin staff preview
-      const isStaff = !!session && (session.role === "teacher" || session.role === "admin" || session.role === "superadmin");
-      if (!isStaff && !isPreviewAuthorized) {
-        return NextResponse.json({ error: "الفيديو غير موجود" }, { status: 404 });
-      }
-    }
-
 
     let effectiveFilename = safeFilename;
     const rangeHeader = req.headers.get("range");

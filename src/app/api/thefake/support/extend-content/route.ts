@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ContentType } from "@/generated/prisma";
 import { prisma } from "@/lib/prisma";
+import { ContentType as GraphContentType, restartQuizClockForSupportReopen, syncHomeworkContentProgress } from "@/lib/content-access-engine";
 import { getSupportSession, logSupportAction } from "@/lib/support-auth";
 
 const ASSESSMENT_TYPES = new Set<string>([
@@ -53,6 +54,55 @@ async function resolveOrCreateContentItem(input: {
     update: { title: homework.title },
     select: { id: true, title: true, type: true, sourceId: true },
   });
+}
+
+/** Students who already submitted can start again for the reopen window. */
+async function grantSubmittedRetake(
+  item: { sourceId: string; type: ContentType; title: string },
+  studentId: string | null
+): Promise<number> {
+  if (item.type === ContentType.QUIZ || item.type === ContentType.EXAM) {
+    const updated = await prisma.quizResult.updateMany({
+      where: {
+        quizId: item.sourceId,
+        completedAt: { not: null },
+        ...(studentId ? { studentId } : {}),
+      },
+      data: { allowRetake: true },
+    });
+    return updated.count;
+  }
+
+  if (item.type !== ContentType.HOMEWORK) return 0;
+
+  const submissions = await prisma.homeworkSubmission.findMany({
+    where: {
+      homeworkId: item.sourceId,
+      ...(studentId ? { studentId } : {}),
+      OR: [{ completedAt: { not: null } }, { score: { not: null } }],
+    },
+    select: { id: true, studentId: true, status: true, score: true, fileUrl: true },
+  });
+  if (submissions.length === 0) return 0;
+
+  await prisma.homeworkSubmission.updateMany({
+    where: { id: { in: submissions.map((row) => row.id) } },
+    data: { allowRetake: true },
+  });
+  // Same rule as the teacher retake: a reopened exam gets a fresh order.
+  await prisma.homeworkExamView.deleteMany({
+    where: { homeworkId: item.sourceId, studentId: { in: submissions.map((row) => row.studentId) } },
+  });
+
+  for (const row of submissions) {
+    await syncHomeworkContentProgress(
+      row.studentId,
+      { type: GraphContentType.HOMEWORK, sourceId: item.sourceId, title: item.title },
+      row.status,
+      { score: row.score, allowRetake: true, hasUploadedFile: Boolean(row.fileUrl) }
+    );
+  }
+  return submissions.length;
 }
 
 function serializeExtension(row: {
@@ -178,6 +228,12 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  const retakeGranted = await grantSubmittedRetake(item, studentId);
+  const clockRestarted =
+    item.type === ContentType.QUIZ || item.type === ContentType.EXAM
+      ? await restartQuizClockForSupportReopen(item.sourceId, studentId)
+      : 0;
+
   await logSupportAction({
     action: "SUPPORT_EXTEND_CONTENT",
     targetType: studentId ? "student" : "content",
@@ -191,10 +247,12 @@ export async function POST(req: NextRequest) {
       extendedUntil: until.toISOString(),
       reason,
       scope: studentId ? "student" : "all",
+      retakeGranted,
+      clockRestarted,
     },
   });
 
-  return NextResponse.json({ ok: true, extension: serializeExtension(created) }, { status: 201 });
+  return NextResponse.json({ ok: true, extension: serializeExtension(created), retakeGranted }, { status: 201 });
 }
 
 /** DELETE /api/thefake/support/extend-content?id= */

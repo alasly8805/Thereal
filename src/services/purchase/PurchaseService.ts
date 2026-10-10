@@ -7,6 +7,7 @@ import { DiscountService, PurchaseType } from "@/services/discount/DiscountServi
 import { isValidCurrencyAmount, verifyAuthoritativePrice } from "@/lib/price-verifier";
 import { isTester, canBypassPayment, logTesterActivity } from "@/lib/tester";
 import { getPlanMonths } from "@/lib/subscription-terms";
+import { termForSale, yearEndFor, ownsActiveTerm, applyTeacherTerms } from "@/lib/teacher-terms";
 
 export interface BasePurchaseParams {
   studentId: string;
@@ -39,6 +40,7 @@ export interface TeacherSubscriptionPurchaseParams extends BasePurchaseParams {
   studentGrade?: string;
   studentPhone?: string;
   studentName?: string;
+  monthNumber?: number;
 }
 
 export interface PurchaseResult {
@@ -1027,12 +1029,80 @@ export class PurchaseService {
       termly: "ترم كامل",
       yearly: "سنة كاملة",
     };
-    const planLabel = `${planNames[planType] || "اشتراك"} ${isLanguages ? "(لغات)" : "(عربي)"}`;
-
     const userDetails = await prisma.user.findUnique({
       where: { id: studentId },
       select: { name: true, phone: true, parentPhone: true, educationalStage: true },
     });
+
+    // Teacher-defined terms ("Terms & Bookings" page). null = the teacher has not
+    // set up terms for this grade, and the booking keeps the legacy duration rules.
+    const termStage = studentGrade || userDetails?.educationalStage || null;
+    const saleTerm = planType === "termly" ? await termForSale(teacherId, termStage) : null;
+    const yearEnd = planType === "yearly" ? await yearEndFor(teacherId, termStage) : null;
+
+    if (saleTerm && saleTerm.termNumber === null) {
+      return { success: false, error: "حجز الترم غير متاح حالياً عند هذا المعلم" };
+    }
+    const { getTeacherPkgSettings } = await import("@/lib/teacher-packages");
+    const pkgConfig = await getTeacherPkgSettings(teacherId);
+
+    if (isLanguages && pkgConfig.englishBookingEnabled === false) {
+      return { success: false, error: "حجز مسار اللغات (English) غير متاح حالياً عند هذا المعلم" };
+    }
+
+    // Monthly renewal target calculation & prerequisite check
+    const existingMonthlySub = await db.teacherSubscription.findUnique({
+      where: { studentId_teacherId_planType: { studentId, teacherId, planType } },
+      select: { expiresAt: true, status: true, termNumbers: true },
+    });
+
+    let targetMonthNumber = params.monthNumber;
+    if (planType === "monthly") {
+      const isCurrentlyActive =
+        existingMonthlySub &&
+        existingMonthlySub.status === "active" &&
+        (!existingMonthlySub.expiresAt || existingMonthlySub.expiresAt > new Date());
+
+      let ownedMonths = (existingMonthlySub?.termNumbers || [])
+        .filter((n: any) => typeof n === "number" && n > 0)
+        .sort((a: number, b: number) => a - b);
+      if (ownedMonths.length === 0 && isCurrentlyActive) {
+        ownedMonths = [1];
+      }
+      const highestOwned = ownedMonths.length > 0 ? ownedMonths[ownedMonths.length - 1] : 0;
+
+      if (!targetMonthNumber) {
+        targetMonthNumber = highestOwned > 0 ? highestOwned + 1 : (pkgConfig.monthNumber || 1);
+      }
+
+      // Check if already active and owns this month
+      if (isCurrentlyActive && ownedMonths.includes(targetMonthNumber)) {
+        return { success: false, error: `أنت مشترك بالفعل في الشهر ${targetMonthNumber} مع هذا المعلم` };
+      }
+
+      // Sequential renewal enforcement
+      if (pkgConfig.enforceSequentialRenewal !== false && targetMonthNumber > 1) {
+        if (!ownedMonths.includes(targetMonthNumber - 1)) {
+          const prevMonthConfig = pkgConfig.months?.find((m) => m.number === targetMonthNumber - 1);
+          const prevMonthName = prevMonthConfig?.name || `الشهر ${targetMonthNumber - 1}`;
+          return {
+            success: false,
+            error: `يجب الاشتراك في ${prevMonthName} أولاً لتتمكن من التجديد للشهر ${targetMonthNumber}`,
+          };
+        }
+      }
+    }
+
+    const termLabel = saleTerm ? (saleTerm.termNumber === 2 ? "الترم الثاني" : "الترم الأول") : null;
+    const targetMonthConfig =
+      planType === "monthly" ? pkgConfig.months?.find((m) => m.number === targetMonthNumber) : null;
+    const basePlanLabel =
+      planType === "monthly"
+        ? (targetMonthConfig?.name || pkgConfig.monthlyName || `حجز الشهر ${targetMonthNumber}`)
+        : planType === "termly"
+        ? (termLabel || pkgConfig.termlyName || planNames.termly)
+        : (pkgConfig.yearlyName || planNames.yearly);
+    const planLabel = `${basePlanLabel} ${isLanguages ? "(لغات)" : "(عربي)"}`;
 
     const runInTx = async (tx: any) => {
       await acquireAdvisoryLock(`spend:${studentId}`, tx);
@@ -1079,8 +1149,17 @@ export class PurchaseService {
             ? existingSub.expiresAt
             : now;
 
-        const expiresAt = new Date(baseDate);
+        let expiresAt = new Date(baseDate);
         expiresAt.setMonth(expiresAt.getMonth() + months);
+        const testerTerms = applyTeacherTerms(existingSub, saleTerm, yearEnd, now);
+        if (testerTerms.expiresAt) expiresAt = testerTerms.expiresAt;
+
+        const effectiveTesterTerms =
+          planType === "monthly" && targetMonthNumber
+            ? [...new Set([...((existingSub?.termNumbers as number[]) || []), targetMonthNumber])].sort((a, b) => a - b)
+            : testerTerms.termNumbers && testerTerms.termNumbers.length > 0
+            ? testerTerms.termNumbers
+            : null;
 
         const sub = await tx.teacherSubscription.upsert({
           where: {
@@ -1104,8 +1183,10 @@ export class PurchaseService {
             paymentSource: "TESTER_BYPASS",
             status: "active",
             expiresAt,
+            ...(effectiveTesterTerms ? { termNumbers: effectiveTesterTerms } : {}),
           },
           update: {
+            ...(effectiveTesterTerms ? { termNumbers: effectiveTesterTerms } : {}),
             status: "active",
             expiresAt,
             amount: 0,
@@ -1133,6 +1214,17 @@ export class PurchaseService {
           enrollmentId: sub.id,
           message: "تم تفعيل اشتراك المعلم لحساب الفحص (Test Mode)",
         };
+      }
+
+      // Never charge the wallet twice for a term the student already owns.
+      if (saleTerm && (paymentMethod === "wallet_balance" || paymentMethod === "balance")) {
+        const owned = await tx.teacherSubscription.findUnique({
+          where: { studentId_teacherId_planType: { studentId, teacherId, planType } },
+          select: { status: true, expiresAt: true, termNumbers: true },
+        });
+        if (ownsActiveTerm(owned, saleTerm.termNumber!)) {
+          return { success: false, error: `أنت مشترك بالفعل في ${termLabel} مع هذا المعلم` };
+        }
       }
 
       if (paymentMethod === "wallet_balance" || paymentMethod === "balance") {
@@ -1173,7 +1265,7 @@ export class PurchaseService {
             planType,
           },
         },
-        select: { expiresAt: true, status: true },
+        select: { expiresAt: true, status: true, termNumbers: true },
       });
 
       const now = new Date();
@@ -1182,8 +1274,18 @@ export class PurchaseService {
           ? existingSub.expiresAt
           : now;
 
-      const expiresAt = new Date(baseDate);
+      let expiresAt = new Date(baseDate);
       expiresAt.setMonth(expiresAt.getMonth() + months);
+
+      const { termNumbers, expiresAt: termExpiresAt } = applyTeacherTerms(existingSub, saleTerm, yearEnd, now);
+      if (termExpiresAt) expiresAt = termExpiresAt;
+
+      const effectiveTermNumbers =
+        planType === "monthly" && targetMonthNumber
+          ? [...new Set([...((existingSub?.termNumbers as number[]) || []), targetMonthNumber])].sort((a, b) => a - b)
+          : termNumbers && termNumbers.length > 0
+          ? termNumbers
+          : null;
 
       const trackedLang = isLanguages ? "languages" : "arabic";
       const activeStudentPhone = params.studentPhone || userDetails?.phone || null;
@@ -1212,8 +1314,10 @@ export class PurchaseService {
           paymentSource: source,
           status: "active",
           expiresAt,
+          ...(effectiveTermNumbers ? { termNumbers: effectiveTermNumbers } : {}),
         },
         update: {
+          ...(effectiveTermNumbers ? { termNumbers: effectiveTermNumbers } : {}),
           planLabel,
           amount: finalPrice,
           educationalStage: studentGrade || userDetails?.educationalStage,

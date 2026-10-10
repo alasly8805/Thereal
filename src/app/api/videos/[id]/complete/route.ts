@@ -54,6 +54,32 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       select: { watchedSecondsTotal: true }
     });
 
+    // Check if all required in-video questions are answered
+    const unansweredRequired = await prisma.videoQuestion.findFirst({
+      where: {
+        videoId,
+        isRequired: true,
+        progress: {
+          none: {
+            userId: session.id,
+            attempts: { gt: 0 },
+          },
+        },
+      },
+      select: { id: true, question: true, questionText: true },
+    });
+
+    if (unansweredRequired) {
+      return NextResponse.json(
+        {
+          error: "يجب الإجابة على جميع الأسئلة التفاعلية المطلوبة داخل هذا الفيديو قبل إكماله",
+          code: "REQUIRED_QUESTIONS_UNANSWERED",
+          questionId: unansweredRequired.id,
+        },
+        { status: 403 }
+      );
+    }
+
     // Same superadmin-configurable threshold the auto-complete path uses
     // (position route) — was hardcoded to 80% and drifted out of sync.
     const { getConfigNumberClamped } = await import("@/lib/config");

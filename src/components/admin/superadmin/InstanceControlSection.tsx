@@ -1,6 +1,23 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { Activity, Construction, Database, Gauge, KeyRound, LogIn, RefreshCw, Search, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Input,
+  Modal,
+  PageHeader,
+  Panel,
+  Switch,
+  Tabs,
+  Textarea,
+  fmtDateTime,
+  fmtNum,
+  readJson,
+} from "@/components/admin/ui/kit";
 
 interface Superadmin {
   id: string;
@@ -22,11 +39,7 @@ interface FoundStudent {
   points: number;
   createdAt: string;
   lastLoginAt: string | null;
-  _count?: {
-    accessCodes: number;
-    courseEnrollments: number;
-    quizResults: number;
-  };
+  _count?: { accessCodes: number; courseEnrollments: number; quizResults: number };
 }
 
 interface ActivityLogItem {
@@ -53,22 +66,45 @@ interface LiveLogStudent {
   points: number;
 }
 
-const card = "rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90 transition-all";
-const input =
-  "w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-900 outline-none focus:border-slate-400 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-white transition-all";
+interface OverloadState {
+  mode: "auto" | "on" | "off";
+  ramThresholdPct: number;
+  cooldownUntil: string | null;
+  message: string;
+  isTriggered: boolean;
+  remainingMinutes: number;
+  memory: { usedMemPct: number; usedMemMb: number; totalMemMb: number; processRssMb: number };
+}
+
+const STAGE: Record<string, string> = { sec_1: "أولى ثانوي", sec_2: "ثانية ثانوي", sec_3: "ثالثة ثانوي" };
+
+type PendingConfirm =
+  | { kind: "maintenance-on" }
+  | { kind: "overload-on" }
+  | { kind: "clear-virtual" }
+  | { kind: "remove-admin"; admin: Superadmin }
+  | { kind: "clear-pw"; admin: Superadmin }
+  | null;
+
+function storedActionPassword() {
+  try {
+    return sessionStorage.getItem("admin_action_password") || "";
+  } catch {
+    return "";
+  }
+}
 
 export function InstanceControlSection() {
   const { success: toastSuccess, error: toastError } = useToast();
   const [actionPassword, setActionPassword] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingConfirm>(null);
 
-  // Student phone search & Impersonation state
   const [studentPhoneSearch, setStudentPhoneSearch] = useState("");
   const [foundStudents, setFoundStudents] = useState<FoundStudent[]>([]);
   const [searchingStudent, setSearchingStudent] = useState(false);
   const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
 
-  // Real-time Live Activity & Deletions state
   const [liveStudents, setLiveStudents] = useState<LiveLogStudent[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
   const [totalStudentsCount, setTotalStudentsCount] = useState(0);
@@ -78,51 +114,37 @@ export function InstanceControlSection() {
 
   const [maintOn, setMaintOn] = useState(false);
   const [maintMsg, setMaintMsg] = useState("");
-
   const [vCounts, setVCounts] = useState({ students: 0, teachers: 0, courses: 0 });
   const [gen, setGen] = useState({ teachers: 3, students: 15, courses: 4 });
-
   const [admins, setAdmins] = useState<Superadmin[]>([]);
   const [selfId, setSelfId] = useState("");
   const [newAdmin, setNewAdmin] = useState({ name: "", email: "", password: "" });
+  const [overloadState, setOverloadState] = useState<OverloadState | null>(null);
 
-  const [overloadState, setOverloadState] = useState<{
-    mode: "auto" | "on" | "off";
-    ramThresholdPct: number;
-    cooldownUntil: string | null;
-    message: string;
-    isTriggered: boolean;
-    remainingMinutes: number;
-    memory: { usedMemPct: number; usedMemMb: number; totalMemMb: number; processRssMb: number };
-  } | null>(null);
+  useEffect(() => setActionPassword(storedActionPassword()), []);
 
   const loadAll = useCallback(async () => {
-    try {
-      const [m, v, s, ov] = await Promise.all([
-        fetch("/api/admin/superadmin/maintenance", { credentials: "include" }).then((r) => r.json()),
-        fetch("/api/admin/superadmin/virtual-data", { credentials: "include" }).then((r) => r.json()),
-        fetch("/api/admin/superadmin/superadmins", { credentials: "include" }).then((r) => r.json()),
-        fetch("/api/admin/superadmin/overload-protection", { credentials: "include" }).then((r) => r.json()),
-      ]);
-      if (typeof m?.on === "boolean") {
-        setMaintOn(m.on);
-        setMaintMsg(m.message ?? "");
-      }
-      if (v && typeof v.students === "number") setVCounts(v);
-      if (Array.isArray(s?.superadmins)) {
-        setAdmins(s.superadmins);
-        setSelfId(s.selfId ?? "");
-      }
-      if (ov?.state) {
-        setOverloadState(ov.state);
-      }
-    } catch {
-      toastError("تعذر تحميل لوحة التحكم");
+    const get = (url: string) => fetch(url, { credentials: "include" }).then((r) => readJson<Record<string, unknown>>(r)).catch(() => null);
+    const [m, v, s, ov] = await Promise.all([
+      get("/api/admin/superadmin/maintenance"),
+      get("/api/admin/superadmin/virtual-data"),
+      get("/api/admin/superadmin/superadmins"),
+      get("/api/admin/superadmin/overload-protection"),
+    ]);
+    if (m && typeof m.on === "boolean") {
+      setMaintOn(m.on);
+      setMaintMsg((m.message as string) ?? "");
     }
+    if (v && typeof v.students === "number") setVCounts(v as typeof vCounts);
+    if (s && Array.isArray(s.superadmins)) {
+      setAdmins(s.superadmins as Superadmin[]);
+      setSelfId((s.selfId as string) ?? "");
+    }
+    if (ov?.state) setOverloadState(ov.state as OverloadState);
+    if (!m && !v && !s && !ov) toastError("تعذر تحميل لوحة السيرفر");
   }, [toastError]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadAll();
   }, [loadAll]);
 
@@ -134,181 +156,111 @@ export function InstanceControlSection() {
     return true;
   };
 
-  const post = async (url: string, body: Record<string, unknown>) => {
+  const send = async (method: "POST" | "PATCH" | "DELETE", url: string, body: Record<string, unknown> = {}) => {
     const res = await fetch(url, {
-      method: "POST",
+      method,
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, actionPassword }),
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json.error ?? "تعذر تنفيذ العملية");
-    return json;
-  };
-  const patch = async (url: string, body: Record<string, unknown>) => {
-    const res = await fetch(url, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, actionPassword }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json.error ?? "تعذر تنفيذ العملية");
-    return json;
+    const json = await readJson<Record<string, unknown> & { error?: string }>(res);
+    if (!res.ok) throw new Error(json?.error ?? "تعذر تنفيذ العملية");
+    return json ?? {};
   };
 
-  // ── Maintenance ──
-  const toggleMaintenance = async () => {
+  /** Runs an action with the busy flag + toast handling. */
+  const run = async (tag: string, fn: () => Promise<void>) => {
     if (!needPw()) return;
-    setBusy(true);
+    setBusy(tag);
     try {
-      const next = !maintOn;
-      await post("/api/admin/superadmin/maintenance", { on: next, message: maintMsg });
+      await fn();
+    } catch (e) {
+      toastError(e instanceof Error ? e.message : "خطأ");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const setMaintenance = (next: boolean) =>
+    run("maint", async () => {
+      await send("POST", "/api/admin/superadmin/maintenance", { on: next, message: maintMsg });
       setMaintOn(next);
-      toastSuccess(next ? "تم تفعيل وضع الصيانة" : "تم إيقاف وضع الصيانة");
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const saveMessage = async () => {
-    if (!needPw()) return;
-    setBusy(true);
-    try {
-      await post("/api/admin/superadmin/maintenance", { message: maintMsg });
-      toastSuccess("تم حفظ رسالة الصيانة");
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    } finally {
-      setBusy(false);
-    }
-  };
+      toastSuccess(next ? "وضع الصيانة مفعّل — الزوّار يرون صفحة الصيانة" : "أُوقف وضع الصيانة — الموقع متاح");
+    });
 
-  // ── Overload Protection ──
-  const updateOverload = async (action: string, payload: Record<string, unknown> = {}) => {
-    if (!needPw()) return;
-    setBusy(true);
-    try {
-      const res = await post("/api/admin/superadmin/overload-protection", { action, ...payload });
-      if (res?.state) {
-        setOverloadState(res.state);
-        toastSuccess("تم تحديث نظام حماية السيرفر الاستباقية");
-      }
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const saveMessage = () =>
+    run("maint-msg", async () => {
+      await send("POST", "/api/admin/superadmin/maintenance", { message: maintMsg });
+      toastSuccess("حُفظت رسالة الصيانة");
+    });
 
-  // ── Virtual data ──
-  const generate = async () => {
-    if (!needPw()) return;
-    setBusy(true);
-    try {
-      const r = await post("/api/admin/superadmin/virtual-data", { action: "generate", ...gen });
-      toastSuccess(
-        `تم إنشاء ${r.created.teachers} مدرس و${r.created.students} طالب و${r.created.courses} كورس`
-      );
-      await loadAll();
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const clearVirtual = async () => {
-    if (!needPw()) return;
-    setBusy(true);
-    try {
-      const r = await post("/api/admin/superadmin/virtual-data", { action: "clear" });
-      toastSuccess(`تم حذف ${r.cleared.users} حساب و${r.cleared.courses} كورس تجريبي`);
-      await loadAll();
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const updateOverload = (tag: string, action: string, payload: Record<string, unknown> = {}) =>
+    run(tag, async () => {
+      const res = await send("POST", "/api/admin/superadmin/overload-protection", { action, ...payload });
+      if (res.state) setOverloadState(res.state as OverloadState);
+      toastSuccess("حُدّث نظام حماية السيرفر");
+    });
 
-  // ── Superadmins ──
-  const renameAdmin = async (id: string, name: string) => {
-    if (!needPw()) return;
-    try {
-      await patch(`/api/admin/superadmin/superadmins/${id}`, { name });
-      toastSuccess("تم تحديث الاسم");
+  const generate = () =>
+    run("gen", async () => {
+      const r = (await send("POST", "/api/admin/superadmin/virtual-data", { action: "generate", ...gen })) as { created?: { teachers: number; students: number; courses: number } };
+      toastSuccess(`أُنشئ ${fmtNum(r.created?.teachers ?? 0)} مدرس و${fmtNum(r.created?.students ?? 0)} طالب و${fmtNum(r.created?.courses ?? 0)} كورس`);
       await loadAll();
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    }
-  };
-  const changePw = async (id: string, password: string) => {
-    if (!needPw()) return;
-    try {
-      await patch(`/api/admin/superadmin/superadmins/${id}`, { password });
+    });
+
+  const clearVirtual = () =>
+    run("clear-virtual", async () => {
+      const r = (await send("POST", "/api/admin/superadmin/virtual-data", { action: "clear" })) as { cleared?: { users: number; courses: number } };
+      toastSuccess(`حُذف ${fmtNum(r.cleared?.users ?? 0)} حساب و${fmtNum(r.cleared?.courses ?? 0)} كورس تجريبي`);
+      await loadAll();
+    });
+
+  const renameAdmin = (id: string, name: string) =>
+    run(`rename:${id}`, async () => {
+      await send("PATCH", `/api/admin/superadmin/superadmins/${id}`, { name });
+      toastSuccess("حُدّث الاسم");
+      await loadAll();
+    });
+
+  const changePw = (id: string, password: string) =>
+    run(`pw:${id}`, async () => {
+      await send("PATCH", `/api/admin/superadmin/superadmins/${id}`, { password });
       toastSuccess("تم تغيير كلمة المرور");
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    }
-  };
-  const clearPw = async (id: string, name: string) => {
-    if (!needPw()) return;
-    if (!window.confirm(`هل تريد حذف كلمة مرور "${name}"؟ لن يتمكن من تسجيل الدخول بكلمة مرور بعد ذلك.`)) return;
-    try {
-      await patch(`/api/admin/superadmin/superadmins/${id}`, { clearPassword: true });
-      toastSuccess("تم حذف كلمة المرور");
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    }
-  };
-  const toggleActive = async (a: Superadmin) => {
-    if (!needPw()) return;
-    try {
-      await patch(`/api/admin/superadmin/superadmins/${a.id}`, { isActive: !a.isActive });
+    });
+
+  const clearPw = (a: Superadmin) =>
+    run(`clearpw:${a.id}`, async () => {
+      await send("PATCH", `/api/admin/superadmin/superadmins/${a.id}`, { clearPassword: true });
+      toastSuccess(`حُذفت كلمة مرور ${a.name}`);
+    });
+
+  const toggleActive = (a: Superadmin) =>
+    run(`active:${a.id}`, async () => {
+      await send("PATCH", `/api/admin/superadmin/superadmins/${a.id}`, { isActive: !a.isActive });
+      toastSuccess(a.isActive ? `أُوقف ${a.name}` : `فُعّل ${a.name}`);
       await loadAll();
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    }
-  };
-  const removeAdmin = async (id: string) => {
-    if (!needPw()) return;
-    try {
-      const res = await fetch(`/api/admin/superadmin/superadmins/${id}`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actionPassword }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error ?? "تعذر الحذف");
-      toastSuccess("تم حذف المشرف");
+    });
+
+  const removeAdmin = (a: Superadmin) =>
+    run(`remove:${a.id}`, async () => {
+      await send("DELETE", `/api/admin/superadmin/superadmins/${a.id}`);
+      toastSuccess(`حُذف المشرف ${a.name}`);
       await loadAll();
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    }
-  };
-  const createAdmin = async () => {
-    if (!needPw()) return;
-    setBusy(true);
-    try {
-      await post("/api/admin/superadmin/superadmins", newAdmin);
-      toastSuccess("تم إنشاء مشرف عام جديد");
+    });
+
+  const createAdmin = (e: React.FormEvent) => {
+    e.preventDefault();
+    void run("create-admin", async () => {
+      await send("POST", "/api/admin/superadmin/superadmins", newAdmin);
+      toastSuccess("أُنشئ مشرف عام جديد");
       setNewAdmin({ name: "", email: "", password: "" });
       await loadAll();
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ");
-    } finally {
-      setBusy(false);
-    }
+    });
   };
 
-  // ── Student Impersonation / Direct Login (Owner High Security) ──
-  const searchStudent = async () => {
-    if (!studentPhoneSearch.trim()) {
-      toastError("يرجى إدخال رقم هاتف الطالب أولاً");
-      return;
-    }
+  const searchStudent = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!studentPhoneSearch.trim()) return toastError("أدخل رقم هاتف الطالب");
     setSearchingStudent(true);
     setFoundStudents([]);
     try {
@@ -318,12 +270,12 @@ export function InstanceControlSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "search", phone: studentPhoneSearch }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "لم يتم العثور على طالب");
-      setFoundStudents(data.students || []);
-      toastSuccess(`تم العثور على ${data.students?.length} حساب`);
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ أثناء البحث");
+      const data = await readJson<{ students?: FoundStudent[]; error?: string }>(res);
+      if (!res.ok) throw new Error(data?.error || "لم يُعثر على طالب");
+      setFoundStudents(data?.students || []);
+      if (!data?.students?.length) toastError("لا يوجد طالب بهذا الرقم");
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "خطأ أثناء البحث");
     } finally {
       setSearchingStudent(false);
     }
@@ -337,639 +289,330 @@ export function InstanceControlSection() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "impersonate",
-          studentId,
-          actionPassword,
-        }),
+        body: JSON.stringify({ action: "impersonate", studentId, actionPassword }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "تعذر الدخول لحساب الطالب");
-      toastSuccess(`جاري الانتقال لحساب الطالب: ${studentName}...`);
+      const data = await readJson<{ redirectUrl?: string; error?: string }>(res);
+      if (!res.ok) throw new Error(data?.error || "تعذر الدخول لحساب الطالب");
+      toastSuccess(`جارٍ الانتقال لحساب ${studentName}…`);
       setTimeout(() => {
-        window.location.href = data.redirectUrl || "/courses";
-      }, 600);
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "خطأ أثناء الدخول للحساب");
+        window.location.href = data?.redirectUrl || "/courses";
+      }, 500);
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "خطأ أثناء الدخول للحساب");
       setImpersonatingId(null);
     }
   };
 
-  // ── Real-Time Live Activity & Deletions Feed ──
-  const fetchLiveLogs = useCallback(async (showToast = false) => {
+  const fetchLiveLogs = useCallback(async () => {
     setLoadingLiveLogs(true);
     try {
-      const res = await fetch("/api/admin/superadmin/live-logs", {
-        credentials: "include",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
+      const res = await fetch("/api/admin/superadmin/live-logs", { credentials: "include" });
+      const data = await readJson<{ success?: boolean; recentStudents?: LiveLogStudent[]; activityLogs?: ActivityLogItem[]; totalStudents?: number }>(res);
+      if (res.ok && data?.success) {
         setLiveStudents(data.recentStudents || []);
         setActivityLogs(data.activityLogs || []);
         setTotalStudentsCount(data.totalStudents || 0);
-        if (showToast) toastSuccess("تم تحديث السجلات المباشرة");
       }
     } catch {
-      // quiet poll error
+      /* quiet poll */
     } finally {
       setLoadingLiveLogs(false);
     }
-  }, [toastSuccess]);
+  }, []);
 
-  // Initial load & Polling interval
+  // Poll every 10s, only while the tab is visible.
   useEffect(() => {
-    let isMounted = true;
-    const poll = () => {
-      if (isMounted) void fetchLiveLogs();
-    };
-    const timer = setTimeout(poll, 0);
-    const interval = autoRefreshLive ? setInterval(poll, 10000) : null;
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-      if (interval) clearInterval(interval);
-    };
+    void fetchLiveLogs();
+    if (!autoRefreshLive) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") void fetchLiveLogs();
+    }, 10000);
+    return () => clearInterval(id);
   }, [fetchLiveLogs, autoRefreshLive]);
 
+  const confirmMeta: Record<NonNullable<PendingConfirm>["kind"], { title: string; text: string; action: string; danger?: boolean }> = {
+    "maintenance-on": { title: "تفعيل وضع الصيانة؟", text: "كل الزوّار والطلاب سيرون صفحة الصيانة بدل الموقع حتى تُوقفه. لوحة الإدارة تبقى متاحة.", action: "تفعيل الصيانة", danger: true },
+    "overload-on": { title: "تفعيل غرفة الانتظار إجبارياً؟", text: "الطلاب الجدد سيُحوّلون لغرفة الانتظار فوراً بغض النظر عن حمل السيرفر.", action: "تفعيل", danger: true },
+    "clear-virtual": { title: "حذف كل البيانات التجريبية؟", text: "ستُحذف كل الحسابات والكورسات التجريبية التي أنشأها المولّد.", action: "حذف", danger: true },
+    "remove-admin": { title: "حذف المشرف العام؟", text: "", action: "حذف المشرف", danger: true },
+    "clear-pw": { title: "حذف كلمة المرور؟", text: "", action: "حذف كلمة المرور", danger: true },
+  };
+
+  const runPending = async () => {
+    const p = pending;
+    setPending(null);
+    if (!p) return;
+    if (p.kind === "maintenance-on") await setMaintenance(true);
+    else if (p.kind === "overload-on") await updateOverload("ov-mode", "setMode", { mode: "on" });
+    else if (p.kind === "clear-virtual") await clearVirtual();
+    else if (p.kind === "remove-admin") await removeAdmin(p.admin);
+    else if (p.kind === "clear-pw") await clearPw(p.admin);
+  };
+
+  const mem = overloadState?.memory;
+  const memColor = !mem ? "var(--brand)" : mem.usedMemPct > 80 ? "var(--danger)" : mem.usedMemPct > 60 ? "var(--warn)" : "var(--ok)";
+
   return (
-    <div className="max-w-3xl space-y-6" dir="rtl">
-      {/* Shared action password */}
-      <div className={card}>
-        <label className="mb-1 block text-xs text-gray-400">
-          كلمة مرور المشرف (مطلوبة لكل إجراء في هذه الصفحة)
-        </label>
-        <input
-          type="password"
-          value={actionPassword}
-          onChange={(e) => setActionPassword(e.target.value)}
-          placeholder="••••••••"
-          className={input}
-        />
-      </div>
+    <div dir="rtl" className="flex flex-col gap-5 max-w-4xl">
+      <PageHeader title="السيرفر" description="أدوات المالك: الدخول كطالب، السجل المباشر، الصيانة، حماية السيرفر من الضغط، البيانات التجريبية، والمشرفون العامون." />
 
-      {/* ── Direct Student Access (Owner High Security) ── */}
-      <div className={card}>
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🔐</span>
-              <h3 className="font-bold text-slate-900 dark:text-white text-base">الدخول المباشر لحساب طالب (Owner Super-Access)</h3>
-              <span className="rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 px-2.5 py-0.5 text-[10px] font-bold border border-amber-200 dark:border-amber-800/40">
-                خاص بالمالك فقط
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              ابحث برقم هاتف أي طالب لمعاينة المنصة بعينيه مباشرة وحل مشكلاته الفنية والتعليمية.
-            </p>
-          </div>
-        </div>
+      <Panel title="كلمة مرور المشرف" icon={<KeyRound size={16} />} description="مطلوبة لكل إجراء في هذه الصفحة. تُعبّأ تلقائياً من مفتاح الإجراءات إن كان محفوظاً.">
+        <Input type="password" value={actionPassword} onChange={(e) => setActionPassword(e.target.value)} placeholder="••••••••" aria-label="كلمة مرور المشرف" autoComplete="current-password" className="max-w-sm" />
+      </Panel>
 
-        <div className="flex flex-col sm:flex-row items-center gap-2 mt-4">
-          <div className="relative flex-1 w-full">
-            <input
-              type="text"
-              dir="ltr"
-              value={studentPhoneSearch}
-              onChange={(e) => setStudentPhoneSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void searchStudent()}
-              placeholder="+201113871409 أو 01113871409"
-              className={`${input} font-mono text-left pl-3 pr-9`}
-            />
-            <span className="absolute right-3 top-2.5 text-gray-400 text-sm pointer-events-none">
-              📱
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={searchStudent}
-            disabled={searchingStudent}
-            className="w-full sm:w-auto shrink-0 rounded-lg bg-amber-500 px-5 py-2 text-sm font-bold text-gray-950 hover:bg-amber-400 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 shadow-md shadow-amber-500/10"
-          >
-            {searchingStudent ? (
-              <>
-                <span className="inline-block w-4 h-4 border-2 border-gray-950 border-t-transparent rounded-full animate-spin" />
-                <span>جارٍ البحث...</span>
-              </>
-            ) : (
-              <>
-                <span>بحث عن الطالب</span>
-                <span>🔍</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Found Students Results */}
+      <Panel title="الدخول كطالب" icon={<LogIn size={16} />} description="ابحث برقم هاتف الطالب لترى المنصة كما يراها وتحل مشكلته." actions={<Badge tone="gold">للمالك فقط</Badge>}>
+        <form onSubmit={searchStudent} className="flex flex-wrap gap-2">
+          <Input value={studentPhoneSearch} onChange={(e) => setStudentPhoneSearch(e.target.value)} placeholder="01113871409" mono inputMode="tel" aria-label="رقم هاتف الطالب" className="flex-1 min-w-[200px]" />
+          <Button type="submit" variant="primary" loading={searchingStudent} icon={<Search size={15} />}>بحث</Button>
+        </form>
         {foundStudents.length > 0 && (
-          <div className="mt-4 space-y-3 pt-4 border-t border-gray-700/60">
-            <div className="text-xs font-semibold text-gray-300 mb-2">
-              نتائج البحث ({foundStudents.length}):
-            </div>
+          <ul className="adm-well adm-list mt-4">
             {foundStudents.map((st) => (
-              <div
-                key={st.id}
-                className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-gray-900/80 border border-gray-700/80 hover:border-amber-500/40 transition-colors"
-              >
-                <div className="min-w-0 space-y-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-white text-sm">{st.name}</span>
-                    <span className="rounded bg-sky-500/20 text-sky-300 text-[11px] font-semibold px-2 py-0.5 border border-sky-500/30">
-                      {st.educationalStage === "sec_1"
-                        ? "أولى ثانوي"
-                        : st.educationalStage === "sec_2"
-                        ? "ثانية ثانوي"
-                        : st.educationalStage === "sec_3"
-                        ? "ثالثة ثانوي"
-                        : st.educationalStage || "غير محدد"}
-                    </span>
-                    <span
-                      className={`rounded text-[10px] font-bold px-1.5 py-0.5 ${
-                        st.isActive
-                          ? "bg-emerald-500/20 text-emerald-400"
-                          : "bg-rose-500/20 text-rose-400"
-                      }`}
-                    >
-                      {st.isActive ? "نشط" : "معطل"}
-                    </span>
-                  </div>
-                  <div className="text-xs text-gray-400 flex items-center gap-3 flex-wrap">
-                    <span className="font-mono text-gray-300">📱 {st.phone || "—"}</span>
-                    {st.parentPhone && (
-                      <span className="font-mono text-gray-400">👨‍👧 ولي الأمر: {st.parentPhone}</span>
-                    )}
-                    <span className="text-amber-400/90 font-bold">⭐ {st.points} نقطة</span>
-                    <span className="text-gray-500 text-[11px]">
-                      مسجل في: {st._count?.courseEnrollments || st._count?.accessCodes || 0} كورس
-                    </span>
-                  </div>
+              <li key={st.id} className="adm-row" style={{ padding: "12px 14px" }}>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold flex flex-wrap items-center gap-2">
+                    {st.name}
+                    <Badge>{STAGE[st.educationalStage ?? ""] ?? st.educationalStage ?? "غير محدد"}</Badge>
+                    <Badge tone={st.isActive ? "ok" : "bad"}>{st.isActive ? "نشط" : "معطل"}</Badge>
+                  </p>
+                  <p className="text-xs adm-muted mt-1">
+                    <span className="adm-mono">{st.phone || "—"}</span>
+                    {st.parentPhone && <> · ولي الأمر <span className="adm-mono">{st.parentPhone}</span></>}
+                    {" "}· {fmtNum(st.points)} نقطة · {fmtNum(st._count?.courseEnrollments || st._count?.accessCodes || 0)} كورس
+                  </p>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => loginAsStudent(st.id, st.name)}
-                  disabled={impersonatingId === st.id}
-                  className="w-full sm:w-auto shrink-0 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-2 text-xs font-bold text-white hover:from-emerald-400 hover:to-teal-400 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/20"
-                >
-                  {impersonatingId === st.id ? (
-                    <>
-                      <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>جارٍ الدخول...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>🚀 الدخول لحساب الطالب</span>
-                    </>
-                  )}
-                </button>
-              </div>
+                <Button size="sm" variant="primary" loading={impersonatingId === st.id} onClick={() => void loginAsStudent(st.id, st.name)} icon={<LogIn size={14} />}>
+                  الدخول كطالب
+                </Button>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </div>
+      </Panel>
 
-      {/* ── Real-Time Live Stream & Activity Log ── */}
-      <div className={card}>
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2.5">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-            </span>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-slate-900 dark:text-white text-base">سجل الأنشطة وتسجيل الطلاب المباشر (Live Stream)</h3>
-                <span className="rounded-full bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 px-2.5 py-0.5 text-[10px] font-bold border border-sky-200 dark:border-sky-800/40">
-                  إجمالي الطلاب: {totalStudentsCount}
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                تتبع لحظي بالوقت والتاريخ لحسابات الطلاب المنشأة وحذف الكورسات والعمليات الحية.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-            <button
-              type="button"
-              onClick={() => setAutoRefreshLive(!autoRefreshLive)}
-              className={`text-xs px-2.5 py-1 rounded-lg border font-semibold transition-colors flex items-center gap-1.5 ${
-                autoRefreshLive
-                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                  : "bg-gray-700/50 text-gray-400 border-gray-600"
-              }`}
-            >
-              <span>{autoRefreshLive ? "🟢 تحديث تلقائي (10ث)" : "⚪ متوقف"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => void fetchLiveLogs(true)}
-              disabled={loadingLiveLogs}
-              className="text-xs px-3 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-white font-bold border border-gray-600 transition-colors flex items-center gap-1"
-            >
-              <span>{loadingLiveLogs ? "..." : "🔄 تحديث"}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Tab Switcher */}
-        <div className="flex border-b border-gray-700 mb-3 gap-2">
-          <button
-            type="button"
-            onClick={() => setLiveTab("students")}
-            className={`pb-2 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 ${
-              liveTab === "students"
-                ? "border-sky-500 text-sky-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
-            }`}
-          >
-            <span>👥 تسجيلات الطلاب الحية</span>
-            <span className="rounded-full bg-gray-700 px-1.5 py-0.2 text-[10px] text-gray-300">
-              {liveStudents.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setLiveTab("actions")}
-            className={`pb-2 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 ${
-              liveTab === "actions"
-                ? "border-sky-500 text-sky-400"
-                : "border-transparent text-gray-400 hover:text-gray-200"
-            }`}
-          >
-            <span>🗑️ سجل العمليات وحذف الكورسات</span>
-            <span className="rounded-full bg-gray-700 px-1.5 py-0.2 text-[10px] text-gray-300">
-              {activityLogs.length}
-            </span>
-          </button>
-        </div>
-
-        {/* Tab 1: Live Students Stream */}
-        {liveTab === "students" && (
-          <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-            {liveStudents.length === 0 ? (
-              <div className="text-center py-6 text-xs text-gray-400">لا توجد تسجيلات حديثة.</div>
-            ) : (
-              liveStudents.map((st) => (
-                <div
-                  key={st.id}
-                  className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-gray-900/60 border border-gray-700/50 hover:bg-gray-900 transition-colors text-xs"
-                >
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="font-mono text-[11px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">
-                      ⏱️ {new Date(st.createdAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                    </span>
-                    <span className="font-bold text-white">{st.name}</span>
-                    <span className="font-mono text-gray-300">{st.phone || st.email}</span>
-                    <span className="rounded bg-gray-800 text-gray-300 text-[10px] px-1.5 py-0.5 border border-gray-700">
-                      {st.educationalStage === "sec_1"
-                        ? "أولى ثانوي"
-                        : st.educationalStage === "sec_2"
-                        ? "ثانية ثانوي"
-                        : st.educationalStage === "sec_3"
-                        ? "ثالثة ثانوي"
-                        : st.educationalStage || "عام"}
-                    </span>
-                    <span className="text-gray-500 text-[11px]">
-                      📅 {new Date(st.createdAt).toLocaleDateString("ar-EG", { month: "short", day: "numeric" })}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => loginAsStudent(st.id, st.name)}
-                    disabled={impersonatingId === st.id}
-                    className="shrink-0 px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[11px] font-bold border border-amber-500/30 transition-colors flex items-center gap-1"
-                  >
-                    {impersonatingId === st.id ? "..." : "🚀 دخول كطالب"}
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* Tab 2: Activity & Deletion Log */}
-        {liveTab === "actions" && (
-          <div className="max-h-72 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-            {activityLogs.length === 0 ? (
-              <div className="text-center py-6 text-xs text-gray-400">لا توجد عمليات مسجلة حديثاً.</div>
-            ) : (
-              activityLogs.map((log) => (
-                <div
-                  key={log.id}
-                  className="p-2.5 rounded-lg bg-gray-900/60 border border-gray-700/50 hover:bg-gray-900 transition-colors text-xs flex flex-col gap-1"
-                >
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-[11px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                        ⏱️ {new Date(log.createdAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                      </span>
-                      <span
-                        className={`font-bold px-2 py-0.5 rounded text-[11px] ${
-                          log.action === "COURSE_LIBRARY_REMOVE"
-                            ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-                            : log.action === "STUDENT_IMPERSONATE"
-                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                            : "bg-blue-500/20 text-blue-300 border border-blue-500/30"
-                        }`}
-                      >
-                        {log.action === "COURSE_LIBRARY_REMOVE"
-                          ? "🗑️ حذف كورس من المكتبة"
-                          : log.action === "STUDENT_IMPERSONATE"
-                          ? "🔐 دخول إداري كطالب"
-                          : log.action}
-                      </span>
-                      <span className="text-white font-semibold">{log.adminName}</span>
-                    </div>
-                    <span className="text-gray-500 text-[11px]">
-                      📅 {new Date(log.createdAt).toLocaleDateString("ar-EG", { month: "short", day: "numeric", year: "numeric" })}
-                    </span>
-                  </div>
-
-                  <div className="text-gray-300 text-[11px] flex items-center gap-2 flex-wrap pr-1">
-                    <span>الهدف: <strong className="text-white">{log.targetName}</strong></span>
-                    {log.meta && (
-                      <span className="text-gray-400 font-mono text-[10px]">
-                        {log.meta.studentPhone ? `(هاتف: ${log.meta.studentPhone})` : ""}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Maintenance */}
-      <div className={card}>
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h3 className="font-bold text-white">وضع الصيانة</h3>
-            <p className="text-xs text-gray-400">
-              يُظهر للزوّار صفحة «شيء رائع قادم». المشرفون العامون و /adminpanel يعملون بشكل طبيعي.
-            </p>
-          </div>
-          <button
-            onClick={toggleMaintenance}
-            disabled={busy}
-            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-              maintOn ? "bg-emerald-500" : "bg-gray-600"
-            }`}
-            aria-pressed={maintOn}
-            aria-label="تبديل وضع الصيانة"
-          >
-            <span
-              className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${
-                maintOn ? "left-1" : "right-1"
-              }`}
-            />
-          </button>
-        </div>
-        <span
-          className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-bold ${
-            maintOn ? "bg-emerald-500/15 text-emerald-400" : "bg-gray-700 text-gray-300"
-          }`}
-        >
-          {maintOn ? "الصيانة مُفعّلة الآن" : "الموقع يعمل بشكل طبيعي"}
-        </span>
-        <textarea
-          value={maintMsg}
-          onChange={(e) => setMaintMsg(e.target.value)}
-          rows={2}
-          maxLength={280}
-          placeholder="رسالة الصيانة المعروضة للزوّار..."
-          className={`${input} mt-3 resize-none`}
-        />
-        <button
-          onClick={saveMessage}
-          disabled={busy}
-          className="mt-2 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-sky-700 disabled:opacity-50"
-        >
-          حفظ الرسالة
-        </button>
-      </div>
-
-      {/* Emergency Overload Protection */}
-      <div className={card}>
-        <div className="mb-3 flex items-start justify-between">
-          <div>
-            <h3 className="font-bold text-white flex items-center gap-2">
-              <span>⚡ نظام حماية السيرفر الاستباقية من الانهيار</span>
-              {overloadState?.isTriggered && (
-                <span className="rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold animate-pulse">
-                  مُفعّل الآن لحماية السيرفر
-                </span>
-              )}
-            </h3>
-            <p className="text-xs text-gray-400 mt-1">
-              في حالة وصول ضغط الطلاب أو استهلاك الرام إلى الحد الأقصى (100%)، يتم توجيه الطلاب الجدد لغرفة الانتظار تلقائياً لمدة 15 دقيقة لمنع انهيار السيرفر. <b className="text-sky-400">/adminpanel يعمل دائماً بدون توقف للمشرفين.</b>
-            </p>
-          </div>
-        </div>
-
-        {/* Live RAM Gauge */}
-        {overloadState?.memory && (
-          <div className="mb-4 rounded-xl border border-gray-700 bg-gray-900/80 p-3">
-            <div className="flex items-center justify-between text-xs mb-1.5">
-              <span className="text-gray-400">استهلاك الرام الفعلي للسيرفر:</span>
-              <span className="font-mono font-bold text-white">
-                {overloadState.memory.usedMemPct}% ({overloadState.memory.usedMemMb} MB / {overloadState.memory.totalMemMb} MB)
-              </span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-gray-800 overflow-hidden">
-              <div
-                className={`h-full transition-all ${
-                  overloadState.memory.usedMemPct > 80
-                    ? "bg-red-500"
-                    : overloadState.memory.usedMemPct > 60
-                    ? "bg-amber-500"
-                    : "bg-emerald-500"
-                }`}
-                style={{ width: `${Math.min(100, overloadState.memory.usedMemPct)}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Mode Selector */}
-        <div className="mb-4">
-          <label className="mb-1 block text-xs font-semibold text-gray-300">وضع الحماية المطلوبة:</label>
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { id: "auto", label: "ذكي (Auto 85% RAM)" },
-              { id: "on", label: "تفعيل إجباري (Manual ON)" },
-              { id: "off", label: "إيقاف الحماية (OFF)" },
-            ].map((m) => (
-              <button
-                key={m.id}
-                onClick={() => updateOverload("setMode", { mode: m.id })}
-                disabled={busy}
-                className={`rounded-lg px-3 py-2 text-xs font-bold transition-all ${
-                  overloadState?.mode === m.id
-                    ? "bg-sky-600 text-white shadow-md"
-                    : "bg-gray-900 border border-gray-700 text-gray-400 hover:text-white"
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Manual Cooldown Buffer Timers */}
-        <div className="mb-4 rounded-xl border border-gray-700/60 bg-gray-900/40 p-3">
-          <label className="mb-2 block text-xs font-semibold text-gray-300">
-            التحكم في وقت التهداة المؤقتة للطلاب (Cooldown Buffer):
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => updateOverload("addCooldown", { addMinutes: 15 })}
-              disabled={busy}
-              className="rounded-lg bg-amber-500/20 border border-amber-500/40 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/30"
-            >
-              ⏱️ إعطاء مهلة +15 دقيقة
-            </button>
-            <button
-              onClick={() => updateOverload("addCooldown", { addMinutes: 30 })}
-              disabled={busy}
-              className="rounded-lg bg-amber-500/20 border border-amber-500/40 px-3 py-1.5 text-xs font-bold text-amber-300 hover:bg-amber-500/30"
-            >
-              ⏱️ إعطاء مهلة +30 دقيقة
-            </button>
-            <button
-              onClick={() => updateOverload("resetCooldown")}
-              disabled={busy}
-              className="rounded-lg bg-red-500/20 border border-red-500/40 px-3 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/30"
-            >
-              🛑 إلغاء وقت الانتظار فوراً
-            </button>
-          </div>
-          {overloadState?.remainingMinutes ? (
-            <p className="mt-2 text-[11px] text-amber-400 font-semibold">
-              متبقى على انتهاء فترة تنظيم المرور: {overloadState.remainingMinutes} دقيقة
-            </p>
-          ) : null}
-        </div>
-
-        {/* Custom Message */}
-        <div>
-          <label className="mb-1 block text-xs font-semibold text-gray-300">
-            الرسالة المعروضة للطلاب في غرفة الانتظار:
-          </label>
-          <textarea
-            value={overloadState?.message || ""}
-            onChange={(e) =>
-              setOverloadState((prev) => (prev ? { ...prev, message: e.target.value } : null))
-            }
-            rows={2}
-            maxLength={300}
-            className={`${input} resize-none`}
+      <Panel
+        title="السجل المباشر"
+        icon={<Activity size={16} />}
+        description={`آخر التسجيلات والعمليات · إجمالي الطلاب ${fmtNum(totalStudentsCount)}`}
+        padded={false}
+        actions={
+          <>
+            <label className="inline-flex items-center gap-2 text-xs font-semibold" style={{ color: "var(--ink-2)" }}>
+              تحديث كل ١٠ ث
+              <Switch checked={autoRefreshLive} onChange={setAutoRefreshLive} label="تحديث تلقائي" />
+            </label>
+            <Button size="sm" onClick={() => void fetchLiveLogs()} loading={loadingLiveLogs} icon={<RefreshCw size={14} />}>تحديث</Button>
+          </>
+        }
+      >
+        <div className="px-4 pt-3">
+          <Tabs<"students" | "actions">
+            label="السجل المباشر"
+            value={liveTab}
+            onChange={setLiveTab}
+            items={[
+              { id: "students", label: "تسجيلات الطلاب", icon: <Users size={14} />, badge: <Badge>{fmtNum(liveStudents.length)}</Badge> },
+              { id: "actions", label: "العمليات", icon: <Activity size={14} />, badge: <Badge>{fmtNum(activityLogs.length)}</Badge> },
+            ]}
           />
-          <button
-            onClick={() => updateOverload("setMessage", { message: overloadState?.message })}
-            disabled={busy}
-            className="mt-2 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
-          >
-            حفظ رسالة الانتظار
-          </button>
         </div>
-      </div>
+        <div className="max-h-80 overflow-y-auto mt-2">
+          {liveTab === "students" ? (
+            liveStudents.length === 0 ? (
+              <EmptyState title="لا توجد تسجيلات حديثة" />
+            ) : (
+              <ul className="adm-list">
+                {liveStudents.map((st) => (
+                  <li key={st.id} className="adm-row" style={{ padding: "10px 16px" }}>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold">{st.name} <span className="adm-mono adm-muted font-normal">{st.phone || st.email}</span></p>
+                      <p className="text-xs adm-muted">{fmtDateTime(st.createdAt)} · {STAGE[st.educationalStage ?? ""] ?? st.educationalStage ?? "عام"}</p>
+                    </div>
+                    <Button size="sm" variant="ghost" loading={impersonatingId === st.id} onClick={() => void loginAsStudent(st.id, st.name)}>دخول كطالب</Button>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : activityLogs.length === 0 ? (
+            <EmptyState title="لا توجد عمليات حديثة" />
+          ) : (
+            <ul className="adm-list">
+              {activityLogs.map((log) => (
+                <li key={log.id} className="adm-row" style={{ padding: "10px 16px" }}>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm flex flex-wrap items-center gap-2">
+                      <Badge tone={log.action === "COURSE_LIBRARY_REMOVE" ? "bad" : log.action === "STUDENT_IMPERSONATE" ? "ok" : "info"}>
+                        {log.action === "COURSE_LIBRARY_REMOVE" ? "حذف كورس من المكتبة" : log.action === "STUDENT_IMPERSONATE" ? "دخول إداري كطالب" : log.action}
+                      </Badge>
+                      <b>{log.adminName}</b>
+                      <span className="adm-muted">← {log.targetName}</span>
+                      {log.meta?.studentPhone ? <span className="adm-mono adm-muted">{String(log.meta.studentPhone)}</span> : null}
+                    </p>
+                  </div>
+                  <span className="text-xs adm-muted whitespace-nowrap">{fmtDateTime(log.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Panel>
 
-      {/* Virtual data */}
-      <div className={card}>
-        <h3 className="font-bold text-white">البيانات التجريبية</h3>
-        <p className="text-xs text-gray-400">
-          إنشاء طلاب ومدرسين وكورسات وهمية بفيديوهات يوتيوب للعرض والتجربة. الحالي:{" "}
-          <b className="text-gray-200">
-            {vCounts.students} طالب · {vCounts.teachers} مدرس · {vCounts.courses} كورس
-          </b>
-        </p>
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          {(["teachers", "students", "courses"] as const).map((k) => (
-            <div key={k}>
-              <label className="mb-1 block text-[11px] text-gray-400">
-                {k === "teachers" ? "مدرسون" : k === "students" ? "طلاب" : "كورسات"}
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={gen[k]}
-                onChange={(e) => setGen({ ...gen, [k]: Math.max(1, parseInt(e.target.value) || 1) })}
-                className={input}
-              />
+      <Panel
+        title="وضع الصيانة"
+        icon={<Construction size={16} />}
+        description="يُظهر للزوّار صفحة «شيء رائع قادم». المشرفون ولوحة الإدارة يعملون طبيعياً."
+        actions={
+          <>
+            <Badge tone={maintOn ? "warn" : "ok"} dot>{maintOn ? "الصيانة مفعّلة" : "الموقع يعمل"}</Badge>
+            <Switch checked={maintOn} disabled={busy === "maint"} onChange={(v) => (v ? setPending({ kind: "maintenance-on" }) : void setMaintenance(false))} label="وضع الصيانة" />
+          </>
+        }
+      >
+        <Field label="رسالة الصيانة" hint={`${fmtNum(maintMsg.length)} / ٢٨٠`} htmlFor="maint-msg">
+          <Textarea id="maint-msg" rows={2} maxLength={280} value={maintMsg} onChange={(e) => setMaintMsg(e.target.value)} placeholder="الرسالة المعروضة للزوّار" />
+        </Field>
+        <Button className="mt-3" onClick={() => void saveMessage()} loading={busy === "maint-msg"}>حفظ الرسالة</Button>
+      </Panel>
+
+      <Panel
+        title="حماية السيرفر من الضغط"
+        icon={<Gauge size={16} />}
+        description="عند اقتراب الرام من الحد الأقصى، يُحوّل الطلاب الجدد لغرفة انتظار ١٥ دقيقة لمنع انهيار السيرفر. لوحة الإدارة تعمل دائماً."
+        actions={overloadState?.isTriggered ? <Badge tone="warn" live>غرفة الانتظار مفعّلة الآن</Badge> : undefined}
+      >
+        <div className="flex flex-col gap-4">
+          {mem && (
+            <div>
+              <div className="flex items-center justify-between text-xs mb-1.5">
+                <span className="adm-muted">استهلاك الرام</span>
+                <span className="adm-num font-bold">
+                  {fmtNum(mem.usedMemPct)}٪ · {fmtNum(mem.usedMemMb)} / {fmtNum(mem.totalMemMb)} MB
+                </span>
+              </div>
+              <div className="adm-bar" role="progressbar" aria-valuenow={mem.usedMemPct} aria-valuemin={0} aria-valuemax={100} aria-label="استهلاك الرام">
+                <span style={{ width: `${Math.min(100, mem.usedMemPct)}%`, background: memColor }} />
+              </div>
             </div>
+          )}
+
+          <div role="radiogroup" aria-label="وضع الحماية" className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {(
+              [
+                { id: "auto", label: "تلقائي", sub: `عند ${fmtNum(overloadState?.ramThresholdPct ?? 85)}٪ رام` },
+                { id: "on", label: "تفعيل إجباري", sub: "غرفة الانتظار الآن" },
+                { id: "off", label: "إيقاف", sub: "بدون حماية" },
+              ] as const
+            ).map((m) => {
+              const active = overloadState?.mode === m.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={busy === "ov-mode"}
+                  onClick={() => (m.id === "on" ? setPending({ kind: "overload-on" }) : void updateOverload("ov-mode", "setMode", { mode: m.id }))}
+                  className="rounded-xl px-3 py-2.5 text-start cursor-pointer disabled:opacity-50"
+                  style={{ border: `1px solid ${active ? "var(--brand)" : "var(--border-strong)"}`, background: active ? "var(--brand-soft)" : "var(--surface)" }}
+                >
+                  <p className="text-sm font-bold" style={{ color: active ? "var(--brand)" : "var(--ink)" }}>{m.label}</p>
+                  <p className="text-xs adm-muted">{m.sub}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="adm-well p-3 flex flex-wrap items-center gap-2">
+            <span className="adm-label me-auto">مهلة غرفة الانتظار</span>
+            <Button size="sm" loading={busy === "ov-15"} onClick={() => void updateOverload("ov-15", "addCooldown", { addMinutes: 15 })}>+١٥ دقيقة</Button>
+            <Button size="sm" loading={busy === "ov-30"} onClick={() => void updateOverload("ov-30", "addCooldown", { addMinutes: 30 })}>+٣٠ دقيقة</Button>
+            <Button size="sm" variant="danger" loading={busy === "ov-reset"} onClick={() => void updateOverload("ov-reset", "resetCooldown")}>إلغاء الانتظار الآن</Button>
+            {overloadState?.remainingMinutes ? <p className="w-full text-xs" style={{ color: "var(--warn)" }}>متبقٍ {fmtNum(overloadState.remainingMinutes)} دقيقة</p> : null}
+          </div>
+
+          <Field label="رسالة غرفة الانتظار" htmlFor="ov-msg">
+            <Textarea
+              id="ov-msg"
+              rows={2}
+              maxLength={300}
+              value={overloadState?.message || ""}
+              onChange={(e) => setOverloadState((prev) => (prev ? { ...prev, message: e.target.value } : prev))}
+            />
+          </Field>
+          <div>
+            <Button loading={busy === "ov-msg"} onClick={() => void updateOverload("ov-msg", "setMessage", { message: overloadState?.message })}>حفظ الرسالة</Button>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel
+        title="البيانات التجريبية"
+        icon={<Database size={16} />}
+        description={`طلاب ومدرسون وكورسات وهمية بفيديوهات يوتيوب للعرض. الحالي: ${fmtNum(vCounts.students)} طالب · ${fmtNum(vCounts.teachers)} مدرس · ${fmtNum(vCounts.courses)} كورس`}
+      >
+        <div className="grid grid-cols-3 gap-3 max-w-md">
+          {(["teachers", "students", "courses"] as const).map((k) => (
+            <Field key={k} label={k === "teachers" ? "مدرسون" : k === "students" ? "طلاب" : "كورسات"} htmlFor={`gen-${k}`}>
+              <Input id={`gen-${k}`} type="number" min={1} mono value={gen[k]} onChange={(e) => setGen({ ...gen, [k]: Math.max(1, parseInt(e.target.value, 10) || 1) })} />
+            </Field>
           ))}
         </div>
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={generate}
-            disabled={busy}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
-          >
-            توليد بيانات تجريبية
-          </button>
-          <button
-            onClick={clearVirtual}
-            disabled={busy}
-            className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
-          >
-            حذف كل البيانات التجريبية
-          </button>
+        <div className="flex flex-wrap gap-2 mt-4">
+          <Button variant="primary" loading={busy === "gen"} onClick={() => void generate()}>توليد</Button>
+          <Button variant="danger" icon={<Trash2 size={15} />} loading={busy === "clear-virtual"} onClick={() => setPending({ kind: "clear-virtual" })}>حذف كل البيانات التجريبية</Button>
         </div>
-      </div>
+      </Panel>
 
-      {/* Superadmins management */}
-      <div className={card}>
-        <h3 className="mb-3 font-bold text-white">إدارة المشرفين العامين</h3>
-        <div className="space-y-2">
+      <Panel title="المشرفون العامون" icon={<ShieldCheck size={16} />} padded={false}>
+        <ul className="adm-list">
           {admins.map((a) => (
             <SuperadminRow
               key={a.id}
               admin={a}
               isSelf={a.id === selfId}
-              onRename={renameAdmin}
-              onChangePw={changePw}
-              onClearPw={clearPw}
-              onToggleActive={toggleActive}
-              onRemove={removeAdmin}
+              busy={busy}
+              onRename={(name) => void renameAdmin(a.id, name)}
+              onChangePw={(pw) => void changePw(a.id, pw)}
+              onClearPw={() => setPending({ kind: "clear-pw", admin: a })}
+              onToggleActive={() => void toggleActive(a)}
+              onRemove={() => setPending({ kind: "remove-admin", admin: a })}
             />
           ))}
-        </div>
-
-        {/* Create */}
-        <div className="mt-4 border-t border-gray-700 pt-4">
-          <p className="mb-2 text-xs font-semibold text-gray-300">إضافة مشرف عام</p>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <input
-              value={newAdmin.name}
-              onChange={(e) => setNewAdmin({ ...newAdmin, name: e.target.value })}
-              placeholder="الاسم"
-              className={input}
-            />
-            <input
-              value={newAdmin.email}
-              onChange={(e) => setNewAdmin({ ...newAdmin, email: e.target.value })}
-              placeholder="البريد الإلكتروني"
-              className={input}
-            />
-            <input
-              type="password"
-              value={newAdmin.password}
-              onChange={(e) => setNewAdmin({ ...newAdmin, password: e.target.value })}
-              placeholder="كلمة المرور"
-              className={input}
-            />
+        </ul>
+        <form onSubmit={createAdmin} className="adm-panel-foot" style={{ alignItems: "flex-end" }}>
+          <p className="adm-label w-full flex items-center gap-1.5"><UserPlus size={14} aria-hidden /> مشرف عام جديد</p>
+          <div className="grid gap-2 sm:grid-cols-3 flex-1 min-w-[260px]">
+            <Input inputSize="sm" required value={newAdmin.name} onChange={(e) => setNewAdmin({ ...newAdmin, name: e.target.value })} placeholder="الاسم" aria-label="الاسم" />
+            <Input inputSize="sm" required type="email" mono value={newAdmin.email} onChange={(e) => setNewAdmin({ ...newAdmin, email: e.target.value })} placeholder="البريد" aria-label="البريد" />
+            <Input inputSize="sm" required type="password" autoComplete="new-password" value={newAdmin.password} onChange={(e) => setNewAdmin({ ...newAdmin, password: e.target.value })} placeholder="كلمة المرور" aria-label="كلمة المرور" />
           </div>
-          <button
-            onClick={createAdmin}
-            disabled={busy}
-            className="mt-2 rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-sky-700 disabled:opacity-50"
-          >
-            إنشاء
-          </button>
-        </div>
-      </div>
+          <Button type="submit" size="sm" variant="primary" loading={busy === "create-admin"}>إنشاء</Button>
+        </form>
+      </Panel>
+
+      <Modal
+        open={!!pending}
+        onClose={() => setPending(null)}
+        size="sm"
+        title={pending ? confirmMeta[pending.kind].title : ""}
+        description={
+          pending?.kind === "remove-admin"
+            ? `سيُحذف حساب ${pending.admin.name} (${pending.admin.email}) ولن يستطيع الدخول.`
+            : pending?.kind === "clear-pw"
+              ? `لن يستطيع ${pending.admin.name} الدخول بكلمة مرور بعد ذلك.`
+              : pending
+                ? confirmMeta[pending.kind].text
+                : undefined
+        }
+        footer={
+          <>
+            <Button onClick={() => setPending(null)}>إلغاء</Button>
+            <Button variant={pending && confirmMeta[pending.kind].danger ? "danger-solid" : "primary"} onClick={() => void runPending()}>
+              {pending ? confirmMeta[pending.kind].action : ""}
+            </Button>
+          </>
+        }
+      />
     </div>
   );
 }
@@ -977,6 +620,7 @@ export function InstanceControlSection() {
 function SuperadminRow({
   admin,
   isSelf,
+  busy,
   onRename,
   onChangePw,
   onClearPw,
@@ -985,95 +629,62 @@ function SuperadminRow({
 }: {
   admin: Superadmin;
   isSelf: boolean;
-  onRename: (id: string, name: string) => void;
-  onChangePw: (id: string, password: string) => void;
-  onClearPw: (id: string, name: string) => void;
-  onToggleActive: (a: Superadmin) => void;
-  onRemove: (id: string) => void;
+  busy: string | null;
+  onRename: (name: string) => void;
+  onChangePw: (password: string) => void;
+  onClearPw: () => void;
+  onToggleActive: () => void;
+  onRemove: () => void;
 }) {
   const [name, setName] = useState(admin.name);
   const [pw, setPw] = useState("");
 
   return (
-    <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm font-bold text-white">{admin.email}</span>
-        {admin.isOwner && (
-          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">
-            المالك
-          </span>
-        )}
-        {!admin.isActive && (
-          <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-bold text-red-400">
-            موقوف
-          </span>
-        )}
-        {isSelf && <span className="text-[10px] text-gray-500">(أنت)</span>}
-      </div>
+    <li className="px-4 py-4 flex flex-col gap-3">
+      <p className="text-sm font-bold flex flex-wrap items-center gap-2">
+        <span className="adm-mono">{admin.email}</span>
+        {admin.isOwner && <Badge tone="gold">المالك</Badge>}
+        {!admin.isActive && <Badge tone="bad">موقوف</Badge>}
+        {isSelf && <Badge>أنت</Badge>}
+      </p>
       <div className="flex flex-wrap items-end gap-2">
-        <div className="flex-1 min-w-[120px]">
-          <label className="mb-1 block text-[10px] text-gray-500">الاسم</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
-          />
-        </div>
-        <button
-          onClick={() => onRename(admin.id, name)}
-          className="rounded-lg bg-gray-700 px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600"
+        <form
+          className="flex items-end gap-2 flex-1 min-w-[220px]"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onRename(name);
+          }}
         >
-          حفظ الاسم
-        </button>
-        <div className="flex-1 min-w-[120px]">
-          <label className="mb-1 block text-[10px] text-gray-500">كلمة مرور جديدة</label>
-          <input
-            type="password"
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            placeholder="••••••"
-            className="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
-          />
-        </div>
-        <button
-          onClick={() => {
+          <Field label="الاسم" htmlFor={`sa-name-${admin.id}`} className="flex-1">
+            <Input id={`sa-name-${admin.id}`} inputSize="sm" value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Button type="submit" size="sm" disabled={name === admin.name} loading={busy === `rename:${admin.id}`}>حفظ</Button>
+        </form>
+        <form
+          className="flex items-end gap-2 flex-1 min-w-[220px]"
+          onSubmit={(e) => {
+            e.preventDefault();
             if (pw) {
-              onChangePw(admin.id, pw);
+              onChangePw(pw);
               setPw("");
             }
           }}
-          className="rounded-lg bg-gray-700 px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-600"
         >
-          تغيير كلمة المرور
-        </button>
-        {!admin.isOwner && (
-          <button
-            onClick={() => onClearPw(admin.id, admin.name)}
-            title="حذف كلمة المرور (يمنع تسجيل الدخول بكلمة مرور)"
-            className="rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-500/25"
-          >
-            🗑 حذف كلمة المرور
-          </button>
-        )}
-        {!admin.isOwner && (
-          <>
-            <button
-              onClick={() => onToggleActive(admin)}
-              className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 hover:bg-amber-500/20"
-            >
-              {admin.isActive ? "إيقاف" : "تفعيل"}
-            </button>
-            {!isSelf && (
-              <button
-                onClick={() => onRemove(admin.id)}
-                className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/20"
-              >
-                حذف
-              </button>
-            )}
-          </>
-        )}
+          <Field label="كلمة مرور جديدة" htmlFor={`sa-pw-${admin.id}`} className="flex-1">
+            <Input id={`sa-pw-${admin.id}`} inputSize="sm" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
+          </Field>
+          <Button type="submit" size="sm" disabled={!pw} loading={busy === `pw:${admin.id}`}>تغيير</Button>
+        </form>
       </div>
-    </div>
+      {!admin.isOwner && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="ghost" onClick={onClearPw} loading={busy === `clearpw:${admin.id}`}>حذف كلمة المرور</Button>
+          <Button size="sm" variant="ghost" onClick={onToggleActive} loading={busy === `active:${admin.id}`}>{admin.isActive ? "إيقاف" : "تفعيل"}</Button>
+          {!isSelf && (
+            <Button size="sm" variant="danger" onClick={onRemove} loading={busy === `remove:${admin.id}`} icon={<Trash2 size={14} />}>حذف</Button>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

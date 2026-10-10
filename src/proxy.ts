@@ -19,6 +19,7 @@ const PROTECTED_PAGE_PREFIXES = [
   "/codes",
   "/complete-profile",
   "/account",
+  "/practice",
 ];
 
 /** Protected API routes — require a valid session; return 401 JSON on failure.
@@ -34,6 +35,7 @@ const PROTECTED_API_PREFIXES = [
   "/api/student",
   "/api/homework",
   "/api/notifications",
+  "/api/practice",
 ];
 
 /** Paths under /courses that require auth (the learning room) */

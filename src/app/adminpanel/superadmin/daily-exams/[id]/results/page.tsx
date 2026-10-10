@@ -1,104 +1,117 @@
+import "@/components/admin/ui/admin.css";
 import { prisma } from "@/lib/prisma";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowRight, Users, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, Trophy, Users } from "lucide-react";
+import { EDUCATIONAL_STAGES } from "@/types";
+
+export const dynamic = "force-dynamic";
 
 export default async function DailyExamResultsPage({ params }: { params: Promise<{ id: string }> }) {
-  const resolvedParams = await params;
+  const { id } = await params;
   const exam = await prisma.dailyExam.findUnique({
-    where: { id: resolvedParams.id },
+    where: { id },
     include: {
       results: {
-        include: { student: true },
-        orderBy: { score: "desc" }
+        select: {
+          id: true,
+          score: true,
+          totalQ: true,
+          completedAt: true,
+          student: { select: { name: true, email: true, phone: true } },
+        },
+        orderBy: [{ score: "desc" }, { completedAt: "asc" }],
       },
-      _count: {
-        select: { questions: true }
-      }
-    }
+      _count: { select: { questions: true } },
+    },
   });
 
   if (!exam) return notFound();
 
+  const n = exam.results.length;
+  const avg = n > 0 ? exam.results.reduce((acc, r) => acc + r.score, 0) / n : 0;
+  const perfect = exam.results.filter((r) => r.score === exam._count.questions && exam._count.questions > 0).length;
+  const stage = EDUCATIONAL_STAGES.find((s) => s.value === exam.educationalStage)?.label ?? exam.educationalStage;
+  const num = (v: number) => v.toLocaleString("ar-EG");
+
   return (
-    <div className="p-6">
-      <div className="mb-8">
-        <Link 
-          href="/adminpanel/superadmin/daily-exams"
-          className="flex items-center gap-2 text-slate-500 hover:text-blue-600 transition mb-4 w-max"
-        >
-          <ArrowRight className="w-4 h-4" /> العودة للقائمة
-        </Link>
-        <h1 className="text-2xl font-bold text-slate-800">نتائج التحدي: {exam.title}</h1>
-        <p className="text-slate-500 mt-1">تاريخ التحدي: {exam.date.toLocaleDateString('ar-EG')} - {exam.educationalStage}</p>
-      </div>
+    <div className="adm min-h-dvh" dir="rtl">
+      <main className="adm-main" style={{ paddingBottom: 48 }}>
+        <div className="adm-main-inner" style={{ maxWidth: 1100 }}>
+          <Link href="/adminpanel/superadmin?section=daily-exams" className="adm-btn is-ghost is-sm" style={{ alignSelf: "flex-start" }}>
+            <ArrowRight size={15} aria-hidden /> امتحانات لوحة الشرف
+          </Link>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
-          <div className="p-3 bg-blue-100 text-blue-600 rounded-lg">
-            <Users className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-sm text-slate-500 font-medium">إجمالي المشاركين</p>
-            <h3 className="text-2xl font-bold text-slate-800">{exam.results.length} طالب</h3>
-          </div>
-        </div>
-        
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
-          <div className="p-3 bg-emerald-100 text-emerald-600 rounded-lg">
-            <CheckCircle2 className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-sm text-slate-500 font-medium">متوسط الدرجات</p>
-            <h3 className="text-2xl font-bold text-slate-800">
-              {exam.results.length > 0 ? (exam.results.reduce((acc, curr) => acc + curr.score, 0) / exam.results.length).toFixed(1) : 0} / {exam._count.questions}
-            </h3>
-          </div>
-        </div>
-      </div>
+          <header className="adm-page-head">
+            <div>
+              <h1 className="adm-h1">نتائج: {exam.title}</h1>
+              <p className="adm-lede">
+                {exam.date.toLocaleDateString("ar-EG", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} · {stage} · {num(exam._count.questions)} سؤال
+              </p>
+            </div>
+          </header>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <table className="w-full text-right">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>
-              <th className="py-4 px-6 text-slate-600 font-semibold">المتعلم</th>
-              <th className="py-4 px-6 text-slate-600 font-semibold">الدرجة</th>
-              <th className="py-4 px-6 text-slate-600 font-semibold">تاريخ الانتهاء</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {exam.results.length > 0 ? exam.results.map((result, index) => (
-              <tr key={result.id} className="hover:bg-slate-50 transition-colors">
-                <td className="py-4 px-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-sm">
-                      {index + 1}
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-800">{result.student.name}</p>
-                      <p className="text-xs text-slate-500">{result.student.email}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="py-4 px-6">
-                  <span className={`font-bold ${result.score === exam._count.questions ? 'text-emerald-600' : 'text-slate-700'}`}>
-                    {result.score} / {result.totalQ}
-                  </span>
-                </td>
-                <td className="py-4 px-6 text-slate-600 text-sm">
-                  {result.completedAt.toLocaleString('ar-EG')}
-                </td>
-              </tr>
-            )) : (
-              <tr>
-                <td colSpan={3} className="py-8 text-center text-slate-500">
-                  لا توجد نتائج مسجلة لهذا التحدي حتى الآن.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          <div className="adm-stats">
+            <div className="adm-stat">
+              <div className="adm-stat-label">المشاركون <Users size={16} style={{ color: "var(--brand)" }} aria-hidden /></div>
+              <div className="adm-stat-value">{num(n)}</div>
+            </div>
+            <div className="adm-stat">
+              <div className="adm-stat-label">متوسط الدرجات <Trophy size={16} style={{ color: "var(--gold)" }} aria-hidden /></div>
+              <div className="adm-stat-value">
+                {avg.toLocaleString("ar-EG", { maximumFractionDigits: 1 })} / {num(exam._count.questions)}
+              </div>
+            </div>
+            <div className="adm-stat">
+              <div className="adm-stat-label">درجة كاملة <CheckCircle2 size={16} style={{ color: "var(--ok)" }} aria-hidden /></div>
+              <div className="adm-stat-value" style={{ color: "var(--ok)" }}>{num(perfect)}</div>
+            </div>
+          </div>
+
+          <section className="adm-panel adm-panel-clip">
+            <div className="adm-table-wrap">
+              <table className="adm-table" style={{ minWidth: 560 }}>
+                <thead>
+                  <tr>
+                    <th className="is-center" style={{ width: 64 }}>#</th>
+                    <th>المتعلم</th>
+                    <th className="is-num">الدرجة</th>
+                    <th>وقت الإنهاء</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {n > 0 ? (
+                    exam.results.map((r, i) => (
+                      <tr key={r.id}>
+                        <td className="is-center">
+                          <span className="adm-avatar" style={{ width: 30, height: 30, margin: "0 auto", fontSize: 13 }}>{num(i + 1)}</span>
+                        </td>
+                        <td>
+                          <p className="font-bold">{r.student.name}</p>
+                          <p className="text-xs adm-muted adm-mono">{r.student.phone || r.student.email}</p>
+                        </td>
+                        <td className="is-num font-bold" style={{ color: r.score === exam._count.questions ? "var(--ok)" : undefined }}>
+                          {num(r.score)} / {num(r.totalQ)}
+                        </td>
+                        <td className="adm-muted whitespace-nowrap">{r.completedAt.toLocaleString("ar-EG")}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4}>
+                        <div className="adm-empty">
+                          <p className="adm-empty-title">لا توجد نتائج بعد</p>
+                          <p className="adm-empty-text">ستظهر النتائج هنا فور حل الطلاب للتحدي.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
     </div>
   );
 }

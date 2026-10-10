@@ -69,7 +69,7 @@ export default function AIProviders() {
                 { label: "نسبة الكاش", value: `${p.cacheHitRate}%` },
               ].map((s) => (
                 <div key={s.label}>
-                  <div className="text-[11px] font-medium" style={{ color: "var(--ink-3)" }}>{s.label}</div>
+                  <div className="text-xs font-medium" style={{ color: "var(--ink-3)" }}>{s.label}</div>
                   <div className="text-sm font-bold" style={{ color: "var(--ink)" }}>{s.value}</div>
                 </div>
               ))}

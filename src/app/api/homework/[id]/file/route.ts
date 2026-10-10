@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { isTeacherLike, actingTeacherId } from "@/lib/teacher-scope";
+import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { checkHomeworkAccess } from "@/lib/authorization";
 import path from "path";
@@ -8,6 +8,27 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 
 const UPLOAD_BASE = path.join(process.cwd(), "uploads", "homework");
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".zip": "application/zip",
+  ".py": "text/x-python",
+  ".js": "application/javascript",
+  ".txt": "text/plain",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".heic": "image/heic",
+};
+
+/**
+ * Types the browser may render in place (`?inline=1`, the teacher's preview).
+ * Everything else, SVG and HTML included, is always a download, so a student
+ * file can never run script on this origin.
+ */
+const INLINE_SAFE = new Set(["application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 export async function GET(
   req: NextRequest,
@@ -20,6 +41,7 @@ export async function GET(
   const { searchParams } = new URL(req.url);
   const fileName = searchParams.get("fileName");
   const studentId = searchParams.get("studentId");
+  const wantInline = searchParams.get("inline") === "1";
 
   if (!fileName || !studentId) {
     return NextResponse.json({ error: "بيانات غير كاملة" }, { status: 400 });
@@ -39,6 +61,9 @@ export async function GET(
       return NextResponse.json({ error: "غير مصرح لك بالوصول لهذا الواجب" }, { status: 403 });
     }
   } else if (isTeacherLike(session.role)) {
+    if (!hasAssistantPermission(session, "gradeHomework") && !hasAssistantPermission(session, "manageHomework")) {
+      return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية الواجبات" }, { status: 403 });
+    }
     const hw = await prisma.homework.findUnique({
       where: { id: homeworkId },
       select: { teacherId: true }
@@ -67,17 +92,9 @@ export async function GET(
   try {
     const buffer = await fs.readFile(filePath);
     
-    // Simple extension to content-type map
     const ext = path.extname(cleanFileName).toLowerCase();
-    let contentType = "application/octet-stream";
-    if (ext === ".pdf") contentType = "application/pdf";
-    else if (ext === ".zip") contentType = "application/zip";
-    else if (ext === ".py") contentType = "text/x-python";
-    else if (ext === ".js") contentType = "application/javascript";
-    else if (ext === ".txt") contentType = "text/plain";
-    else if ([".png", ".jpg", ".jpeg", ".gif"].includes(ext)) {
-      contentType = `image/${ext.replace(".", "")}`;
-    }
+    const contentType = CONTENT_TYPES[ext] ?? "application/octet-stream";
+    const inline = wantInline && INLINE_SAFE.has(contentType);
 
     // Strip anything that could break out of the quoted filename param (quotes,
     // control chars, CR/LF) before putting it in the response header.
@@ -86,8 +103,9 @@ export async function GET(
     return new Response(buffer, {
       headers: {
         "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename="${headerName}"; filename*=UTF-8''${encodeURIComponent(cleanFileName)}`,
+        "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${headerName}"; filename*=UTF-8''${encodeURIComponent(cleanFileName)}`,
         "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
       },
     });
   } catch (err) {

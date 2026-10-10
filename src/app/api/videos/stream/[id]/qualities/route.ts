@@ -3,6 +3,7 @@ import path from "path";
 import { getSession } from "@/lib/auth";
 import { PREVIEW_COOKIE_NAME, verifyPreviewCookie } from "@/lib/preview-auth";
 import { availableQualities } from "@/lib/video-renditions";
+import { hlsReady } from "@/lib/hls-package";
 
 /**
  * Qualities the Native (alasly / Drive) player always offers: Auto, 360p,
@@ -22,14 +23,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const base = safeFilename.startsWith("gdrive_") ? `${safeFilename}.mp4` : safeFilename;
 
   try {
-    const qualities = await availableQualities(base);
+    const [qualities, hls] = await Promise.all([availableQualities(base), hlsReady(safeFilename)]);
+    // hlsUrl: the encrypted package exists, so the player must use it (students
+    // are refused the plain MP4 from then on).
     return NextResponse.json(
-      { qualities },
+      { qualities, hlsUrl: hls ? `/api/videos/hls/${encodeURIComponent(safeFilename)}/master.m3u8` : null },
       { headers: { "Cache-Control": "private, max-age=60" } }
     );
   } catch (error) {
     console.error("[videos/stream/qualities] error:", error);
     // A player that cannot list qualities must still play the lesson.
-    return NextResponse.json({ qualities: [] });
+    return NextResponse.json({ qualities: [], hlsUrl: null });
   }
 }

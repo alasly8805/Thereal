@@ -27,20 +27,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
     }
 
-    // Get all students enrolled in this course (strictly excluding testers)
+    // Codes and direct enrollments, plus students whose paid booking opens this course.
     const { TeacherVisibilityService } = await import("@/services/teacher/TeacherVisibilityService");
-    const students = await prisma.user.findMany({
+    const studentSelect = {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      educationalStage: true,
+      isActive: true,
+      createdAt: true,
+    } as const;
+    const directStudents = await prisma.user.findMany({
       where: TeacherVisibilityService.getEnrolledStudentsWhere(courseId),
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        educationalStage: true,
-        isActive: true,
-        createdAt: true,
-      },
+      select: studentSelect,
     });
+    const bookingIds = await TeacherVisibilityService.listBookingStudentIds(course);
+    const seen = new Set(directStudents.map((s) => s.id));
+    const missingBookingIds = bookingIds.filter((id) => !seen.has(id));
+    const bookingStudents = missingBookingIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: missingBookingIds } },
+          select: studentSelect,
+        })
+      : [];
+    const students = [...directStudents, ...bookingStudents];
 
     const canSeePhones = hasAssistantPermission(session, "viewStudentPhones");
     const canViewStudents = hasAssistantPermission(session, "canViewStudents");

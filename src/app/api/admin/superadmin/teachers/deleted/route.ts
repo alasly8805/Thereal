@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const graceDays = await getTeacherGraceDays();
+    let purged = 0;
     // ── Lazy purge: anyone past the grace window is gone forever ──
     // Never run this from a showroom session — it would delete real teachers.
     if (!session.demoTour) {
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
         const ids = expired.map((t) => t.id);
         await prisma.course.deleteMany({ where: { teacherId: { in: ids } } });
         await prisma.user.deleteMany({ where: { id: { in: ids } } });
+        purged = ids.length;
       }
     }
 
@@ -54,7 +56,7 @@ export async function GET(req: NextRequest) {
       orderBy: { deletedAt: "desc" },
     });
 
-    return NextResponse.json({ teachers, graceDays, purged: expired.length });
+    return NextResponse.json({ teachers, graceDays, purged });
   } catch (error) {
     console.error("Deleted teachers fetch error:", error);
     return NextResponse.json({ error: "تعذر جلب المعلمين المحذوفين" }, { status: 500 });

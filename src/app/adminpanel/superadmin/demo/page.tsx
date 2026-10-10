@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
 import { useToast } from "@/components/ui/Toast";
+import { admConfirm, DialogHost } from "@/components/admin/ui/kit";
+import "@/components/admin/ui/admin.css";
 
 interface FeatureItem {
   id: string;
@@ -194,7 +196,7 @@ export default function SuperadminDemoChecklistPage() {
   };
 
   const handleRemove = async () => {
-    if (!confirm("هل أنت متأكد من رغبتك في حذف وتفريغ كافة بيانات المعلم التجريبي بالكامل؟")) return;
+    if (!(await admConfirm({ title: "حذف كل بيانات المعلم التجريبي؟", confirmLabel: "حذف", danger: true }))) return;
     try {
       setActionLoading(true);
       const res = await fetch("/api/admin/superadmin/demo", { method: "DELETE" });
@@ -213,14 +215,15 @@ export default function SuperadminDemoChecklistPage() {
   };
 
   return (
-    <div dir="rtl" className="min-h-screen bg-[var(--bg)] text-[var(--ink)] p-4 sm:p-8">
+    <div dir="rtl" className="adm min-h-screen p-4 sm:p-8">
+      <DialogHost />
       <div className="max-w-6xl mx-auto space-y-8">
         
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border)] pb-6">
           <div>
             <div className="flex items-center gap-3 mb-1">
-              <span className="px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-xs font-black">
+              <span className="px-2.5 py-1 rounded-full bg-amber-500/15 text-[var(--warn)] text-xs font-black">
                 SUPERADMIN SHOWROOM
               </span>
               <h1 className="text-2xl sm:text-3xl font-black">معرض المزايا الشامل (Demo Showroom)</h1>
@@ -248,18 +251,18 @@ export default function SuperadminDemoChecklistPage() {
               {loading ? (
                 <span className="text-xs text-[var(--ink-muted)]">جاري الفحص...</span>
               ) : status?.seeded ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-500/15 text-[var(--ok)]">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   مفعل وجاهز للاستعراض
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-rose-500/15 text-[var(--danger)]">
                   غير مزروع حالياً
                 </span>
               )}
             </div>
             <p className="text-xs text-[var(--ink-muted)]">
-              حساب الدخول: <code className="bg-[var(--surface-2)] px-2 py-0.5 rounded font-mono font-bold text-amber-500">test</code> | كلمة المرور: <code className="bg-[var(--surface-2)] px-2 py-0.5 rounded font-mono font-bold text-amber-500">Admin123</code> | عدد الطلاب التجريبيين: <span className="font-bold">{status?.demoStudentsCount ?? 0}</span>
+              حساب الدخول: <code className="bg-[var(--surface-2)] px-2 py-0.5 rounded font-mono font-bold text-[var(--warn)]">test</code> | كلمة المرور: <code className="bg-[var(--surface-2)] px-2 py-0.5 rounded font-mono font-bold text-[var(--warn)]">Admin123</code> | عدد الطلاب التجريبيين: <span className="font-bold">{status?.demoStudentsCount ?? 0}</span>
             </p>
           </div>
 
@@ -274,7 +277,7 @@ export default function SuperadminDemoChecklistPage() {
             <button
               onClick={handleRemove}
               disabled={actionLoading || !status?.seeded}
-              className="flex-1 md:flex-none px-4 py-2.5 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition-all active:scale-95 disabled:opacity-40"
+              className="flex-1 md:flex-none px-4 py-2.5 rounded-xl text-xs font-bold text-[var(--danger)] bg-rose-500/10 hover:bg-rose-500/20 border border-[color-mix(in_srgb,var(--danger)_32%,transparent)] transition-all active:scale-95 disabled:opacity-40"
             >
               حذف وتفريغ البيانات
             </button>
@@ -291,20 +294,20 @@ export default function SuperadminDemoChecklistPage() {
             {SHOWROOM_FEATURES.map((item, idx) => (
               <div
                 key={item.id}
-                className="p-5 rounded-2xl bg-[var(--surface)] border border-[var(--border)] hover:border-amber-400/50 transition-all flex flex-col justify-between shadow-sm group hover:shadow-md"
+                className="p-5 rounded-2xl bg-[var(--surface)] border border-[var(--border)] hover:border-[color-mix(in_srgb,var(--warn)_32%,transparent)] transition-all flex flex-col justify-between shadow-sm group hover:shadow-md"
               >
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[var(--surface-2)] text-[var(--ink-muted)]">
+                    <span className="text-xs font-mono px-2 py-0.5 rounded bg-[var(--surface-2)] text-[var(--ink-muted)]">
                       #{idx + 1} {item.category}
                     </span>
-                    <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">
+                    <span className="text-xs font-bold text-[var(--warn)] uppercase tracking-wider">
                       {item.nameEn}
                     </span>
                   </div>
 
                   <div>
-                    <h3 className="font-black text-base text-[var(--ink)] mb-1 group-hover:text-amber-500 transition-colors">
+                    <h3 className="font-black text-base text-[var(--ink)] mb-1 group-hover:text-[var(--warn)] transition-colors">
                       {item.name}
                     </h3>
                     <p className="text-xs text-[var(--ink-muted)] leading-relaxed">
@@ -313,7 +316,7 @@ export default function SuperadminDemoChecklistPage() {
                   </div>
 
                   <div className="p-3 rounded-xl bg-[var(--surface-2)] text-xs border border-[var(--border)]">
-                    <span className="font-bold text-amber-600 dark:text-amber-400 block mb-1">
+                    <span className="font-bold text-[var(--warn)] block mb-1">
                       المحتوى المتوقع رؤيته:
                     </span>
                     <span className="text-[var(--ink-muted)]">{item.expectedContent}</span>
@@ -324,7 +327,7 @@ export default function SuperadminDemoChecklistPage() {
                   <Link
                     href={item.targetUrl}
                     target="_blank"
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--warn)] hover:underline"
                   >
                     فتح الميزة مباشرة في نافذة جديدة ↗
                   </Link>

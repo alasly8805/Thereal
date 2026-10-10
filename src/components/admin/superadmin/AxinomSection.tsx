@@ -1,7 +1,28 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Download, Eye, EyeOff, Pencil, Plus, RefreshCw, RotateCcw, Shield, Star, Trash2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import {
+  Badge,
+  Button,
+  Chip,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  Notice,
+  PageHeader,
+  SearchInput,
+  Skeleton,
+  Stat,
+  Switch,
+  fmtDate,
+  fmtNum,
+  readJson,
+  Panel,
+} from "@/components/admin/ui/kit";
 
 interface AxinomAccount {
   id: string;
@@ -44,1071 +65,597 @@ interface KPIStats {
   overallPercentUsed: number;
 }
 
+type StatusFilter = "all" | "primary" | "standby" | "exhausted" | "expired" | "inactive";
+
+const EMPTY_ADD = {
+  name: "",
+  tenantId: "",
+  communicationKeyId: "",
+  communicationKey: "",
+  keySeedId: "",
+  licenseLimit: "10000",
+  validityDays: "365",
+  priority: "1",
+  isPrimary: true,
+  notes: "",
+};
+
+type Confirm = { kind: "reset" | "delete"; account: AxinomAccount } | null;
+
 export function AxinomSection() {
   const { success: toastSuccess, error: toastError } = useToast();
-  const notify = (type: "success" | "error" | "info", text: string) => {
-    if (type === "success") toastSuccess(text);
-    else toastError(text);
-  };
-
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [accounts, setAccounts] = useState<AxinomAccount[]>([]);
   const [kpis, setKpis] = useState<KPIStats | null>(null);
-
-  // Filters
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "primary" | "standby" | "exhausted" | "expired" | "inactive">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
-  // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<AxinomAccount | null>(null);
+  const [confirm, setConfirm] = useState<Confirm>(null);
   const [importingEnv, setImportingEnv] = useState(false);
-
-  // Form State for Add
-  const [addForm, setAddForm] = useState({
-    name: "",
-    tenantId: "",
-    communicationKeyId: "",
-    communicationKey: "",
-    keySeedId: "",
-    licenseLimit: 10000,
-    validityDays: 365,
-    priority: 1,
-    isPrimary: true,
-    notes: "",
-  });
-  const [showAddKey, setShowAddKey] = useState(false);
-  const [testingKey, setTestingKey] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok?: boolean; message?: string } | null>(null);
-  const [savingAccount, setSavingAccount] = useState(false);
-
-  // Edit Form State
+  const [addForm, setAddForm] = useState(EMPTY_ADD);
   const [editForm, setEditForm] = useState({
     name: "",
     tenantId: "",
     communicationKeyId: "",
     communicationKey: "",
     keySeedId: "",
-    licenseLimit: 10000,
-    licensesUsed: 0,
-    extendDays: 0,
-    priority: 1,
+    licenseLimit: "10000",
+    licensesUsed: "0",
+    extendDays: "",
+    priority: "1",
     isPrimary: false,
     isActive: true,
     notes: "",
   });
-  const [showEditKey, setShowEditKey] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ ok?: boolean; message?: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const fetchAccounts = async () => {
+    setLoading(true);
+    setLoadError("");
     try {
-      setLoading(true);
-      const res = await fetch("/api/admin/superadmin/axinom");
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر جلب بيانات الحسابات");
-      }
+      const res = await fetch("/api/admin/superadmin/axinom", { credentials: "include" });
+      const data = await readJson<{ success?: boolean; accounts?: AxinomAccount[]; kpis?: KPIStats; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر جلب الحسابات");
       setAccounts(data.accounts || []);
       setKpis(data.kpis || null);
-    } catch (err: any) {
-      notify("error", err.message || "حدث خطأ أثناء تحميل الحسابات");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "تعذر جلب الحسابات");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAccounts();
+    void fetchAccounts();
   }, []);
 
-  // Test Account Credentials
-  const handleTestCredentials = async (params: {
-    tenantId?: string;
-    communicationKeyId?: string;
-    communicationKey?: string;
-    accountId?: string;
-  }) => {
+  const request = async (url: string, init: RequestInit, fallback: string) => {
+    const res = await fetch(url, { credentials: "include", headers: { "Content-Type": "application/json" }, ...init });
+    const data = await readJson<{ success?: boolean; ok?: boolean; message?: string; error?: string }>(res);
+    if (!res.ok || !(data?.success ?? data?.ok)) throw new Error(data?.error || data?.message || fallback);
+    return data;
+  };
+
+  const handleTestCredentials = async (params: { tenantId?: string; communicationKeyId?: string; communicationKey?: string; accountId?: string }) => {
+    setTestingId(params.accountId ?? "new");
+    setTestResult(null);
     try {
-      setTestingKey(true);
-      setTestResult(null);
       const res = await fetch("/api/admin/superadmin/axinom/test", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),
       });
-      const data = await res.json();
-      setTestResult({ ok: data.ok, message: data.message });
-      if (data.ok) {
-        notify("success", data.message);
-      } else {
-        notify("error", data.message || "فحص الاتصال والمفتاح غير ناجح");
-      }
-    } catch (err: any) {
-      setTestResult({ ok: false, message: err.message || "فشل الفحص" });
-      notify("error", err.message || "تعذر إجراء الفحص");
+      const data = await readJson<{ ok?: boolean; message?: string }>(res);
+      setTestResult({ ok: data?.ok, message: data?.message });
+      if (data?.ok) toastSuccess(data.message || "المفتاح يعمل");
+      else toastError(data?.message || "فحص المفتاح غير ناجح");
+    } catch {
+      setTestResult({ ok: false, message: "فشل الفحص" });
+      toastError("تعذر إجراء الفحص");
     } finally {
-      setTestingKey(false);
+      setTestingId(null);
     }
   };
 
-  // Import from .env
   const handleImportEnv = async () => {
+    setImportingEnv(true);
     try {
-      setImportingEnv(true);
-      const res = await fetch("/api/admin/superadmin/axinom/import-env", {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "تعذر استيراد الحساب من .env");
-      notify("success", data.message || "تم استيراد حساب .env بنجاح! 🚀");
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message);
+      const data = await request("/api/admin/superadmin/axinom/import-env", { method: "POST" }, "تعذر الاستيراد من .env");
+      toastSuccess(data?.message || "استُورد حساب .env");
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "تعذر الاستيراد");
     } finally {
       setImportingEnv(false);
     }
   };
 
-  // Submit Add Account
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addForm.name.trim() || !addForm.tenantId.trim() || !addForm.communicationKeyId.trim() || !addForm.communicationKey.trim()) {
-      notify("error", "يرجى ملء جميع الحقول المطلوبة (الاسم، Tenant ID، Key ID، والمفتاح السري)");
-      return;
+      return toastError("املأ الاسم وTenant ID وKey ID والمفتاح السري");
     }
-
+    setSaving(true);
     try {
-      setSavingAccount(true);
-      const res = await fetch("/api/admin/superadmin/axinom", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: addForm.name.trim(),
-          tenantId: addForm.tenantId.trim(),
-          communicationKeyId: addForm.communicationKeyId.trim(),
-          communicationKey: addForm.communicationKey.trim(),
-          keySeedId: addForm.keySeedId.trim() || undefined,
-          licenseLimit: Number(addForm.licenseLimit) || 10000,
-          validityDays: Number(addForm.validityDays) || 365,
-          priority: Number(addForm.priority) || 1,
-          isPrimary: addForm.isPrimary,
-          notes: addForm.notes.trim() || undefined,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر إضافة الحساب");
-      }
-
-      notify("success", data.message || "تم إضافة حساب Axinom بنجاح! 🎉");
+      const data = await request(
+        "/api/admin/superadmin/axinom",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: addForm.name.trim(),
+            tenantId: addForm.tenantId.trim(),
+            communicationKeyId: addForm.communicationKeyId.trim(),
+            communicationKey: addForm.communicationKey.trim(),
+            keySeedId: addForm.keySeedId.trim() || undefined,
+            licenseLimit: Number(addForm.licenseLimit) || 10000,
+            validityDays: Number(addForm.validityDays) || 365,
+            priority: Number(addForm.priority) || 1,
+            isPrimary: addForm.isPrimary,
+            notes: addForm.notes.trim() || undefined,
+          }),
+        },
+        "تعذر إضافة الحساب"
+      );
+      toastSuccess(data?.message || "أُضيف الحساب");
       setShowAddModal(false);
-      setAddForm({
-        name: "",
-        tenantId: "",
-        communicationKeyId: "",
-        communicationKey: "",
-        keySeedId: "",
-        licenseLimit: 10000,
-        validityDays: 365,
-        priority: 1,
-        isPrimary: false,
-        notes: "",
-      });
+      setAddForm(EMPTY_ADD);
       setTestResult(null);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message || "حدث خطأ أثناء حفظ الحساب");
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "تعذر إضافة الحساب");
     } finally {
-      setSavingAccount(false);
+      setSaving(false);
     }
   };
 
-  // Submit Edit Account
-  const handleUpdateAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingAccount) return;
-
-    try {
-      setSavingAccount(true);
-      const res = await fetch(`/api/admin/superadmin/axinom/${editingAccount.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: editForm.name.trim() || undefined,
-          tenantId: editForm.tenantId.trim() || undefined,
-          communicationKeyId: editForm.communicationKeyId.trim() || undefined,
-          communicationKey: editForm.communicationKey.trim() || undefined,
-          keySeedId: editForm.keySeedId.trim() || null,
-          licenseLimit: Number(editForm.licenseLimit) || undefined,
-          licensesUsed: Number(editForm.licensesUsed),
-          extendDays: Number(editForm.extendDays) || undefined,
-          priority: Number(editForm.priority) || undefined,
-          isPrimary: editForm.isPrimary,
-          isActive: editForm.isActive,
-          notes: editForm.notes.trim() || null,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر تحديث الحساب");
-      }
-
-      notify("success", data.message || "تم تحديث الحساب بنجاح");
-      setEditingAccount(null);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message || "حدث خطأ أثناء التحديث");
-    } finally {
-      setSavingAccount(false);
-    }
-  };
-
-  // Set Account as Primary
-  const handleSetPrimary = async (account: AxinomAccount) => {
-    try {
-      const res = await fetch(`/api/admin/superadmin/axinom/${account.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isPrimary: true }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "تعذر تعيين الحساب كأساسي");
-      notify("success", `تم تعيين "${account.name}" كحساب أساسي للـ DRM بنجاح! ⭐`);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message);
-    }
-  };
-
-  // Toggle Account Active
-  const handleToggleActive = async (account: AxinomAccount) => {
-    try {
-      const res = await fetch(`/api/admin/superadmin/axinom/${account.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: !account.isActive }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "تعذر تعديل حالة الحساب");
-      notify("success", `تم ${account.isActive ? "تعطيل" : "تفعيل"} الحساب بنجاح`);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message);
-    }
-  };
-
-  // Reset Used Counter
-  const handleResetCounter = async (account: AxinomAccount) => {
-    if (!confirm(`هل أنت متأكد من تصفير عداد الشهادات المستهلكة للحساب "${account.name}"؟`)) return;
-    try {
-      const res = await fetch(`/api/admin/superadmin/axinom/${account.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resetUsed: true }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "تعذر تصفير العداد");
-      notify("success", `تم تصفير عداد الشهادات المستهلكة للحساب "${account.name}" بنجاح! 🔄`);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message);
-    }
-  };
-
-  // Delete Account
-  const handleDeleteAccount = async (account: AxinomAccount) => {
-    if (!confirm(`هل أنت متأكد من حذف حساب Axinom "${account.name}"؟\nسيتم حذف سجل التراخيص المرتبط بهذا الحساب.`)) return;
-    try {
-      const res = await fetch(`/api/admin/superadmin/axinom/${account.id}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "تعذر حذف الحساب");
-      notify("success", data.message || "تم حذف الحساب بنجاح");
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message);
-    }
-  };
-
-  // Open Edit Modal
   const openEditModal = (account: AxinomAccount) => {
     setEditingAccount(account);
+    setShowKey(false);
     setEditForm({
       name: account.name,
       tenantId: account.tenantId,
       communicationKeyId: account.communicationKeyId,
       communicationKey: "",
       keySeedId: account.keySeedId || "",
-      licenseLimit: account.licenseLimit,
-      licensesUsed: account.licensesUsed,
-      extendDays: 0,
-      priority: account.priority,
+      licenseLimit: String(account.licenseLimit),
+      licensesUsed: String(account.licensesUsed),
+      extendDays: "",
+      priority: String(account.priority),
       isPrimary: account.isPrimary,
       isActive: account.isActive,
       notes: account.notes || "",
     });
-    setShowEditKey(false);
   };
 
-  // Filtered Accounts
+  const handleUpdateAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAccount) return;
+    setSaving(true);
+    try {
+      const data = await request(
+        `/api/admin/superadmin/axinom/${editingAccount.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: editForm.name.trim() || undefined,
+            tenantId: editForm.tenantId.trim() || undefined,
+            communicationKeyId: editForm.communicationKeyId.trim() || undefined,
+            communicationKey: editForm.communicationKey.trim() || undefined,
+            keySeedId: editForm.keySeedId.trim() || null,
+            licenseLimit: Number(editForm.licenseLimit) || undefined,
+            licensesUsed: Number(editForm.licensesUsed) || 0,
+            extendDays: Number(editForm.extendDays) || undefined,
+            priority: Number(editForm.priority) || undefined,
+            isPrimary: editForm.isPrimary,
+            isActive: editForm.isActive,
+            notes: editForm.notes.trim() || null,
+          }),
+        },
+        "تعذر تحديث الحساب"
+      );
+      toastSuccess(data?.message || "حُدّث الحساب");
+      setEditingAccount(null);
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "تعذر تحديث الحساب");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const patchAccount = async (account: AxinomAccount, body: Record<string, unknown>, okMsg: string, fallback: string) => {
+    setBusyId(account.id);
+    try {
+      await request(`/api/admin/superadmin/axinom/${account.id}`, { method: "PATCH", body: JSON.stringify(body) }, fallback);
+      toastSuccess(okMsg);
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : fallback);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const runConfirm = async () => {
+    if (!confirm) return;
+    setSaving(true);
+    try {
+      if (confirm.kind === "reset") {
+        await request(`/api/admin/superadmin/axinom/${confirm.account.id}`, { method: "PATCH", body: JSON.stringify({ resetUsed: true }) }, "تعذر تصفير العداد");
+        toastSuccess(`صُفّر عداد "${confirm.account.name}"`);
+      } else {
+        const data = await request(`/api/admin/superadmin/axinom/${confirm.account.id}`, { method: "DELETE" }, "تعذر حذف الحساب");
+        toastSuccess(data?.message || "حُذف الحساب");
+      }
+      setConfirm(null);
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "تعذر تنفيذ الإجراء");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const filteredAccounts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return accounts.filter((acc) => {
-      const matchesSearch =
-        acc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        acc.tenantId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        acc.communicationKeyId.toLowerCase().includes(searchQuery.toLowerCase());
-
-      if (!matchesSearch) return false;
-
+      const matches = !q || acc.name.toLowerCase().includes(q) || acc.tenantId.toLowerCase().includes(q) || acc.communicationKeyId.toLowerCase().includes(q);
+      if (!matches) return false;
       if (statusFilter === "primary") return acc.isPrimary && acc.isEligible;
       if (statusFilter === "standby") return !acc.isPrimary && acc.isEligible;
       if (statusFilter === "exhausted") return acc.status === "exhausted";
       if (statusFilter === "expired") return acc.status === "expired";
       if (statusFilter === "inactive") return !acc.isActive;
-
       return true;
     });
   }, [accounts, searchQuery, statusFilter]);
 
+  const statusBadge = (a: AxinomAccount) => {
+    if (a.isPrimary && a.isEligible) return <Badge tone="brand" dot>الأساسي الآن</Badge>;
+    if (a.status === "standby") return <Badge tone="info">احتياطي · أولوية {fmtNum(a.priority)}</Badge>;
+    if (a.status === "exhausted") return <Badge tone="bad">نفد الرصيد</Badge>;
+    if (a.status === "expired") return <Badge tone="bad">منتهي</Badge>;
+    return <Badge>معطل</Badge>;
+  };
+
   return (
-    <div className="space-y-6 text-slate-100 font-sans" dir="rtl">
-      {/* ── Top Header & Hero ── */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-950/80 via-slate-900 to-slate-950 border border-indigo-500/20 p-6 shadow-2xl backdrop-blur-xl">
-        <div className="absolute -right-20 -top-20 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                الأمان العتادي الأقوى عالمياً
-              </span>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                دعم النقل التلقائي (Seamless Failover)
-              </span>
-            </div>
-            <h1 className="text-2xl md:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white via-indigo-100 to-indigo-300">
-              حسابات وتراخيص Axinom Multi-DRM
-            </h1>
-            <p className="text-sm text-slate-400 mt-1 max-w-2xl">
-              إدارة مجموعة حسابات Axinom، وتتبع استهلاك شهادات التراخيص (Widevine & PlayReady) بدقة، مع النقل التلقائي الفوري لجميع الفيديوهات القديمة والجديدة عند انتهاء الرصيد.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={fetchAccounts}
-              disabled={loading}
-              className="px-4 py-2.5 rounded-xl text-sm font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center gap-2 disabled:opacity-50"
-            >
-              <svg className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              تحديث
-            </button>
-
-            <button
-              onClick={handleImportEnv}
-              disabled={importingEnv || loading}
-              className="px-4 py-2.5 rounded-xl text-sm font-medium bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-500/30 transition flex items-center gap-2 disabled:opacity-50"
-              title="استيراد أو مزامنة الحساب الموجود في ملف .env"
-            >
-              <svg className={`w-4 h-4 ${importingEnv ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-              </svg>
-              {importingEnv ? "جاري الاستيراد..." : "📥 استيراد من .env"}
-            </button>
-
-            <button
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="Axinom DRM"
+        description="حسابات تراخيص Widevine و PlayReady. عند نفاد رصيد الحساب الأساسي أو انتهائه، تنتقل كل الفيديوهات تلقائياً للحساب الاحتياطي التالي."
+        actions={
+          <>
+            <Button onClick={() => void fetchAccounts()} loading={loading} icon={<RefreshCw size={15} />}>تحديث</Button>
+            <Button onClick={() => void handleImportEnv()} loading={importingEnv} icon={<Download size={15} />} title="استيراد أو مزامنة الحساب الموجود في .env">
+              استيراد من .env
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Plus size={15} />}
               onClick={() => {
+                setAddForm(EMPTY_ADD);
                 setTestResult(null);
+                setShowKey(false);
                 setShowAddModal(true);
               }}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-lg shadow-indigo-600/30 transition flex items-center gap-2"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              إضافة حساب Axinom جديد
-            </button>
-          </div>
-        </div>
+              إضافة حساب
+            </Button>
+          </>
+        }
+      />
 
-        {/* ── KPI Cards Bar ── */}
-        {kpis && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-6 pt-6 border-t border-indigo-500/10">
-            <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">إجمالي الحسابات</div>
-              <div className="text-2xl font-bold text-white">{kpis.totalAccounts}</div>
-              <div className="text-[11px] text-emerald-400 mt-0.5">{kpis.activeAccounts} حساب فعّال</div>
-            </div>
+      {loadError && <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchAccounts()}>إعادة المحاولة</Button>} />}
 
-            <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">حسابات الاحتياط (Standby)</div>
-              <div className="text-2xl font-bold text-indigo-400">{kpis.standbyAccounts}</div>
-              <div className="text-[11px] text-slate-400 mt-0.5">جاهزة للتبديل الفوري</div>
-            </div>
-
-            <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">إجمالي رصيد الشهادات</div>
-              <div className="text-2xl font-bold text-slate-100">{kpis.totalLicenseLimit.toLocaleString()}</div>
-              <div className="text-[11px] text-slate-400 mt-0.5">سعة التراخيص الكلية</div>
-            </div>
-
-            <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">الشهادات المستهلكة</div>
-              <div className="text-2xl font-bold text-amber-400">{kpis.totalLicensesUsed.toLocaleString()}</div>
-              <div className="text-[11px] text-slate-400 mt-0.5">تم إصدارها للطلاب</div>
-            </div>
-
-            <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">الشهادات المتبقية</div>
-              <div className="text-2xl font-bold text-emerald-400">{kpis.totalLicensesRemaining.toLocaleString()}</div>
-              <div className="text-[11px] text-slate-400 mt-0.5">رصيد آمن ومتاح</div>
-            </div>
-
-            <div className="bg-slate-900/60 rounded-xl p-3.5 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">نسبة الاستهلاك الكلية</div>
-              <div className="text-2xl font-bold text-purple-400">{kpis.overallPercentUsed}%</div>
-              <div className="w-full bg-slate-800 h-1.5 rounded-full mt-1.5 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    kpis.overallPercentUsed > 85 ? "bg-rose-500" : kpis.overallPercentUsed > 60 ? "bg-amber-500" : "bg-emerald-500"
-                  }`}
-                  style={{ width: `${kpis.overallPercentUsed}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── Search & Filter Controls ── */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-        <div className="relative flex-1 max-w-md">
-          <input
-            type="text"
-            placeholder="بحث بالاسم أو Tenant ID..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-4 py-2 pr-10 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+      {loading && !kpis ? (
+        <div className="adm-stats">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} h={96} r={12} />)}</div>
+      ) : kpis ? (
+        <div className="adm-stats">
+          <Stat label="الحسابات" value={fmtNum(kpis.totalAccounts)} sub={`${fmtNum(kpis.activeAccounts)} فعّال · ${fmtNum(kpis.standbyAccounts)} احتياطي`} />
+          <Stat label="السعة الكلية" value={fmtNum(kpis.totalLicenseLimit)} sub="شهادة" />
+          <Stat label="المستهلك" value={fmtNum(kpis.totalLicensesUsed)} tone="warn" sub="شهادة أُصدرت للطلاب" />
+          <Stat label="المتبقي" value={fmtNum(kpis.totalLicensesRemaining)} tone="ok" sub="رصيد آمن" />
+          <Stat
+            label="نسبة الاستهلاك"
+            value={`${fmtNum(kpis.overallPercentUsed)}٪`}
+            tone={kpis.overallPercentUsed > 85 ? "bad" : kpis.overallPercentUsed > 60 ? "warn" : "neutral"}
+            sub={
+              <span className="adm-bar block mt-1" style={{ height: 5 }}>
+                <span style={{ display: "block", width: `${Math.min(100, kpis.overallPercentUsed)}%`, background: kpis.overallPercentUsed > 85 ? "var(--danger)" : kpis.overallPercentUsed > 60 ? "var(--warn)" : "var(--brand)" }} />
+              </span>
+            }
           />
-          <svg className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
         </div>
+      ) : null}
 
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="حالة الحساب">
           {(
             [
-              { id: "all", label: "الكل" },
-              { id: "primary", label: "الأساسي ⭐" },
-              { id: "standby", label: "احتياطي 🛡️" },
-              { id: "exhausted", label: "مكتمل ⚠️" },
-              { id: "expired", label: "منتهي ⌛" },
-              { id: "inactive", label: "معطل 🚫" },
-            ] as const
-          ).map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setStatusFilter(tab.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap ${
-                statusFilter === tab.id
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              {tab.label}
-            </button>
+              ["all", "الكل"],
+              ["primary", "الأساسي"],
+              ["standby", "احتياطي"],
+              ["exhausted", "نفد الرصيد"],
+              ["expired", "منتهي"],
+              ["inactive", "معطل"],
+            ] as Array<[StatusFilter, string]>
+          ).map(([id, label]) => (
+            <Chip key={id} pressed={statusFilter === id} onClick={() => setStatusFilter(id)}>
+              {label}
+            </Chip>
           ))}
         </div>
+        <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="الاسم أو Tenant ID" inputSize="sm" className="w-64 max-w-full" />
       </div>
 
-      {/* ── Accounts Cards Grid ── */}
-      {loading ? (
-        <div className="py-20 flex flex-col items-center justify-center text-slate-400">
-          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3" />
-          <p className="text-sm">جاري تحميل بيانات حسابات Axinom DRM...</p>
+      {loading && accounts.length === 0 ? (
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))" }}>
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={260} r={16} />)}
         </div>
       ) : filteredAccounts.length === 0 ? (
-        <div className="py-16 text-center bg-slate-900/40 rounded-2xl border border-slate-800 p-8">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
-            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold text-slate-200">لا توجد حسابات مطابقة</h3>
-          <p className="text-sm text-slate-400 mt-1 max-w-md mx-auto">
-            {searchQuery
-              ? "لم يتم العثور على أي حساب يطابق معايير البحث الحالية."
-              : "لم يتم إضافة أي حسابات Axinom بعد. أضف حسابك الأول لتفعيل حماية DRM المتعددة."}
-          </p>
-          {!searchQuery && (
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="mt-4 px-4 py-2 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition inline-flex items-center gap-2"
-            >
-              + إضافة حساب جديد الآن
-            </button>
-          )}
-        </div>
+        <Panel>
+          <EmptyState
+            icon={<Shield size={22} />}
+            title={searchQuery || statusFilter !== "all" ? "لا حسابات مطابقة" : "لا توجد حسابات Axinom بعد"}
+            text={searchQuery || statusFilter !== "all" ? undefined : "أضف حسابك الأول أو استورده من .env لتفعيل حماية DRM."}
+            action={!searchQuery && statusFilter === "all" ? <Button variant="primary" onClick={() => setShowAddModal(true)}>إضافة حساب</Button> : undefined}
+          />
+        </Panel>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))" }}>
           {filteredAccounts.map((account) => {
-            const isExhausted = account.status === "exhausted";
-            const isExpired = account.status === "expired";
-            const isNearLimit = account.percentUsed >= 85 && !isExhausted;
-
+            const pct = Math.min(100, Math.max(0, account.percentUsed));
+            const barColor = pct >= 95 ? "var(--danger)" : pct >= 75 ? "var(--warn)" : "var(--brand)";
             return (
-              <div
+              <article
                 key={account.id}
-                className={`relative rounded-2xl p-5 border transition-all duration-200 flex flex-col justify-between ${
-                  account.isPrimary
-                    ? "bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-950 border-indigo-500/40 shadow-xl shadow-indigo-950/30"
-                    : isExhausted
-                    ? "bg-slate-900/60 border-rose-500/30"
-                    : !account.isActive
-                    ? "bg-slate-900/40 border-slate-800 opacity-75"
-                    : "bg-slate-900/80 border-slate-800 hover:border-slate-700"
-                }`}
+                className="adm-panel p-4 flex flex-col gap-3"
+                style={{
+                  borderColor: account.isPrimary && account.isEligible ? "var(--brand)" : account.status === "exhausted" ? "color-mix(in srgb, var(--danger) 40%, var(--border))" : undefined,
+                  opacity: account.isActive ? 1 : 0.7,
+                }}
               >
+                <header className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 className="adm-h3 truncate flex items-center gap-1.5">
+                      {account.isPrimary && <Star size={14} style={{ color: "var(--brand)" }} aria-label="أساسي" />}
+                      {account.name}
+                    </h3>
+                    <p className="text-xs adm-muted mt-0.5">Tenant <span className="adm-mono">{account.tenantId}</span></p>
+                  </div>
+                  {statusBadge(account)}
+                </header>
+
                 <div>
-                  {/* Card Header: Title & Badges */}
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-base text-slate-100">{account.name}</h3>
-                        {account.isPrimary && (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                            الأساسي ⭐
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-400 mt-0.5 font-mono">
-                        Tenant: {account.tenantId}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {account.isPrimary ? (
-                        <span className="px-2 py-1 rounded-lg text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                          نشط حالياً
-                        </span>
-                      ) : account.status === "standby" ? (
-                        <span className="px-2 py-1 rounded-lg text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                          احتياطي (أولوية {account.priority})
-                        </span>
-                      ) : isExhausted ? (
-                        <span className="px-2 py-1 rounded-lg text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                          مكتمل الاستهلاك ⚠️
-                        </span>
-                      ) : isExpired ? (
-                        <span className="px-2 py-1 rounded-lg text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/30">
-                          منتهي الصلاحية ⌛
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">
-                          معطل
-                        </span>
-                      )}
-                    </div>
+                  <div className="flex items-center justify-between text-xs mb-1.5">
+                    <span className="adm-muted">الشهادات</span>
+                    <span className="adm-num font-bold">{fmtNum(account.licensesUsed)} / {fmtNum(account.licenseLimit)} · {fmtNum(account.percentUsed)}٪</span>
                   </div>
-
-                  {/* License Quota Progress Bar */}
-                  <div className="bg-slate-950/60 rounded-xl p-3.5 border border-slate-800/80 mb-3.5">
-                    <div className="flex justify-between items-center text-xs mb-1.5">
-                      <span className="text-slate-400">استهلاك شهادات التراخيص:</span>
-                      <span className="font-semibold text-slate-200">
-                        {account.licensesUsed.toLocaleString()} / {account.licenseLimit.toLocaleString()} ({account.percentUsed}%)
-                      </span>
-                    </div>
-
-                    <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          account.percentUsed >= 95
-                            ? "bg-rose-500"
-                            : account.percentUsed >= 75
-                            ? "bg-amber-500"
-                            : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${Math.min(100, account.percentUsed)}%` }}
-                      />
-                    </div>
-
-                    <div className="flex justify-between items-center text-[11px] mt-2 text-slate-400">
-                      <span>المتبقي: <strong className="text-emerald-400">{account.licensesRemaining.toLocaleString()} شهادة</strong></span>
-                      <span>إجمالي الطلبات: <strong className="text-indigo-300">{account.totalEventsCount.toLocaleString()}</strong></span>
-                    </div>
+                  <div className="adm-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`استهلاك ${account.name}`}>
+                    <span style={{ width: `${pct}%`, background: barColor }} />
                   </div>
-
-                  {/* Metadata & Validity */}
-                  <div className="space-y-1.5 text-xs text-slate-400 mb-4 bg-slate-950/30 p-3 rounded-xl border border-slate-800/50">
-                    <div className="flex justify-between">
-                      <span>صلاحية الحساب:</span>
-                      <span className={account.daysRemaining <= 7 ? "text-rose-400 font-semibold" : "text-slate-300"}>
-                        {account.isExpired ? "منتهي" : `${account.daysRemaining} يوماً متبقية`}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>تاريخ الانتهاء:</span>
-                      <span className="text-slate-300 font-mono text-[11px]">
-                        {new Date(account.expiresAt).toLocaleDateString("ar-EG")}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>مفتاح التواصل:</span>
-                      <span className="text-slate-300 font-mono text-[11px]">{account.communicationKeyMasked}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>معرّف المفتاح (Key ID):</span>
-                      <span className="text-slate-400 font-mono text-[10px] truncate max-w-[170px]" title={account.communicationKeyId}>
-                        {account.communicationKeyId}
-                      </span>
-                    </div>
-                    {account.notes && (
-                      <div className="pt-1.5 border-t border-slate-800 text-[11px] text-slate-300 italic">
-                        "{account.notes}"
-                      </div>
-                    )}
+                  <div className="flex items-center justify-between text-xs adm-muted mt-1.5">
+                    <span>متبقٍ <b style={{ color: "var(--ok)" }}>{fmtNum(account.licensesRemaining)}</b></span>
+                    <span>طلبات <b className="adm-num">{fmtNum(account.totalEventsCount)}</b></span>
                   </div>
                 </div>
 
-                {/* Card Action Buttons */}
-                <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
+                <dl className="adm-well grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 p-3 text-xs">
+                  <dt className="adm-muted">الصلاحية</dt>
+                  <dd className="font-semibold" style={{ color: account.isExpired || account.daysRemaining <= 7 ? "var(--danger)" : undefined }}>
+                    {account.isExpired ? "منتهي" : `${fmtNum(account.daysRemaining)} يوم`} · {fmtDate(account.expiresAt)}
+                  </dd>
+                  <dt className="adm-muted">المفتاح</dt>
+                  <dd className="adm-mono truncate">{account.communicationKeyMasked}</dd>
+                  <dt className="adm-muted">Key ID</dt>
+                  <dd className="adm-mono truncate" title={account.communicationKeyId}>{account.communicationKeyId}</dd>
+                </dl>
+
+                {account.notes && <p className="text-xs adm-muted">{account.notes}</p>}
+
+                <footer className="flex items-center justify-between gap-1 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+                  <div className="flex items-center gap-1">
                     {!account.isPrimary && account.isEligible && (
-                      <button
-                        onClick={() => handleSetPrimary(account)}
-                        title="تعيين هذا الحساب كحساب أساسي للـ DRM"
-                        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 transition"
-                      >
-                        ⭐ جعله الأساسي
-                      </button>
+                      <Button size="sm" variant="ghost" icon={<Star size={14} />} loading={busyId === account.id} onClick={() => void patchAccount(account, { isPrimary: true }, `"${account.name}" هو الأساسي الآن`, "تعذر تعيين الحساب كأساسي")}>
+                        اجعله الأساسي
+                      </Button>
                     )}
-
-                    <button
-                      onClick={() => handleTestCredentials({ accountId: account.id })}
-                      disabled={testingKey}
-                      title="فحص صحة المفتاح والتشفير"
-                      className="p-1.5 rounded-lg text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </button>
-
-                    <button
-                      onClick={() => handleResetCounter(account)}
-                      title="تصفير عداد الشهادات المستهلكة (Reset)"
-                      className="p-1.5 rounded-lg text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 transition"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                    </button>
-
-                    <button
-                      onClick={() => openEditModal(account)}
-                      title="تعديل بيانات الحساب"
-                      className="p-1.5 rounded-lg text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-
-                    <button
-                      onClick={() => handleDeleteAccount(account)}
-                      title="حذف الحساب"
-                      className="p-1.5 rounded-lg text-xs text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                    <IconButton label="فحص المفتاح" size="sm" loading={testingId === account.id} disabled={testingId !== null && testingId !== account.id} onClick={() => void handleTestCredentials({ accountId: account.id })}>
+                      <CheckCircle2 size={15} />
+                    </IconButton>
+                    <IconButton label="تصفير عداد الشهادات" size="sm" onClick={() => setConfirm({ kind: "reset", account })}>
+                      <RotateCcw size={15} />
+                    </IconButton>
+                    <IconButton label="تعديل" size="sm" onClick={() => openEditModal(account)}>
+                      <Pencil size={15} />
+                    </IconButton>
+                    <IconButton label="حذف" size="sm" onClick={() => setConfirm({ kind: "delete", account })} style={{ color: "var(--danger)" }}>
+                      <Trash2 size={15} />
+                    </IconButton>
                   </div>
-
-                  <button
-                    onClick={() => handleToggleActive(account)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition ${
-                      account.isActive
-                        ? "bg-slate-800 hover:bg-slate-700 text-slate-300"
-                        : "bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30"
-                    }`}
-                  >
-                    {account.isActive ? "تعطيل" : "تفعيل"}
-                  </button>
-                </div>
-              </div>
+                  <Switch
+                    checked={account.isActive}
+                    onChange={() => void patchAccount(account, { isActive: !account.isActive }, account.isActive ? "عُطّل الحساب" : "فُعّل الحساب", "تعذر تعديل حالة الحساب")}
+                    disabled={busyId === account.id}
+                    label={`تفعيل ${account.name}`}
+                  />
+                </footer>
+              </article>
             );
           })}
         </div>
       )}
 
-      {/* ── Add Account Modal ── */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl p-6 shadow-2xl relative my-8">
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
-              <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                <span>🛡️ إضافة حساب Axinom Multi-DRM جديد</span>
-              </h2>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
-              >
-                ✕
-              </button>
-            </div>
+      {/* Add */}
+      <Modal
+        open={showAddModal}
+        onClose={() => !saving && setShowAddModal(false)}
+        title="إضافة حساب Axinom"
+        size="lg"
+        footer={
+          <>
+            <Button
+              icon={<CheckCircle2 size={15} />}
+              loading={testingId === "new"}
+              disabled={!addForm.communicationKey || !addForm.tenantId || !addForm.communicationKeyId}
+              onClick={() => void handleTestCredentials({ tenantId: addForm.tenantId, communicationKeyId: addForm.communicationKeyId, communicationKey: addForm.communicationKey })}
+            >
+              فحص المفتاح
+            </Button>
+            <span className="flex-1" />
+            <Button onClick={() => setShowAddModal(false)} disabled={saving}>إلغاء</Button>
+            <Button type="submit" form="axn-add" variant="primary" loading={saving}>حفظ الحساب</Button>
+          </>
+        }
+      >
+        <form id="axn-add" onSubmit={handleAddAccount} className="grid gap-4 sm:grid-cols-2">
+          <Field label="اسم الحساب" htmlFor="ax-name">
+            <Input id="ax-name" data-autofocus required value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="Axinom Account 01" />
+          </Field>
+          <Field label="Tenant ID" htmlFor="ax-tenant">
+            <Input id="ax-tenant" required mono value={addForm.tenantId} onChange={(e) => setAddForm({ ...addForm, tenantId: e.target.value })} />
+          </Field>
+          <Field label="Communication Key ID" htmlFor="ax-kid" className="sm:col-span-2">
+            <Input id="ax-kid" required mono value={addForm.communicationKeyId} onChange={(e) => setAddForm({ ...addForm, communicationKeyId: e.target.value })} />
+          </Field>
+          <Field label="Communication Key" hint="يُخزّن مشفّراً (AES-256-GCM) ولا يُعرض للواجهة أبداً" htmlFor="ax-key" className="sm:col-span-2">
+            <SecretInput id="ax-key" required value={addForm.communicationKey} onChange={(v) => setAddForm({ ...addForm, communicationKey: v })} show={showKey} onToggle={() => setShowKey((s) => !s)} />
+          </Field>
+          <Field label="حد الشهادات" htmlFor="ax-limit">
+            <Input id="ax-limit" type="number" min="100" max="1000000" mono value={addForm.licenseLimit} onChange={(e) => setAddForm({ ...addForm, licenseLimit: e.target.value })} />
+          </Field>
+          <Field label="الصلاحية (أيام)" htmlFor="ax-days">
+            <Input id="ax-days" type="number" min="1" max="1825" mono value={addForm.validityDays} onChange={(e) => setAddForm({ ...addForm, validityDays: e.target.value })} />
+          </Field>
+          <Field label="الأولوية" hint="١ = الأعلى" htmlFor="ax-pri">
+            <Input id="ax-pri" type="number" min="1" max="99" mono value={addForm.priority} onChange={(e) => setAddForm({ ...addForm, priority: e.target.value })} />
+          </Field>
+          <Field label="Key Seed ID" hint="اختياري" htmlFor="ax-seed">
+            <Input id="ax-seed" mono value={addForm.keySeedId} onChange={(e) => setAddForm({ ...addForm, keySeedId: e.target.value })} />
+          </Field>
+          <Field label="ملاحظات" hint="اختياري" htmlFor="ax-notes" className="sm:col-span-2">
+            <Input id="ax-notes" value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })} />
+          </Field>
+          <label className="sm:col-span-2 adm-well flex items-center justify-between gap-3 px-3 py-2.5">
+            <span className="text-sm font-semibold">اجعله الحساب الأساسي فوراً</span>
+            <Switch checked={addForm.isPrimary} onChange={(v) => setAddForm({ ...addForm, isPrimary: v })} label="حساب أساسي" />
+          </label>
+          {testResult && <Notice tone={testResult.ok ? "ok" : "bad"} title={testResult.message || (testResult.ok ? "المفتاح يعمل" : "فشل الفحص")} className="sm:col-span-2" />}
+        </form>
+      </Modal>
 
-            <form onSubmit={handleAddAccount} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    اسم الحساب / المعرف <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="مثال: Axinom Account 01"
-                    value={addForm.name}
-                    onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Tenant ID <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="مثال: a85ddc8b-8c74-4fe3-806d-1f2f87df5745"
-                    value={addForm.tenantId}
-                    onChange={(e) => setAddForm({ ...addForm, tenantId: e.target.value })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Communication Key ID (GUID) <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="مثال: c7f03846-00ba-4af6-9fa4-b4ac0141be68"
-                  value={addForm.communicationKeyId}
-                  onChange={(e) => setAddForm({ ...addForm, communicationKeyId: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Communication Key (المفتاح السري المشفر) <span className="text-rose-400">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddKey(!showAddKey)}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300"
-                  >
-                    {showAddKey ? "إخفاء" : "إظهار المفتاح"}
-                  </button>
-                </div>
-                <input
-                  type={showAddKey ? "text" : "password"}
-                  required
-                  placeholder="مفتاح 64 حرف Hex أو Base64 (يتم تشفيره بـ AES-256 تلقائياً)"
-                  value={addForm.communicationKey}
-                  onChange={(e) => setAddForm({ ...addForm, communicationKey: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500"
-                />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  🔒 المفتاح لن يُعرض بصيغة نصية للواجهة أبداً وسيتم تشفيره بنظام AES-256-GCM فور الحفظ.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    حد التراخيص / الشهادات
-                  </label>
-                  <input
-                    type="number"
-                    min="100"
-                    max="1000000"
-                    value={addForm.licenseLimit}
-                    onChange={(e) => setAddForm({ ...addForm, licenseLimit: parseInt(e.target.value) || 10000 })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                  <span className="text-[10px] text-slate-400">افتراضياً: 10,000 شهادة</span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    فترة الصلاحية (بالأيام)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="1825"
-                    value={addForm.validityDays}
-                    onChange={(e) => setAddForm({ ...addForm, validityDays: parseInt(e.target.value) || 365 })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                  <span className="text-[10px] text-slate-400">افتراضياً: 365 يوماً</span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    الأولوية (Priority)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="99"
-                    value={addForm.priority}
-                    onChange={(e) => setAddForm({ ...addForm, priority: parseInt(e.target.value) || 1 })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                  <span className="text-[10px] text-slate-400">1 = الأعلى أولوية</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Key Seed ID (اختياري)
-                </label>
-                <input
-                  type="text"
-                  placeholder="معرف اشتقاق المفاتيح في حال تم استخدامه"
-                  value={addForm.keySeedId}
-                  onChange={(e) => setAddForm({ ...addForm, keySeedId: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="isPrimaryCheck"
-                  checked={addForm.isPrimary}
-                  onChange={(e) => setAddForm({ ...addForm, isPrimary: e.target.checked })}
-                  className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 bg-slate-800"
-                />
-                <label htmlFor="isPrimaryCheck" className="text-xs text-slate-200 select-none cursor-pointer">
-                  تعيين هذا الحساب كحساب أساسي نشط فوراً (Primary Account)
-                </label>
-              </div>
-
-              {testResult && (
-                <div
-                  className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
-                    testResult.ok
-                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                      : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
-                  }`}
-                >
-                  <span>{testResult.ok ? "✅" : "⚠️"}</span>
-                  <span>{testResult.message}</span>
-                </div>
-              )}
-
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  disabled={testingKey || !addForm.communicationKey || !addForm.tenantId || !addForm.communicationKeyId}
-                  onClick={() =>
-                    handleTestCredentials({
-                      tenantId: addForm.tenantId,
-                      communicationKeyId: addForm.communicationKeyId,
-                      communicationKey: addForm.communicationKey,
-                    })
-                  }
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30 transition disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  <svg className={`w-3.5 h-3.5 ${testingKey ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  فحص المفتاح قبل الحفظ
-                </button>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddModal(false)}
-                    className="px-4 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                  >
-                    إلغاء
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={savingAccount}
-                    className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50"
-                  >
-                    {savingAccount ? "جاري الحفظ..." : "حفظ الحساب"}
-                  </button>
-                </div>
-              </div>
-            </form>
+      {/* Edit */}
+      <Modal
+        open={!!editingAccount}
+        onClose={() => !saving && setEditingAccount(null)}
+        title="تعديل حساب Axinom"
+        description={editingAccount?.name}
+        size="lg"
+        footer={
+          <>
+            <Button onClick={() => setEditingAccount(null)} disabled={saving}>إلغاء</Button>
+            <Button type="submit" form="axn-edit" variant="primary" loading={saving}>حفظ</Button>
+          </>
+        }
+      >
+        <form id="axn-edit" onSubmit={handleUpdateAccount} className="grid gap-4 sm:grid-cols-2">
+          <Field label="اسم الحساب" htmlFor="axe-name">
+            <Input id="axe-name" data-autofocus value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+          </Field>
+          <Field label="Tenant ID" htmlFor="axe-tenant">
+            <Input id="axe-tenant" mono value={editForm.tenantId} onChange={(e) => setEditForm({ ...editForm, tenantId: e.target.value })} />
+          </Field>
+          <Field label="Communication Key ID" htmlFor="axe-kid" className="sm:col-span-2">
+            <Input id="axe-kid" mono value={editForm.communicationKeyId} onChange={(e) => setEditForm({ ...editForm, communicationKeyId: e.target.value })} />
+          </Field>
+          <Field label="Communication Key جديد" hint="اتركه فارغاً للإبقاء على المفتاح الحالي" htmlFor="axe-key" className="sm:col-span-2">
+            <SecretInput id="axe-key" value={editForm.communicationKey} onChange={(v) => setEditForm({ ...editForm, communicationKey: v })} show={showKey} onToggle={() => setShowKey((s) => !s)} />
+          </Field>
+          <Field label="حد الشهادات" htmlFor="axe-limit">
+            <Input id="axe-limit" type="number" min="1" mono value={editForm.licenseLimit} onChange={(e) => setEditForm({ ...editForm, licenseLimit: e.target.value })} />
+          </Field>
+          <Field label="الشهادات المستهلكة" htmlFor="axe-used">
+            <Input id="axe-used" type="number" min="0" mono value={editForm.licensesUsed} onChange={(e) => setEditForm({ ...editForm, licensesUsed: e.target.value })} />
+          </Field>
+          <Field label="تمديد الصلاحية (+ أيام)" htmlFor="axe-ext">
+            <Input id="axe-ext" type="number" min="0" mono value={editForm.extendDays} onChange={(e) => setEditForm({ ...editForm, extendDays: e.target.value })} placeholder="0" />
+          </Field>
+          <Field label="الأولوية" hint="١ = الأعلى" htmlFor="axe-pri">
+            <Input id="axe-pri" type="number" min="1" max="99" mono value={editForm.priority} onChange={(e) => setEditForm({ ...editForm, priority: e.target.value })} />
+          </Field>
+          <Field label="Key Seed ID" htmlFor="axe-seed">
+            <Input id="axe-seed" mono value={editForm.keySeedId} onChange={(e) => setEditForm({ ...editForm, keySeedId: e.target.value })} />
+          </Field>
+          <Field label="ملاحظات" htmlFor="axe-notes">
+            <Input id="axe-notes" value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+          </Field>
+          <div className="sm:col-span-2 adm-well adm-list">
+            <label className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <span className="text-sm font-semibold">الحساب الأساسي</span>
+              <Switch checked={editForm.isPrimary} onChange={(v) => setEditForm({ ...editForm, isPrimary: v })} label="الحساب الأساسي" />
+            </label>
+            <label className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <span className="text-sm font-semibold">الحساب مفعّل</span>
+              <Switch checked={editForm.isActive} onChange={(v) => setEditForm({ ...editForm, isActive: v })} label="الحساب مفعّل" />
+            </label>
           </div>
-        </div>
-      )}
+        </form>
+      </Modal>
 
-      {/* ── Edit Account Modal ── */}
-      {editingAccount && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl p-6 shadow-2xl relative my-8">
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
-              <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                <span>تعديل حساب: {editingAccount.name}</span>
-              </h2>
-              <button
-                onClick={() => setEditingAccount(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
-              >
-                ✕
-              </button>
-            </div>
+      <Modal
+        open={!!confirm}
+        onClose={() => !saving && setConfirm(null)}
+        size="sm"
+        title={confirm?.kind === "delete" ? "حذف حساب Axinom؟" : "تصفير عداد الشهادات؟"}
+        description={
+          confirm
+            ? confirm.kind === "delete"
+              ? `سيُحذف "${confirm.account.name}" وسجل التراخيص المرتبط به.`
+              : `سيعود عداد الشهادات المستهلكة لـ "${confirm.account.name}" إلى صفر.`
+            : undefined
+        }
+        footer={
+          <>
+            <Button onClick={() => setConfirm(null)} disabled={saving}>إلغاء</Button>
+            <Button variant={confirm?.kind === "delete" ? "danger-solid" : "primary"} loading={saving} onClick={() => void runConfirm()}>
+              {confirm?.kind === "delete" ? "حذف" : "تصفير"}
+            </Button>
+          </>
+        }
+      />
+    </div>
+  );
+}
 
-            <form onSubmit={handleUpdateAccount} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">اسم الحساب</label>
-                  <input
-                    type="text"
-                    value={editForm.name}
-                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">Tenant ID</label>
-                  <input
-                    type="text"
-                    value={editForm.tenantId}
-                    onChange={(e) => setEditForm({ ...editForm, tenantId: e.target.value })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Communication Key ID</label>
-                <input
-                  type="text"
-                  value={editForm.communicationKeyId}
-                  onChange={(e) => setEditForm({ ...editForm, communicationKeyId: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="block text-xs font-semibold text-slate-300">
-                    تغيير Communication Key (اتركه فارغاً للإبقاء على المفتاح الحالي)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowEditKey(!showEditKey)}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300"
-                  >
-                    {showEditKey ? "إخفاء" : "إظهار"}
-                  </button>
-                </div>
-                <input
-                  type={showEditKey ? "text" : "password"}
-                  placeholder="اتركه فارغاً إذا كنت لا تريد تغييره"
-                  value={editForm.communicationKey}
-                  onChange={(e) => setEditForm({ ...editForm, communicationKey: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">حد الشهادات الكلي</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={editForm.licenseLimit}
-                    onChange={(e) => setEditForm({ ...editForm, licenseLimit: parseInt(e.target.value) || 10000 })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">الشهادات المستهلكة</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={editForm.licensesUsed}
-                    onChange={(e) => setEditForm({ ...editForm, licensesUsed: parseInt(e.target.value) || 0 })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">تمديد الصلاحية (أيام إضافية)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={editForm.extendDays}
-                    onChange={(e) => setEditForm({ ...editForm, extendDays: parseInt(e.target.value) || 0 })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-6 pt-2">
-                <label className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editForm.isPrimary}
-                    onChange={(e) => setEditForm({ ...editForm, isPrimary: e.target.checked })}
-                    className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 bg-slate-800"
-                  />
-                  حساب أساسي نشط (Primary)
-                </label>
-
-                <label className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editForm.isActive}
-                    onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
-                    className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 bg-slate-800"
-                  />
-                  حالة الحساب مفعّل
-                </label>
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingAccount(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingAccount}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition disabled:opacity-50"
-                >
-                  {savingAccount ? "جاري الحفظ..." : "حفظ التعديلات"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+function SecretInput({
+  id,
+  value,
+  onChange,
+  show,
+  onToggle,
+  required,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  show: boolean;
+  onToggle: () => void;
+  required?: boolean;
+}) {
+  return (
+    <div className="relative">
+      <Input id={id} type={show ? "text" : "password"} required={required} mono autoComplete="off" value={value} onChange={(e) => onChange(e.target.value)} style={{ paddingLeft: 44 }} />
+      <button type="button" onClick={onToggle} className="adm-btn is-ghost is-icon is-sm absolute top-1/2 -translate-y-1/2" style={{ left: 4 }} aria-label={show ? "إخفاء المفتاح" : "إظهار المفتاح"}>
+        {show ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
     </div>
   );
 }

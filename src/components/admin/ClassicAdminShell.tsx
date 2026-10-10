@@ -1,56 +1,38 @@
 "use client";
 
-import React, { useState } from "react";
+import "@/components/admin/ui/admin.css";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  LayoutDashboard,
-  Users,
-  GraduationCap,
-  Wallet,
   Bot,
-  Settings,
-  Shield,
-  ShieldAlert,
-  Video,
-  Phone,
-  Activity,
-  FileText,
-  Sparkles,
   ChevronDown,
-  X,
+  CornerDownLeft,
+  GraduationCap,
+  LayoutDashboard,
   LogOut,
-  Layers,
-  Award,
-  AlertTriangle,
-  Flame,
-  KeyRound,
-  Eye,
-  Server,
-  UserPlus,
-  RefreshCw,
-  LifeBuoy,
   Menu,
+  RefreshCw,
   Search,
-  UserCog,
-  Fingerprint,
+  Users,
+  Video,
+  Wallet,
+  X,
+  ClipboardCheck,
+  Landmark,
 } from "lucide-react";
 import { DarkModeToggle } from "@/components/ui/DarkModeToggle";
 import { AdminActionPasswordBar } from "@/components/admin/AdminActionPasswordBar";
 import { MaintenanceWarningBanner } from "@/components/ui/MaintenanceWarningBanner";
+import {
+  findSection,
+  getSuperadminHubs,
+  getTeacherHubs,
+  normalizeSearch,
+  type NavHub,
+  type NavSection,
+} from "@/components/admin/admin-nav";
+import { Badge, DialogHost } from "@/components/admin/ui/kit";
 
-export interface NavSection {
-  id: string;
-  label: string;
-  badge?: string | number;
-  badgeVariant?: "default" | "warning" | "danger" | "bronze";
-  icon?: React.ReactNode;
-}
-
-export interface NavHub {
-  id: string;
-  title: string;
-  icon: React.ReactNode;
-  sections: NavSection[];
-}
+export type { NavHub, NavSection } from "@/components/admin/admin-nav";
 
 interface ClassicAdminShellProps {
   role: "superadmin" | "admin" | "staff" | "teacher" | "assistant";
@@ -67,679 +49,509 @@ interface ClassicAdminShellProps {
   children: React.ReactNode;
 }
 
+const COLLAPSE_KEY = "adm_nav_collapsed";
+
+const ROLE_LABEL: Record<ClassicAdminShellProps["role"], string> = {
+  superadmin: "المشرف العام",
+  admin: "مشرف",
+  staff: "موظف",
+  teacher: "معلم",
+  assistant: "مساعد معلم",
+};
+
 export function ClassicAdminShell({
   role,
   activeSection,
   setActiveSection,
   onLogout,
   isOwner,
-  headerTitle = "لوحة التحكم التنفيذية",
-  headerSubtitle = "المشرف العام — منصة Code-UP",
+  headerTitle = "لوحة التحكم",
+  headerSubtitle = "منصة Code-UP",
   onRefresh,
   refreshing,
   onOpenMoneyControl,
   allowedSectionIds,
   children,
 }: ClassicAdminShellProps) {
-  // Mobile bottom sheet state
-  const [mobileActiveHub, setMobileActiveHub] = useState<string | null>(null);
-  const [isMobileAllMenuOpen, setIsMobileAllMenuOpen] = useState(false);
-  const [mobileSearchQuery, setMobileSearchQuery] = useState("");
+  const isTeacherSide = role === "teacher" || role === "assistant";
 
-  // Desktop accordion open state for hubs
-  const [openHubs, setOpenHubs] = useState<Record<string, boolean>>({
-    main: true,
-    users: true,
-    finance: true,
-    ai: true,
-    operations: false,
-    academic: true,
-    curriculum: true,
-    assessment: true,
-    students: true,
-  });
+  const hubs = useMemo<NavHub[]>(() => {
+    const base = isTeacherSide ? getTeacherHubs() : getSuperadminHubs({ isOwner, role });
+    const keep = (s: NavSection) => {
+      if (allowedSectionIds) return allowedSectionIds.includes(s.id);
+      if (role === "assistant") return s.id !== "assistants" && s.id !== "my-page";
+      return true;
+    };
+    return base.map((h) => ({ ...h, sections: h.sections.filter(keep) })).filter((h) => h.sections.length > 0);
+  }, [isTeacherSide, isOwner, role, allowedSectionIds]);
 
-  const toggleHub = (hubId: string) => {
-    setOpenHubs((prev) => ({ ...prev, [hubId]: !prev[hubId] }));
-  };
+  const current = findSection(hubs, activeSection);
 
-  // Define Category Hubs for SuperAdmin
-  const superadminHubs: NavHub[] = [
-    {
-      id: "main",
-      title: "المركز الرئيسي والرقابة",
-      icon: <LayoutDashboard className="w-4 h-4" />,
-      sections: [
-        { id: "overview", label: "نظرة عامة والتقارير", icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
-        { id: "security-violations", label: "الرصد الأمني والمخالفات", badge: "Live", badgeVariant: "danger", icon: <ShieldAlert className="w-3.5 h-3.5" /> },
-        { id: "logs", label: "سجلات النشاط والأحداث", icon: <Activity className="w-3.5 h-3.5" /> },
-        { id: "errors", label: "مراقبة الأخطاء والتحذيرات", icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-      ],
-    },
-    {
-      id: "users",
-      title: "المتعلمون والمعلمون",
-      icon: <Users className="w-4 h-4" />,
-      sections: [
-        { id: "students", label: "إدارة المتعلمين", icon: <GraduationCap className="w-3.5 h-3.5" /> },
-        { id: "deleted-students", label: "المتعلمون المرشحون", icon: <Users className="w-3.5 h-3.5" /> },
-        { id: "teachers", label: "إدارة المعلمين", icon: <Users className="w-3.5 h-3.5" /> },
-        { id: "create", label: "إنشاء حساب معلم جديد", icon: <UserPlus className="w-3.5 h-3.5" /> },
-        { id: "teacher-referrals", label: "برامج إحالة المعلمين", icon: <Layers className="w-3.5 h-3.5" /> },
-        { id: "deleted-teachers", label: "المعلمون المحذوفون", icon: <Users className="w-3.5 h-3.5" /> },
-      ],
-    },
-    {
-      id: "finance",
-      title: "المالية والاشتراكات",
-      icon: <Wallet className="w-4 h-4" />,
-      sections: [
-        { id: "wallet", label: "إدارة الرصيد والمحافظ", icon: <Wallet className="w-3.5 h-3.5" /> },
-        { id: "plans", label: "الخطط الدراسية", icon: <FileText className="w-3.5 h-3.5" /> },
-        { id: "vdocipher-accounts", label: "باقات وسيرفرات VdoCipher", icon: <Video className="w-3.5 h-3.5" /> },
-        { id: "axinom-accounts", label: "باقات وتراخيص Axinom DRM", icon: <Shield className="w-3.5 h-3.5" /> },
-      ],
-    },
-    {
-      id: "ai",
-      title: "استوديو الذكاء الاصطناعي",
-      icon: <Bot className="w-4 h-4" />,
-      sections: [
-        { id: "ai-copilot", label: "مساعد المشرف العام", badge: "DeepSeek", badgeVariant: "bronze", icon: <Sparkles className="w-3.5 h-3.5" /> },
-        { id: "ai-studio", label: "مركز الذكاء الاصطناعي", badge: "Studio", icon: <Bot className="w-3.5 h-3.5" /> },
-      ],
-    },
-    {
-      id: "operations",
-      title: "إدارة المنصة والإعدادات",
-      icon: <Settings className="w-4 h-4" />,
-      sections: [
-        { id: "staff-accounts", label: "المشرفون والموظفون", icon: <KeyRound className="w-3.5 h-3.5" /> },
-        { id: "testers", label: "حسابات الفحص (QA Testers)", icon: <Eye className="w-3.5 h-3.5" /> },
-        { id: "center-passes", label: "أرقام السنتر (Center ID)", icon: <Fingerprint className="w-3.5 h-3.5" /> },
-        { id: "whatsapp", label: "خدمة WhatsApp (Baileys)", icon: <Phone className="w-3.5 h-3.5" /> },
-        { id: "daily-exams", label: "امتحانات لوحة الشرف", icon: <Award className="w-3.5 h-3.5" /> },
-        { id: "leaderboard-prizes", label: "جوائز لوحة الشرف", icon: <Award className="w-3.5 h-3.5" /> },
-        { id: "site-text", label: "نصوص الموقع", icon: <FileText className="w-3.5 h-3.5" /> },
-        { id: "advanced-settings", label: "الإعدادات المتقدمة", icon: <Settings className="w-3.5 h-3.5" /> },
-        { id: "danger-zone", label: "منطقة الخطر — حذف جماعي", icon: <Flame className="w-3.5 h-3.5" /> },
-        ...(isOwner ? [{ id: "instance", label: "Instance — لوحة المالك", icon: <Server className="w-3.5 h-3.5" /> }] : []),
-      ],
-    },
-  ];
-
-  // Define Category Hubs for Teacher (Enterprise Studio Architecture)
-  const teacherHubs: NavHub[] = [
-    {
-      id: "academic",
-      title: "المركز الأكاديمي والتحليلات",
-      icon: <LayoutDashboard className="w-4 h-4" />,
-      sections: [
-        { id: "dashboard", label: "مؤشرات الأداء والتحليلات", icon: <LayoutDashboard className="w-3.5 h-3.5" /> },
-        { id: "teacher-subscriptions", label: "طلابك والأرقام", icon: <Wallet className="w-3.5 h-3.5" /> },
-        { id: "my-page", label: "الملف التعريفي العام للمعلم", icon: <Eye className="w-3.5 h-3.5" /> },
-        { id: "assistants", label: "المساعدون", icon: <UserCog className="w-3.5 h-3.5" /> },
-      ],
-    },
-    {
-      id: "curriculum",
-      title: "استوديو الكورسات والمحاضرات",
-      icon: <Video className="w-4 h-4" />,
-      sections: [
-        { id: "courses", label: "إدارة الكورسات والمحاضرات", badge: "Studio", badgeVariant: "bronze", icon: <Layers className="w-3.5 h-3.5" /> },
-        { id: "create-course", label: "إنشاء كورس ومسار جديد", icon: <UserPlus className="w-3.5 h-3.5" /> },
-      ],
-    },
-    {
-      id: "assessment",
-      title: "التقييم والأنشطة الأكاديمية",
-      icon: <Award className="w-4 h-4" />,
-      sections: [
-        { id: "homework", label: "إدارة الواجبات والملفات", icon: <FileText className="w-3.5 h-3.5" /> },
-        { id: "review", label: "مركز تصحيح الإجابات المباشر", badge: "Live", badgeVariant: "warning", icon: <Activity className="w-3.5 h-3.5" /> },
-        { id: "quiz-results", label: "سجل ونتائج الاختبارات", icon: <Award className="w-3.5 h-3.5" /> },
-        { id: "in-video-responses", label: "تصحيح الأسئلة المقالية (اختبارات وفيديو)", icon: <Activity className="w-3.5 h-3.5" /> },
-        { id: "grade-requests", label: "طلبات تعديل الدرجات", icon: <Award className="w-3.5 h-3.5" /> },
-      ],
-    },
-    {
-      id: "students",
-      title: "الطلاب والاشتراكات والوصول",
-      icon: <Users className="w-4 h-4" />,
-      sections: [
-        { id: "teacher-subscriptions", label: "طلابك والأرقام", icon: <Wallet className="w-3.5 h-3.5" /> },
-        { id: "students", label: "قائمة الطلاب وأرقامهم", icon: <Phone className="w-3.5 h-3.5" /> },
-        { id: "codes", label: "توليد أكواد الوصول الذكية", icon: <KeyRound className="w-3.5 h-3.5" /> },
-        { id: "referred-students", label: "الطلاب المُحالون والإحالات", icon: <Users className="w-3.5 h-3.5" /> },
-        { id: "requests", label: "طلبات زيادة المشاهدات", icon: <Eye className="w-3.5 h-3.5" /> },
-        { id: "tickets", label: "تذاكر الدعم والاستفسارات", icon: <LifeBuoy className="w-3.5 h-3.5" /> },
-        { id: "feedback", label: "ملاحظات وتقييمات الطلاب", icon: <FileText className="w-3.5 h-3.5" /> },
-      ],
-    },
-  ];
-
-  const baseHubs = role === "teacher" || role === "assistant" ? teacherHubs : superadminHubs;
-  const hubs = allowedSectionIds
-    ? baseHubs
-        .map((hub) => ({
-          ...hub,
-          sections: hub.sections.filter((s) => allowedSectionIds.includes(s.id)),
-        }))
-        .filter((hub) => hub.sections.length > 0)
-    : role === "assistant"
-      ? baseHubs
-          .map((hub) => ({
-            ...hub,
-            sections: hub.sections.filter((s) => s.id !== "assistants" && s.id !== "my-page"),
-          }))
-          .filter((hub) => hub.sections.length > 0)
-      : baseHubs;
-
-  // Mobile Bottom Navigation Anchors
-  const teacherAnchors = [
-    { hubId: "academic", label: "الرئيسية", directId: "dashboard", icon: <LayoutDashboard className="w-5 h-5" /> },
-    { hubId: "curriculum", label: "الكورسات", directId: "courses", icon: <Video className="w-5 h-5" /> },
-    { hubId: "assessment", label: "التقييم", icon: <Award className="w-5 h-5" /> },
-    { hubId: "students", label: "الطلاب", icon: <Users className="w-5 h-5" /> },
-    { hubId: "all_menu", label: "كل الخيارات", isMenu: true, icon: <Menu className="w-5 h-5" /> },
-  ].filter((anchor) => anchor.isMenu || hubs.some((h) => h.id === anchor.hubId));
-
-  const mobileAnchors = role === "teacher" || role === "assistant" ? teacherAnchors : [
-    { hubId: "main", label: "الرئيسية", icon: <LayoutDashboard className="w-5 h-5" /> },
-    { hubId: "users", label: "المستخدمين", icon: <Users className="w-5 h-5" /> },
-    { hubId: "finance", label: "المالية", icon: <Wallet className="w-5 h-5" /> },
-    { hubId: "ai", label: "الذكاء", directId: "ai-studio", icon: <Bot className="w-5 h-5" /> },
-    { hubId: "all_menu", label: "كل الخيارات", isMenu: true, icon: <Menu className="w-5 h-5" /> },
-  ];
-
-  const handleMobileAnchorClick = (anchor: { hubId: string; directId?: string; isMenu?: boolean }) => {
-    if (anchor.isMenu) {
-      setIsMobileAllMenuOpen(true);
-      setMobileActiveHub(null);
-      return;
-    }
-    if (anchor.directId) {
-      setActiveSection(anchor.directId);
-      setMobileActiveHub(null);
-    } else {
-      setMobileActiveHub(anchor.hubId);
-    }
-  };
-
-  // 50% / 50% chance: Native Dark Green ("emerald") or Native Blue ("blue")
-  const [accentTheme] = useState<"emerald" | "blue">(() => {
-    if (typeof window === "undefined") return "emerald";
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  useEffect(() => {
     try {
-      const stored = localStorage.getItem("admin_accent_mode");
-      if (stored === "emerald" || stored === "blue") return stored;
-      const chosen: "emerald" | "blue" = Math.random() < 0.5 ? "emerald" : "blue";
-      localStorage.setItem("admin_accent_mode", chosen);
-      return chosen;
+      const raw = localStorage.getItem(COLLAPSE_KEY);
+      if (raw) setCollapsed(JSON.parse(raw) as Record<string, boolean>);
     } catch {
-      return "emerald";
+      /* private mode */
     }
-  });
+  }, []);
+  const toggleHub = (id: string) =>
+    setCollapsed((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try {
+        localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
 
-  const selectedMobileHub = hubs.find((h) => h.id === mobileActiveHub);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const go = useCallback(
+    (id: string) => {
+      setActiveSection(id);
+      setDrawerOpen(false);
+      setPaletteOpen(false);
+      if (typeof window !== "undefined") window.scrollTo({ top: 0 });
+    },
+    [setActiveSection]
+  );
+
+  // Ctrl/⌘ + K opens the section search from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const dock = useMemo(() => {
+    const want = isTeacherSide
+      ? [
+          { id: "dashboard", label: "الرئيسية", icon: <LayoutDashboard size={20} /> },
+          { id: "courses", label: "الكورسات", icon: <Video size={20} /> },
+          { id: "review", label: "التصحيح", icon: <ClipboardCheck size={20} /> },
+          { id: "teacher-subscriptions", label: "الطلاب", icon: <Users size={20} /> },
+        ]
+      : [
+          { id: "overview", label: "الرئيسية", icon: <LayoutDashboard size={20} /> },
+          { id: "students", label: "المتعلمون", icon: <GraduationCap size={20} /> },
+          { id: "wallet", label: "المحافظ", icon: <Wallet size={20} /> },
+          role === "superadmin"
+            ? { id: "ai-copilot", label: "المساعد", icon: <Bot size={20} /> }
+            : { id: "teachers", label: "المعلمون", icon: <Users size={20} /> },
+        ];
+    return want.filter((d) => findSection(hubs, d.id));
+  }, [hubs, isTeacherSide, role]);
+
+  const brand = (
+    <div className="adm-brand">
+      <span className="adm-brand-mark" aria-hidden>C</span>
+      <div className="min-w-0">
+        <div className="adm-brand-title truncate">{headerTitle}</div>
+        <div className="adm-brand-sub truncate">
+          {ROLE_LABEL[role]} · {headerSubtitle}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
-    <div
-      dir="rtl"
-      className={`min-h-screen bg-[#f8fafc] text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200 ${
-        accentTheme === "emerald"
-          ? "selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:text-emerald-300"
-          : "selection:bg-blue-500/20 selection:text-blue-900 dark:selection:text-blue-300"
-      }`}
-    >
-      {/* ── Top Executive Header (Clean White / Pure Dark) ── */}
-      <header className="sticky top-0 z-40 bg-white text-slate-900 border-b border-slate-200 shadow-sm dark:bg-slate-900 dark:text-white dark:border-slate-800 px-4 sm:px-8 py-3.5">
-        <div className="flex items-center justify-between gap-4 w-full max-w-[1720px] mx-auto">
-          {/* Brand & Identity */}
-          <div className="flex items-center gap-2.5 sm:gap-3.5">
-            {/* Mobile Hamburger Menu Toggle */}
+    <div dir="rtl" className="adm adm-shell">
+      {/* Desktop sidebar */}
+      <aside className="adm-side" aria-label="أقسام لوحة التحكم">
+        {brand}
+        <div className="px-3 pb-1">
+          <SearchTrigger onOpen={() => setPaletteOpen(true)} />
+        </div>
+        <div className="adm-side-scroll">
+          <NavTree hubs={hubs} active={activeSection} collapsed={collapsed} onToggle={toggleHub} onGo={go} />
+        </div>
+        <div className="adm-side-foot">
+          <button type="button" onClick={onLogout} className="adm-nav-item">
+            <LogOut size={17} aria-hidden />
+            تسجيل الخروج
+          </button>
+        </div>
+      </aside>
+
+      <div className="min-w-0 flex flex-col">
+        <header className="adm-top">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="adm-btn is-ghost is-icon lg:hidden"
+            aria-label="فتح القائمة"
+            aria-expanded={drawerOpen}
+          >
+            <Menu size={20} />
+          </button>
+
+          <nav aria-label="المسار" className="adm-crumbs">
+            {current ? (
+              <>
+                <span className="hidden sm:inline whitespace-nowrap">{current.hub.title}</span>
+                <span className="hidden sm:inline" aria-hidden>/</span>
+                <b aria-current="page">{current.section.label}</b>
+              </>
+            ) : (
+              <b>{headerTitle}</b>
+            )}
+          </nav>
+
+          <div className="adm-top-actions">
             <button
               type="button"
-              onClick={() => setIsMobileAllMenuOpen(true)}
-              aria-label="قائمة الخيارات والأقسام"
-              title="فتح القائمة الكاملة"
-              className="lg:hidden w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 flex items-center justify-center transition-all cursor-pointer shadow-sm ml-1"
+              onClick={() => setPaletteOpen(true)}
+              className="adm-btn is-ghost is-icon lg:hidden"
+              aria-label="بحث في الأقسام"
             >
-              <Menu className="w-5 h-5" />
+              <Search size={18} />
             </button>
-
-            <div
-              className={`w-10 h-10 rounded-xl border flex items-center justify-center shadow-md transition-colors ${
-                accentTheme === "emerald"
-                  ? "bg-emerald-950 text-emerald-400 border-emerald-800 dark:bg-emerald-950 dark:border-emerald-700"
-                  : "bg-slate-900 text-blue-400 border-blue-900 dark:bg-blue-950 dark:border-blue-700"
-              }`}
-            >
-              <span className="font-black text-lg font-serif">C</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-wide">
-                  {headerTitle}
-                </h1>
-                <span
-                  className={`hidden sm:inline-flex px-2.5 py-0.5 rounded-md text-xs font-bold border transition-colors ${
-                    accentTheme === "emerald"
-                      ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800/60"
-                      : "bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800/60"
-                  }`}
-                >
-                  {role === "superadmin"
-                    ? "المشرف العام"
-                    : role === "teacher"
-                      ? "لوحة المعلم"
-                      : role === "assistant"
-                        ? "مساعد المعلم"
-                        : role}
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">
-                {headerSubtitle}
-              </p>
-            </div>
-          </div>
-
-          {/* Header Quick Actions */}
-          <div className="flex items-center gap-2.5">
-            {/* Custom Banana Security Key Action Password Button (Only for SuperAdmin) */}
             {role === "superadmin" && <AdminActionPasswordBar />}
-
             {onOpenMoneyControl && (
-              <button
-                onClick={onOpenMoneyControl}
-                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 dark:border-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-              >
-                <span>💰</span>
-                <span className="hidden sm:inline">المصروفات والأرباح</span>
+              <button type="button" onClick={onOpenMoneyControl} className="adm-btn is-sm" title="نسب الأرباح والمصروفات">
+                <Landmark size={15} aria-hidden />
+                <span className="hidden md:inline">الأرباح والمصروفات</span>
               </button>
             )}
-
             {onRefresh && (
               <button
+                type="button"
                 onClick={onRefresh}
                 disabled={refreshing}
+                className="adm-btn is-ghost is-icon"
+                aria-label="تحديث البيانات"
                 title="تحديث البيانات"
-                className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 dark:border-slate-700 flex items-center justify-center transition-all disabled:opacity-50 cursor-pointer shadow-sm"
               >
-                <RefreshCw
-                  className={`w-4 h-4 ${
-                    refreshing
-                      ? accentTheme === "emerald"
-                        ? "animate-spin text-emerald-600 dark:text-emerald-400"
-                        : "animate-spin text-blue-600 dark:text-blue-400"
-                      : ""
-                  }`}
-                />
+                <RefreshCw size={17} className={refreshing ? "adm-spin" : undefined} />
               </button>
             )}
-
             <DarkModeToggle />
-
-            <button
-              onClick={onLogout}
-              title="تسجيل الخروج"
-              className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-300 dark:bg-slate-800 dark:hover:bg-rose-950/40 dark:text-slate-400 dark:hover:text-rose-400 dark:border-slate-700 flex items-center justify-center transition-all cursor-pointer shadow-sm"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
           </div>
-        </div>
-      </header>
-      <MaintenanceWarningBanner />
+        </header>
 
-      {/* ── Main Layout (Sidebar + Content) ── */}
-      <div className="flex-1 flex w-full max-w-[1720px] mx-auto pb-24 sm:pb-8">
-        {/* Desktop Classic Sidebar */}
-        <aside className="hidden lg:block w-80 shrink-0 p-5 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 shadow-sm">
-          <div className="sticky top-20 space-y-4">
-            <div className="px-2 py-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
-              <span>أقسام لوحة التحكم</span>
-              <span className="text-xs text-slate-600 dark:text-amber-300 font-mono font-bold">5 Hubs</span>
-            </div>
+        <MaintenanceWarningBanner />
 
-            <div className="space-y-2">
-              {hubs.map((hub) => {
-                const isOpen = openHubs[hub.id] ?? false;
-                const hasActiveSection = hub.sections.some((s) => s.id === activeSection);
-
-                return (
-                  <div
-                    key={hub.id}
-                    className="rounded-xl border border-slate-200/90 dark:border-slate-800/70 bg-white dark:bg-slate-900/40 overflow-hidden shadow-sm dark:shadow-none transition-all"
-                  >
-                    {/* Hub Accordion Header */}
-                    <button
-                      type="button"
-                      onClick={() => toggleHub(hub.id)}
-                      className={`w-full px-3.5 py-2.5 flex items-center justify-between text-xs font-bold transition-all cursor-pointer ${
-                        hasActiveSection
-                          ? "bg-slate-100 text-slate-950 dark:bg-slate-800/60 dark:text-[#c5a880]"
-                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/30"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className={hasActiveSection ? "text-slate-900 dark:text-[#c5a880]" : "text-slate-500"}>
-                          {hub.icon}
-                        </span>
-                        <span>{hub.title}</span>
-                      </div>
-                      <ChevronDown
-                        className={`w-3.5 h-3.5 text-slate-400 dark:text-slate-500 transition-transform duration-200 ${
-                          isOpen ? "rotate-180 text-slate-700 dark:text-slate-300" : ""
-                        }`}
-                      />
-                    </button>
-
-                    {/* Hub Child Sections */}
-                    {isOpen && (
-                      <div className="p-1.5 space-y-0.5 bg-slate-50/70 dark:bg-slate-950/40 border-t border-slate-200/80 dark:border-slate-800/40">
-                        {hub.sections.map((section) => {
-                          const isActive = activeSection === section.id;
-
-                          return (
-                            <button
-                              key={section.id}
-                              type="button"
-                              onClick={() => setActiveSection(section.id)}
-                              className={`w-full px-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between transition-all cursor-pointer ${
-                                isActive
-                                  ? accentTheme === "emerald"
-                                    ? "bg-emerald-800 text-white font-bold shadow-sm dark:bg-emerald-950/70 dark:text-emerald-300 dark:border dark:border-emerald-800/70"
-                                    : "bg-blue-800 text-white font-bold shadow-sm dark:bg-blue-950/70 dark:text-blue-300 dark:border dark:border-blue-800/70"
-                                  : "text-slate-700 hover:bg-slate-200/60 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/50 dark:hover:text-white"
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className={isActive ? "text-white dark:text-[#c5a880]" : "text-slate-500"}>
-                                  {section.icon}
-                                </span>
-                                <span>{section.label}</span>
-                              </div>
-
-                              {section.badge && (
-                                <span
-                                  className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-                                    section.badgeVariant === "danger"
-                                      ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"
-                                      : section.badgeVariant === "bronze"
-                                      ? "bg-slate-200 text-slate-800 dark:bg-[#c5a880]/20 dark:text-[#c5a880] dark:border dark:border-[#c5a880]/30"
-                                      : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                                  }`}
-                                >
-                                  {section.badge}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+        <main className="adm-main classic-admin-surface" id="admin-main">
+          <div className="adm-main-inner">
+            {children}
           </div>
-        </aside>
-
-        {/* ── Main Dynamic Content Area ── */}
-        <main className="classic-admin-surface flex-1 min-w-0 p-4 sm:p-6 lg:p-8 space-y-6">
-          {children}
         </main>
       </div>
 
-      {/* ── Mobile Bottom Choices Dock (Anchored at Bottom of Screen) ── */}
-      <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 text-slate-700 dark:bg-[#090d15]/95 dark:text-slate-400 backdrop-blur-xl border-t border-slate-200 dark:border-slate-800/90 py-1.5 px-3 flex items-center justify-around lg:hidden shadow-xl dark:shadow-2xl dark:shadow-black">
-        {mobileAnchors.map((anchor) => {
-          const hub = hubs.find((h) => h.id === anchor.hubId);
-          const isSelected =
-            (anchor.directId && activeSection === anchor.directId) ||
-            hub?.sections.some((s) => s.id === activeSection);
-          const isOpenSheet = mobileActiveHub === anchor.hubId;
-
-          return (
-            <button
-              key={anchor.hubId}
-              type="button"
-              onClick={() => handleMobileAnchorClick(anchor)}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all cursor-pointer relative ${
-                isOpenSheet || isSelected
-                  ? "text-slate-950 dark:text-[#c5a880] font-bold"
-                  : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              <div
-                className={`p-1.5 rounded-xl transition-all ${
-                  isSelected || isOpenSheet
-                    ? "bg-slate-100 border border-slate-300 dark:bg-[#c5a880]/15 dark:border-[#c5a880]/30 shadow-sm"
-                    : ""
-                }`}
-              >
-                {anchor.icon}
-              </div>
-              <span className="text-[10px] mt-0.5 tracking-tight font-medium">
-                {anchor.label}
-              </span>
-              {isSelected && !isOpenSheet && (
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-900 dark:bg-[#c5a880] absolute bottom-0"></span>
-              )}
-            </button>
-          );
-        })}
+      {/* Mobile dock */}
+      <nav className="adm-dock" aria-label="تنقل سريع">
+        {dock.map((d) => (
+          <button
+            key={d.id}
+            type="button"
+            onClick={() => go(d.id)}
+            className="adm-dock-btn"
+            aria-current={activeSection === d.id ? "page" : undefined}
+          >
+            <span className="adm-dock-icon">{d.icon}</span>
+            {d.label}
+          </button>
+        ))}
+        <button type="button" onClick={() => setDrawerOpen(true)} className="adm-dock-btn">
+          <span className="adm-dock-icon"><Menu size={20} /></span>
+          كل الأقسام
+        </button>
       </nav>
 
-      {/* ── Mobile Bottom Choices Sheet / Drawer ── */}
-      {selectedMobileHub && (
-        <div className="fixed inset-0 z-50 lg:hidden flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div
-            className="fixed inset-0"
-            onClick={() => setMobileActiveHub(null)}
-          />
+      {drawerOpen && (
+        <Drawer onClose={() => setDrawerOpen(false)}>
+          <div className="flex items-center justify-between pe-2">
+            {brand}
+            <button type="button" onClick={() => setDrawerOpen(false)} className="adm-btn is-ghost is-icon" aria-label="إغلاق القائمة">
+              <X size={18} />
+            </button>
+          </div>
+          <div className="px-3 pb-1">
+            <SearchTrigger
+              onOpen={() => {
+                setDrawerOpen(false);
+                setPaletteOpen(true);
+              }}
+            />
+          </div>
+          <div className="adm-side-scroll">
+            <NavTree hubs={hubs} active={activeSection} collapsed={{}} onToggle={() => {}} onGo={go} flat />
+          </div>
+          <div className="adm-side-foot">
+            <button type="button" onClick={onLogout} className="adm-nav-item">
+              <LogOut size={17} aria-hidden />
+              تسجيل الخروج
+            </button>
+          </div>
+        </Drawer>
+      )}
 
-          <div className="relative bg-white dark:bg-[#0c101a] border-t border-slate-300 dark:border-slate-700/80 rounded-t-3xl p-5 space-y-4 max-h-[75vh] overflow-y-auto shadow-2xl animate-in slide-in-from-bottom duration-250">
-            {/* Drawer Drag Bar & Close */}
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-slate-900 dark:text-[#c5a880]">{selectedMobileHub.icon}</span>
-                <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                  {selectedMobileHub.title}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setMobileActiveHub(null)}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer shadow-sm"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      <DialogHost />
 
-            {/* Direct Choice Buttons (No Searching Required) */}
-            <div className="grid grid-cols-1 gap-2 pt-1">
-              {selectedMobileHub.sections.map((section) => {
-                const isActive = activeSection === section.id;
+      {paletteOpen && <CommandPalette hubs={hubs} active={activeSection} onGo={go} onClose={() => setPaletteOpen(false)} />}
+    </div>
+  );
+}
 
-                return (
+/* ─── Pieces ─────────────────────────────────────────────────────────────── */
+
+function SearchTrigger({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen} className="adm-search-trigger" aria-haspopup="dialog">
+      <Search size={15} aria-hidden />
+      <span>ابحث عن قسم…</span>
+      <kbd className="adm-kbd hidden lg:inline">Ctrl K</kbd>
+    </button>
+  );
+}
+
+function NavTree({
+  hubs,
+  active,
+  collapsed,
+  onToggle,
+  onGo,
+  flat = false,
+}: {
+  hubs: NavHub[];
+  active: string;
+  collapsed: Record<string, boolean>;
+  onToggle: (id: string) => void;
+  onGo: (id: string) => void;
+  flat?: boolean;
+}) {
+  return (
+    <>
+      {hubs.map((hub) => {
+        const hasActive = hub.sections.some((s) => s.id === active);
+        // The group holding the current page never hides it.
+        const open = flat || hasActive || !collapsed[hub.id];
+        const listId = `adm-hub-${hub.id}`;
+        return (
+          <div key={hub.id} className="adm-nav-group">
+            {hubs.length > 1 &&
+              (flat ? (
+                <div className="adm-nav-group-btn" style={{ cursor: "default" }}>{hub.title}</div>
+              ) : (
+                <button
+                  type="button"
+                  className="adm-nav-group-btn"
+                  aria-expanded={open}
+                  aria-controls={listId}
+                  onClick={() => onToggle(hub.id)}
+                  disabled={hasActive}
+                  title={hasActive ? undefined : open ? "طي المجموعة" : "إظهار المجموعة"}
+                >
+                  <span>{hub.title}</span>
+                  {!hasActive && <ChevronDown size={14} aria-hidden />}
+                </button>
+              ))}
+            {open && (
+              <div id={listId}>
+                {hub.sections.map((s) => (
                   <button
-                    key={section.id}
+                    key={s.id}
                     type="button"
-                    onClick={() => {
-                      setActiveSection(section.id);
-                      setMobileActiveHub(null);
-                    }}
-                    className={`w-full p-3.5 rounded-2xl flex items-center justify-between text-right text-xs font-bold transition-all cursor-pointer ${
-                      isActive
-                        ? accentTheme === "emerald"
-                          ? "bg-emerald-800 text-white shadow-sm dark:bg-emerald-950/80 dark:text-emerald-300 dark:border dark:border-emerald-800/60"
-                          : "bg-blue-800 text-white shadow-sm dark:bg-blue-950/80 dark:text-blue-300 dark:border dark:border-blue-800/60"
-                        : "bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 dark:bg-slate-900/80 dark:hover:bg-slate-800/80 dark:text-slate-200 dark:border-slate-800/80"
-                    }`}
+                    className="adm-nav-item"
+                    aria-current={active === s.id ? "page" : undefined}
+                    onClick={() => onGo(s.id)}
                   >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`p-2 rounded-xl ${
-                          isActive
-                            ? "bg-white/20 text-white"
-                            : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400"
-                        }`}
-                      >
-                        {section.icon}
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold">{section.label}</p>
-                      </div>
-                    </div>
-
-                    {section.badge && (
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          section.badgeVariant === "danger"
-                            ? "bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30"
-                            : section.badgeVariant === "bronze"
-                            ? "bg-slate-200 text-slate-800 dark:bg-[#c5a880]/20 dark:text-[#c5a880] dark:border dark:border-[#c5a880]/30"
-                            : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                        }`}
-                      >
-                        {section.badge}
-                      </span>
+                    {s.icon}
+                    <span className="truncate">{s.label}</span>
+                    {s.badge != null && (
+                      <Badge tone={s.badgeTone ?? "neutral"} live={s.badgeTone === "bad"}>
+                        {s.badge}
+                      </Badge>
                     )}
                   </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Comprehensive All Sections Mobile Drawer ── */}
-      {isMobileAllMenuOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div
-            className="fixed inset-0"
-            onClick={() => {
-              setIsMobileAllMenuOpen(false);
-              setMobileSearchQuery("");
-            }}
-          />
-
-          <div className="relative bg-white dark:bg-[#0c101a] border-t border-slate-300 dark:border-slate-700/80 rounded-t-3xl p-5 space-y-4 max-h-[85vh] overflow-y-auto shadow-2xl animate-in slide-in-from-bottom duration-250">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center">
-                  <Menu className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900 dark:text-white">
-                    قائمة أقسام لوحة التحكم
-                  </h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    اختر أي قسم للانتقال إليه مباشرة
-                  </p>
-                </div>
+                ))}
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMobileAllMenuOpen(false);
-                  setMobileSearchQuery("");
-                }}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer shadow-sm"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Quick Search */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="ابحث عن قسم (مثال: واجبات، كورسات، درجات، أكواد)..."
-                value={mobileSearchQuery}
-                onChange={(e) => setMobileSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2.5 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-              />
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3 pointer-events-none" />
-            </div>
-
-            {/* Hubs & Sections Grid */}
-            <div className="space-y-4 pt-1">
-              {hubs.map((hub) => {
-                const filteredSections = hub.sections.filter((s) =>
-                  !mobileSearchQuery.trim() ||
-                  s.label.toLowerCase().includes(mobileSearchQuery.toLowerCase()) ||
-                  hub.title.toLowerCase().includes(mobileSearchQuery.toLowerCase())
-                );
-
-                if (filteredSections.length === 0) return null;
-
-                return (
-                  <div key={hub.id} className="space-y-2">
-                    <div className="flex items-center gap-2 px-1 text-xs font-bold text-slate-500 dark:text-slate-400">
-                      <span className="text-slate-700 dark:text-[#c5a880]">{hub.icon}</span>
-                      <span>{hub.title}</span>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-1.5">
-                      {filteredSections.map((section) => {
-                        const isActive = activeSection === section.id;
-                        return (
-                          <button
-                            key={section.id}
-                            type="button"
-                            onClick={() => {
-                              setActiveSection(section.id);
-                              setIsMobileAllMenuOpen(false);
-                              setMobileSearchQuery("");
-                            }}
-                            className={`w-full p-3 rounded-xl flex items-center justify-between text-right text-xs font-bold transition-all cursor-pointer ${
-                              isActive
-                                ? accentTheme === "emerald"
-                                  ? "bg-emerald-800 text-white shadow-sm dark:bg-emerald-950/80 dark:text-emerald-300 dark:border dark:border-emerald-800/60"
-                                  : "bg-blue-800 text-white shadow-sm dark:bg-blue-950/80 dark:text-blue-300 dark:border dark:border-blue-800/60"
-                                : "bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 dark:bg-slate-900/80 dark:hover:bg-slate-800/80 dark:text-slate-200 dark:border-slate-800/80"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <div
-                                className={`p-1.5 rounded-lg ${
-                                  isActive
-                                    ? "bg-white/20 text-white"
-                                    : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-400"
-                                }`}
-                              >
-                                {section.icon}
-                              </div>
-                              <span>{section.label}</span>
-                            </div>
-
-                            {section.badge && (
-                              <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  section.badgeVariant === "danger"
-                                    ? "bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30"
-                                    : section.badgeVariant === "bronze"
-                                    ? "bg-slate-200 text-slate-800 dark:bg-[#c5a880]/20 dark:text-[#c5a880] dark:border dark:border-[#c5a880]/30"
-                                    : "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                                }`}
-                              >
-                                {section.badge}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            )}
           </div>
+        );
+      })}
+    </>
+  );
+}
+
+function useDialogBehaviour(onClose: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const node = ref.current;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        closeRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !node) return;
+      const items = Array.from(
+        node.querySelectorAll<HTMLElement>('button:not([disabled]), input, a[href], [tabindex]:not([tabindex="-1"])')
+      ).filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    node?.addEventListener("keydown", onKey);
+    return () => {
+      node?.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+      opener?.focus?.({ preventScroll: true });
+    };
+  }, []);
+  return ref;
+}
+
+function Drawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const ref = useDialogBehaviour(onClose);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('[aria-current="page"]')?.focus({ preventScroll: false });
+  }, [ref]);
+  return (
+    <>
+      <div className="adm-overlay lg:hidden" onClick={onClose} aria-hidden />
+      <div ref={ref} role="dialog" aria-modal="true" aria-label="أقسام لوحة التحكم" className="adm-drawer lg:hidden">
+        {children}
+      </div>
+    </>
+  );
+}
+
+function CommandPalette({
+  hubs,
+  active,
+  onGo,
+  onClose,
+}: {
+  hubs: NavHub[];
+  active: string;
+  onGo: (id: string) => void;
+  onClose: () => void;
+}) {
+  const ref = useDialogBehaviour(onClose);
+  const [q, setQ] = useState("");
+  const [cursor, setCursor] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const results = useMemo(() => {
+    const nq = normalizeSearch(q);
+    const out: Array<{ hub: NavHub; section: NavSection }> = [];
+    for (const hub of hubs) {
+      for (const section of hub.sections) {
+        if (!nq) {
+          out.push({ hub, section });
+          continue;
+        }
+        const hay = normalizeSearch(`${section.label} ${hub.title} ${section.keywords ?? ""} ${section.id}`);
+        if (nq.split(/\s+/).every((w) => hay.includes(w))) out.push({ hub, section });
+      }
+    }
+    return out;
+  }, [q, hubs]);
+
+  useEffect(() => {
+    setCursor(0);
+  }, [q]);
+
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-idx="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [cursor]);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setCursor((c) => Math.min(results.length - 1, c + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setCursor((c) => Math.max(0, c - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const hit = results[cursor];
+      if (hit) onGo(hit.section.id);
+    }
+  };
+
+  let lastHub = "";
+  return (
+    <>
+      <div className="adm-overlay" onClick={onClose} aria-hidden />
+      <div ref={ref} role="dialog" aria-modal="true" aria-label="بحث في الأقسام" className="adm-palette" dir="rtl">
+        <div className="relative">
+          <Search size={17} className="absolute top-1/2 -translate-y-1/2" style={{ insetInlineStart: 16, color: "var(--ink-3)" }} aria-hidden />
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="اكتب اسم القسم: طلاب، محفظة، أخطاء، wallet…"
+            className="adm-palette-input"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="adm-palette-list"
+            aria-activedescendant={results[cursor] ? `adm-pal-${results[cursor].section.id}` : undefined}
+          />
         </div>
-      )}
-    </div>
+        <div ref={listRef} id="adm-palette-list" role="listbox" className="adm-palette-list">
+          {results.length === 0 ? (
+            <p className="p-6 text-center text-sm" style={{ color: "var(--ink-3)" }}>
+              لا يوجد قسم بهذا الاسم
+            </p>
+          ) : (
+            results.map((r, idx) => {
+              const header = r.hub.id !== lastHub ? r.hub.title : null;
+              lastHub = r.hub.id;
+              return (
+                <React.Fragment key={r.section.id}>
+                  {header && <div className="adm-palette-group">{header}</div>}
+                  <button
+                    type="button"
+                    id={`adm-pal-${r.section.id}`}
+                    role="option"
+                    aria-selected={idx === cursor}
+                    data-idx={idx}
+                    data-active={idx === cursor}
+                    className="adm-palette-item"
+                    onMouseMove={() => setCursor(idx)}
+                    onClick={() => onGo(r.section.id)}
+                  >
+                    {r.section.icon}
+                    <span>{r.section.label}</span>
+                    {r.section.id === active ? <small>أنت هنا</small> : idx === cursor ? <CornerDownLeft size={14} style={{ marginInlineStart: "auto" }} aria-hidden /> : null}
+                  </button>
+                </React.Fragment>
+              );
+            })
+          )}
+        </div>
+        <div className="flex items-center gap-3 px-4 py-2.5 text-xs" style={{ borderTop: "1px solid var(--border)", color: "var(--ink-3)" }}>
+          <span><kbd className="adm-kbd">↑</kbd> <kbd className="adm-kbd">↓</kbd> للتنقل</span>
+          <span><kbd className="adm-kbd">Enter</kbd> للفتح</span>
+          <span><kbd className="adm-kbd">Esc</kbd> للإغلاق</span>
+        </div>
+      </div>
+    </>
   );
 }

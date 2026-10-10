@@ -1,93 +1,137 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 /**
- * Full-screen blocking question modal for "pause" mode.
- * Renders over the player when a timed question fires. Blocks resume until answered.
+ * Hardened In-Video Interactive Question Modal.
+ *
+ * Protections:
+ * 1. Blocks playback until answered or explanation understood.
+ * 2. Background blur (backdrop-blur-md).
+ * 3. Prevents context menu (right click) and developer shortcuts.
+ * 4. Never exposes correctIndex locally — validates via POST /api/videos/questions/check.
+ * 5. Rate limits to max 2 attempts per question.
+ * 6. Supports 2, 3, or 4 dynamic options.
  */
 
-type VideoQuestion = {
+export type VideoQuestionItem = {
   id: string;
-  triggerSecond: number;
-  mode: string;
-  questionType?: string; // "mcq" | "essay"
-  questionText: string;
+  timestamp?: number;
+  triggerSecond?: number;
+  question?: string;
+  questionText?: string;
+  options?: string[];
   optionA?: string | null;
   optionB?: string | null;
   optionC?: string | null;
   optionD?: string | null;
+  isRequired?: boolean;
+  explanation?: string | null;
+  answered?: boolean;
 };
+
+interface CheckResponse {
+  isCorrect: boolean;
+  attempts: number;
+  maxAttempts: number;
+  canRetry: boolean;
+  canContinue: boolean;
+  explanation?: string | null;
+  message?: string;
+}
 
 export function VideoQuestionModal({
   question,
   videoId,
-  watchSessionId,
-  currentSecond,
   onAnswered,
 }: {
-  question: VideoQuestion;
+  question: VideoQuestionItem;
   videoId: string;
   watchSessionId?: string;
-  currentSecond: number;
-  onAnswered: (result: { isCorrect: boolean; correctOption: string; explanation?: string }) => void;
+  currentSecond?: number;
+  onAnswered: (result: { isCorrect: boolean; attempts: number }) => void;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [essayText, setEssayText] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [essaySubmitted, setEssaySubmitted] = useState(false);
-  const [result, setResult] = useState<{
-    isCorrect: boolean;
-    correctOption: string;
-    explanation?: string;
-  } | null>(null);
+  const [checkResult, setCheckResult] = useState<CheckResponse | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const isEssay = question.questionType === "essay";
+  // Normalize options array (supports 2, 3, or 4 options)
+  const optionsList: string[] = Array.isArray(question.options) && question.options.length >= 2
+    ? question.options
+    : [question.optionA, question.optionB, question.optionC, question.optionD]
+        .filter((o): o is string => typeof o === "string" && o.trim().length > 0);
 
-  const options = [
-    { key: "A", text: question.optionA ?? "" },
-    { key: "B", text: question.optionB ?? "" },
-    { key: "C", text: question.optionC ?? "" },
-    { key: "D", text: question.optionD ?? "" },
-  ];
+  const questionTitle = (question.question || question.questionText || "").trim();
+  const timeSeconds = typeof question.timestamp === "number" && question.timestamp >= 0
+    ? question.timestamp
+    : (question.triggerSecond || 0);
+  const timeFormatted = `${Math.floor(timeSeconds / 60)}:${String(timeSeconds % 60).padStart(2, "0")}`;
 
-  const submit = async () => {
-    if (isEssay ? !essayText.trim() : !selected) return;
-    if (submitting) return;
+  // DevTools deterrents & Right-click prevention while question is shown
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "F12") {
+        e.preventDefault();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && ["I", "J", "C"].includes(e.key.toUpperCase())) {
+        e.preventDefault();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toUpperCase() === "U") {
+        e.preventDefault();
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, []);
+
+  const handleSubmit = async () => {
+    if (selectedIndex === null || submitting) return;
     setSubmitting(true);
+    setErrorMsg(null);
 
     try {
-      const body = isEssay
-        ? { essayAnswer: essayText.trim(), answeredAtSecond: Math.round(currentSecond), watchSessionId }
-        : { selectedOption: selected, answeredAtSecond: Math.round(currentSecond), watchSessionId };
-
-      const res = await fetch(`/api/videos/${videoId}/questions/${question.id}/answer`, {
+      const res = await fetch("/api/videos/questions/check", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          questionId: question.id,
+          selectedIndex,
+        }),
       });
+
       const data = await res.json();
-      if (isEssay) {
-        setEssaySubmitted(true);
-        setResult({ isCorrect: false, correctOption: "" });
-      } else {
-        const r = {
-          isCorrect: data.isCorrect ?? false,
-          correctOption: data.correctOption ?? "",
-          explanation: data.explanation ?? undefined,
-        };
-        setResult(r);
+      if (!res.ok) {
+        setErrorMsg(data.error || "تعذر التحقق من الإجابة");
+        setSubmitting(false);
+        return;
       }
+
+      setCheckResult(data);
     } catch {
-      // On error, allow retry
+      setErrorMsg("حدث خطأ في الاتصال بالخادم، يرجى المحاولة ثانية");
+    } finally {
       setSubmitting(false);
     }
   };
 
-  const dismiss = () => {
-    onAnswered(result || { isCorrect: false, correctOption: "" });
+  const handleContinue = () => {
+    onAnswered({
+      isCorrect: checkResult?.isCorrect ?? false,
+      attempts: checkResult?.attempts ?? 1,
+    });
+  };
+
+  const handleRetry = () => {
+    setSelectedIndex(null);
+    setCheckResult(null);
+    setErrorMsg(null);
   };
 
   return (
@@ -96,153 +140,208 @@ export function VideoQuestionModal({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+        className="absolute inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md select-none"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
         onClick={(e) => e.stopPropagation()}
+        dir="rtl"
       >
         <motion.div
-          initial={{ scale: 0.9, y: 20 }}
+          initial={{ scale: 0.92, y: 16 }}
           animate={{ scale: 1, y: 0 }}
-          exit={{ scale: 0.9, y: 20 }}
-          transition={{ type: "spring", damping: 25, stiffness: 350 }}
-          className="bg-[var(--surface)] rounded-2xl border border-[var(--border)] w-[90%] max-w-lg p-6 sm:p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
-          dir="rtl"
+          exit={{ scale: 0.92, y: 16 }}
+          transition={{ type: "spring", damping: 26, stiffness: 340 }}
+          className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-lg p-5 sm:p-7 shadow-2xl max-h-[92vh] overflow-y-auto text-slate-100"
         >
           {/* Header */}
-          <div className="flex items-center gap-3 mb-5">
-            <span className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center shrink-0">
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-            </span>
-            <div>
-              <h3 className="font-bold text-[var(--ink)] text-base">
-                {isEssay ? "سؤال مقالي أثناء المشاهدة" : "سؤال اختيار من متعدد"}
-              </h3>
-              <p className="text-[11px] text-[var(--ink-muted)]">
-                أجب للمتابعة — {Math.floor(question.triggerSecond / 60)}:{String(question.triggerSecond % 60).padStart(2, "0")}
-              </p>
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3.5 mb-4">
+            <div className="flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-400 flex items-center justify-center text-lg">
+                💡
+              </span>
+              <div>
+                <h3 className="font-bold text-sm sm:text-base text-white">
+                  سؤال تفاعلي أثناء المشاهدة
+                </h3>
+                <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+                  <span>⏱️ التوقيت: <strong className="font-mono text-slate-300">{timeFormatted}</strong></span>
+                  {question.isRequired !== false && (
+                    <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 font-bold text-[10px]">
+                      مطلوب للمتابعة
+                    </span>
+                  )}
+                </p>
+              </div>
             </div>
+
+            {checkResult && (
+              <span
+                className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
+                  checkResult.isCorrect
+                    ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                    : "bg-rose-500/15 border-rose-500/40 text-rose-400"
+                }`}
+              >
+                {checkResult.isCorrect ? "✓ صحيح" : "✗ خطأ"}
+              </span>
+            )}
           </div>
 
-          {/* Question text */}
-          <p className="text-sm font-semibold text-[var(--ink)] leading-relaxed mb-5">
-            {question.questionText}
-          </p>
+          {/* Question Text */}
+          <div className="mb-5">
+            <p className="text-sm sm:text-base font-bold text-white leading-relaxed">
+              {questionTitle}
+            </p>
+          </div>
 
-          {/* Essay or MCQ Options */}
-          {isEssay ? (
-            <div className="mb-6 space-y-2">
-              <textarea
-                value={essayText}
-                onChange={(e) => setEssayText(e.target.value)}
-                disabled={essaySubmitted}
-                placeholder="اكتب إجابتك هنا بوضوح..."
-                rows={4}
-                className="w-full p-3.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--ink)] text-sm focus:outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-400 transition-all resize-none"
-              />
-            </div>
-          ) : (
-            <div className="space-y-2.5 mb-6">
-              {options.map((opt) => {
-                let optClass = "border-[var(--border)] hover:border-sky-400/50 hover:bg-sky-400/5";
-                if (result) {
-                  if (opt.key === result.correctOption) {
-                    optClass = "border-emerald-500/60 bg-emerald-500/10";
-                  } else if (opt.key === selected && !result.isCorrect) {
-                    optClass = "border-red-500/60 bg-red-500/10";
-                  } else {
-                    optClass = "border-[var(--border)] opacity-50";
-                  }
-                } else if (selected === opt.key) {
-                  optClass = "border-sky-400/60 bg-sky-400/10 shadow-[0_0_0_3px_rgba(56,189,248,0.15)]";
+          {/* Dynamic Options: 2, 3, or 4 options */}
+          <div className="space-y-2.5 mb-5">
+            {optionsList.map((opt, i) => {
+              const isChosen = selectedIndex === i;
+              let optionStyle =
+                "border-slate-800 bg-slate-800/60 hover:bg-slate-800 hover:border-slate-700 text-slate-200";
+
+              if (checkResult) {
+                if (isChosen) {
+                  optionStyle = checkResult.isCorrect
+                    ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.25)]"
+                    : "border-rose-500 bg-rose-500/20 text-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.25)]";
+                } else {
+                  optionStyle = "border-slate-800/80 bg-slate-900/50 text-slate-500 opacity-50";
                 }
+              } else if (isChosen) {
+                optionStyle =
+                  "border-sky-500 bg-sky-500/15 text-white ring-2 ring-sky-500/30";
+              }
 
-                return (
-                  <button
-                    key={opt.key}
-                    onClick={() => !result && setSelected(opt.key)}
-                    disabled={!!result}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-right transition-all ${optClass}`}
+              const letters = ["أ", "ب", "ج", "د"];
+              const letterLabel = letters[i] || String(i + 1);
+
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={submitting || (checkResult !== null && (checkResult.isCorrect || !checkResult.canRetry))}
+                  onClick={() => {
+                    if (!checkResult || checkResult.canRetry) {
+                      setSelectedIndex(i);
+                      if (checkResult) setCheckResult(null);
+                    }
+                  }}
+                  className={`w-full flex items-center gap-3 p-3 sm:p-3.5 rounded-xl border-2 text-right transition-all cursor-pointer ${optionStyle}`}
+                >
+                  <span
+                    className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black transition-colors ${
+                      checkResult && isChosen && checkResult.isCorrect
+                        ? "bg-emerald-500 text-white"
+                        : checkResult && isChosen && !checkResult.isCorrect
+                        ? "bg-rose-500 text-white"
+                        : isChosen
+                        ? "bg-sky-500 text-white"
+                        : "bg-slate-800 text-slate-400 border border-slate-700"
+                    }`}
                   >
-                    <span className={`shrink-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-black transition-colors ${
-                      result && opt.key === result.correctOption
-                        ? "border-emerald-500 bg-emerald-500 text-white"
-                        : result && opt.key === selected && !result.isCorrect
-                        ? "border-red-500 bg-red-500 text-white"
-                        : selected === opt.key
-                        ? "border-sky-400 bg-sky-400 text-white"
-                        : "border-[var(--border)] text-[var(--ink-muted)]"
-                    }`}>
-                      {result && opt.key === result.correctOption ? "✓" : opt.key}
-                    </span>
-                    <span className="text-sm text-[var(--ink)] flex-1">{opt.text}</span>
-                  </button>
-                );
-              })}
+                    {letterLabel}
+                  </span>
+                  <span className="text-xs sm:text-sm font-semibold flex-1 leading-snug">
+                    {opt}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Feedback & Result Message */}
+          {errorMsg && (
+            <div className="p-3 mb-4 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold text-center">
+              {errorMsg}
             </div>
           )}
 
-          {/* Essay confirmation or MCQ explanation */}
-          {essaySubmitted && (
+          {checkResult && (
             <motion.div
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              className="rounded-xl p-4 mb-4 bg-sky-500/10 border border-sky-500/30"
-            >
-              <p className="text-sm font-bold text-sky-500">تم إرسال إجابتك المقالية بنجاح! 📝</p>
-              <p className="text-xs text-[var(--ink-muted)] mt-1.5 leading-relaxed">
-                سيقوم المعلم بمراجعة إجابتك وتقييمها وإرسال الملاحظات لك قريباً.
-              </p>
-            </motion.div>
-          )}
-
-          {!isEssay && result && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`rounded-xl p-4 mb-4 ${
-                result.isCorrect
-                  ? "bg-emerald-500/10 border border-emerald-500/30"
-                  : "bg-red-500/10 border border-red-500/30"
+              className={`p-4 rounded-xl mb-4 border ${
+                checkResult.isCorrect
+                  ? "bg-emerald-950/50 border-emerald-500/40 text-emerald-200"
+                  : "bg-rose-950/50 border-rose-500/40 text-rose-200"
               }`}
             >
-              <p className={`text-sm font-bold ${result.isCorrect ? "text-emerald-500" : "text-red-500"}`}>
-                {result.isCorrect ? "إجابة صحيحة! 🎉" : "إجابة خاطئة"}
-              </p>
-              {result.explanation && (
-                <p className="text-xs text-[var(--ink-muted)] mt-1.5 leading-relaxed">{result.explanation}</p>
+              <div className="flex items-center gap-2 font-bold text-sm mb-1">
+                <span>{checkResult.isCorrect ? "🎉 برافو! إجابة صحيحة" : "❌ إجابة غير صحيحة"}</span>
+              </div>
+
+              {checkResult.message && (
+                <p className="text-xs opacity-90 leading-relaxed mb-1.5">
+                  {checkResult.message}
+                </p>
+              )}
+
+              {/* Show explanation if provided */}
+              {checkResult.explanation && (
+                <div className="mt-2.5 pt-2 border-t border-white/10 text-xs leading-relaxed text-slate-300">
+                  <span className="font-bold text-amber-300 block mb-1">💡 الشرح والتوضيح:</span>
+                  <p className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 text-slate-200">
+                    {checkResult.explanation}
+                  </p>
+                </div>
               )}
             </motion.div>
           )}
 
-          {/* Action button */}
-          {!result && !essaySubmitted ? (
-            <button
-              onClick={submit}
-              disabled={(isEssay ? !essayText.trim() : !selected) || submitting}
-              className="w-full py-3 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_4px_14px_-6px_rgba(37,99,235,0.7)]"
-            >
-              {submitting ? (
-                <span className="flex items-center justify-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  جارٍ الإرسال...
-                </span>
-              ) : (
-                "تأكيد الإجابة"
-              )}
-            </button>
-          ) : (
-            <button
-              onClick={dismiss}
-              className="w-full py-3 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-sm font-bold transition-colors shadow-[0_4px_14px_-6px_rgba(37,99,235,0.7)]"
-            >
-              متابعة المشاهدة ←
-            </button>
-          )}
+          {/* Action Buttons */}
+          <div className="pt-2">
+            {!checkResult ? (
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={selectedIndex === null || submitting}
+                className="w-full py-3.5 px-4 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-bold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_16px_rgba(14,165,233,0.35)] cursor-pointer"
+              >
+                {submitting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    جارٍ التحقق...
+                  </span>
+                ) : (
+                  "تأكيد الإجابة ✓"
+                )}
+              </button>
+            ) : checkResult.isCorrect ? (
+              <button
+                type="button"
+                onClick={handleContinue}
+                className="w-full py-3.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-black text-sm transition-all shadow-[0_4px_16px_rgba(16,185,129,0.35)] flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>كمل الفيديو ▶️</span>
+              </button>
+            ) : checkResult.canRetry ? (
+              <div className="flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  className="w-full py-3.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>حاول تاني 🔄</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleContinue}
+                className="w-full py-3.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm transition-all shadow-[0_4px_16px_rgba(245,158,11,0.35)] flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>فهمت، كمل بعد الشرح ▶️</span>
+              </button>
+            )}
+          </div>
         </motion.div>
       </motion.div>
     </AnimatePresence>
   );
 }
+
+export default VideoQuestionModal;

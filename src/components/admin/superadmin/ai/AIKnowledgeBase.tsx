@@ -21,15 +21,15 @@ export default function AIKnowledgeBase() {
             <div className="grid grid-cols-3 gap-2 text-center my-4">
               <div className="p-2 rounded-xl bg-[var(--surface-2)]">
                 <div className="text-lg font-black text-[var(--ink)]">{s.chapters}</div>
-                <div className="text-[11px] text-[var(--ink-3)]">فصل</div>
+                <div className="text-xs text-[var(--ink-3)]">فصل</div>
               </div>
               <div className="p-2 rounded-xl bg-[var(--surface-2)]">
                 <div className="text-lg font-black text-[var(--ink)]">{s.lessons}</div>
-                <div className="text-[11px] text-[var(--ink-3)]">درس</div>
+                <div className="text-xs text-[var(--ink-3)]">درس</div>
               </div>
               <div className="p-2 rounded-xl bg-[var(--surface-2)]">
                 <div className="text-lg font-black text-[var(--brand)]">v{s.version}</div>
-                <div className="text-[11px] text-[var(--ink-3)]">الإصدار</div>
+                <div className="text-xs text-[var(--ink-3)]">الإصدار</div>
               </div>
             </div>
             <button className="w-full py-2 rounded-xl text-xs font-bold bg-[var(--surface-2)] text-[var(--ink)] hover:bg-[var(--border)] transition-colors">

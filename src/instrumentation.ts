@@ -58,6 +58,38 @@ export async function register() {
           }
         );
 
+        // Daily practice: rewrite newly released quiz/homework questions into
+        // the practice bank and publish today's set. 02:00 is the quietest hour.
+        console.log("⏰ Scheduling daily practice question generation at 02:00 AM Cairo time.");
+        cron.schedule(
+          "0 2 * * *",
+          async () => {
+            try {
+              const { runNightlyPractice } = await import("./lib/practice-generate");
+              await runNightlyPractice();
+            } catch (err) {
+              console.error("❌ Scheduled practice generation failed:", err);
+            }
+          },
+          {
+            timezone: "Africa/Cairo",
+          }
+        );
+
+        // Video quality copies (360p/480p/720p): the transcode queue is in
+        // memory, so a restart mid-job drops it. Re-queue anything missing a
+        // few minutes after boot (clear of the deploy smoke test) and nightly.
+        const sweepRenditions = async () => {
+          try {
+            const { enqueueMissingRenditions } = await import("./lib/rendition-queue");
+            await enqueueMissingRenditions();
+          } catch (err) {
+            console.error("❌ Rendition sweep failed:", err);
+          }
+        };
+        setTimeout(() => void sweepRenditions(), 5 * 60 * 1000);
+        cron.schedule("0 4 * * *", () => void sweepRenditions(), { timezone: "Africa/Cairo" });
+
         // 3. Setup the weekly database backup cron (Every Sunday at 02:00 AM Africa/Cairo timezone)
         console.log("⏰ Scheduling weekly database backup at 02:00 AM (Sunday) Cairo time.");
         const { performDatabaseBackup } = await import("./lib/db-backup");

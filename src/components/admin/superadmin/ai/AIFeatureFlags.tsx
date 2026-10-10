@@ -90,7 +90,7 @@ export default function AIFeatureFlags() {
             <button
               onClick={() => toggleFlag(f.key, f.enabled)}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer border-none ${
-                f.enabled ? "bg-[var(--brand)] text-white" : "bg-[var(--surface-2)] text-[var(--ink-3)]"
+                f.enabled ? "bg-[var(--brand)] text-[var(--on-brand)]" : "bg-[var(--surface-2)] text-[var(--ink-3)]"
               }`}
             >
               {f.enabled ? "مُفعل" : "معطل"}

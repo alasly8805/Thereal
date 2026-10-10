@@ -46,6 +46,7 @@ export function MobileTabBar() {
     if (pathname === "/") return "/";
     if (pathname.startsWith("/library")) return "/library";
     if (pathname.startsWith("/courses")) return "/courses";
+    if (pathname.startsWith("/practice")) return "/practice";
     if (pathname.startsWith("/environments")) return "/environments";
     if (pathname.startsWith("/leaderboard")) return "/leaderboard";
     if (pathname.startsWith("/account")) return "/account";
@@ -130,6 +131,7 @@ export function MobileTabBar() {
             <option value="" disabled>— قائمة التنقل السريع —</option>
             <option value="/">🏠 الرئيسية</option>
             <option value="/library">📖 مكتبتي</option>
+            {user?.role === "student" && <option value="/practice">✍️ التدريبات اليومية</option>}
             <option value="/courses">📚 الكورسات</option>
             <option value="/environments">🔬 بيئات التعلم</option>
             <option value="/leaderboard">🏆 لوحة الشرف</option>

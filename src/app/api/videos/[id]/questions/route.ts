@@ -6,8 +6,8 @@ import { checkVideoAccess } from "@/lib/authorization";
 /**
  * Student and Teacher-facing questions for a video.
  *
- * GET — Returns questions.
- *       In teacher/admin preview mode, questions are fully accessible for testing.
+ * GET — Returns questions for a video.
+ * Security: NEVER returns correctIndex or correctOption to students.
  */
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +25,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "الفيديو غير موجود" }, { status: 404 });
   }
 
-  if (!video.isFree) {
+  const isTeacherOrAdmin = session.role === "teacher" || session.role === "admin" || session.role === "superadmin";
+
+  if (!video.isFree && !isTeacherOrAdmin) {
     const hasAccess = await checkVideoAccess(session.id, session.role, videoId);
     if (!hasAccess) {
       return NextResponse.json({ error: "لا يوجد صلاحية للوصول لأسئلة هذا الدرس" }, { status: 403 });
@@ -35,20 +37,32 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // Fetch all questions for this video
   const questions = await prisma.videoQuestion.findMany({
     where: { videoId },
-    orderBy: { triggerSecond: "asc" },
+    orderBy: [{ timestamp: "asc" }, { triggerSecond: "asc" }],
     select: {
       id: true,
+      timestamp: true,
       triggerSecond: true,
-      mode: true,
-      questionType: true,
+      question: true,
       questionText: true,
+      options: true,
       optionA: true,
       optionB: true,
       optionC: true,
       optionD: true,
-      correctOption: true,
+      isRequired: true,
+      mode: true,
+      questionType: true,
       explanation: true,
       refireOnRewatch: true,
+      progress: {
+        where: { userId: session.id },
+        select: {
+          id: true,
+          isCorrect: true,
+          attempts: true,
+          answeredAt: true,
+        },
+      },
       responses: {
         where: { studentId: session.id },
         select: {
@@ -58,41 +72,53 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           status: true,
           teacherReply: true,
           isCorrect: true,
-          watchSessionId: true,
         },
       },
     },
   });
 
-  const isTeacherOrAdmin = session.role === "teacher" || session.role === "admin" || session.role === "superadmin";
-
   const result = questions.map((q) => {
-    const hasAnswered = q.responses.length > 0;
-    const latestResponse = hasAnswered ? q.responses[q.responses.length - 1] : null;
+    // Standardize options array (supports 2, 3, or 4 options)
+    let parsedOptions: string[] = [];
+    if (Array.isArray(q.options) && q.options.length > 0) {
+      parsedOptions = q.options.map(String);
+    } else {
+      parsedOptions = [q.optionA, q.optionB, q.optionC, q.optionD]
+        .filter((opt): opt is string => typeof opt === "string" && opt.trim().length > 0);
+    }
+
+    const effectiveTime = typeof q.timestamp === "number" && q.timestamp > 0
+      ? q.timestamp
+      : (q.triggerSecond || 0);
+
+    const effectiveQuestion = q.question?.trim() || q.questionText?.trim() || "";
+
+    const userProg = q.progress[0];
+    const hasProgress = Boolean(userProg && userProg.attempts > 0);
+    const hasLegacyResponse = q.responses.length > 0;
+    const answered = hasProgress || hasLegacyResponse;
+    const isCorrect = userProg?.isCorrect || q.responses.some((r) => r.isCorrect);
+    const attempts = userProg?.attempts ?? (hasLegacyResponse ? 1 : 0);
 
     return {
       id: q.id,
-      triggerSecond: q.triggerSecond,
-      mode: q.mode,
+      timestamp: effectiveTime,
+      triggerSecond: effectiveTime,
+      question: effectiveQuestion,
+      questionText: effectiveQuestion,
+      options: parsedOptions,
+      isRequired: q.isRequired ?? true,
+      mode: q.mode || "pause",
       questionType: q.questionType || "mcq",
-      questionText: q.questionText,
-      optionA: q.optionA,
-      optionB: q.optionB,
-      optionC: q.optionC,
-      optionD: q.optionD,
-      refireOnRewatch: q.refireOnRewatch,
-      ...(hasAnswered && !isTeacherOrAdmin
-        ? {
-            correctOption: q.correctOption,
-            explanation: q.explanation,
-            answered: true,
-            lastResponse: latestResponse,
-          }
-        : {
-            correctOption: isTeacherOrAdmin ? q.correctOption : undefined,
-            explanation: isTeacherOrAdmin ? q.explanation : undefined,
-            answered: false,
-          }),
+      refireOnRewatch: q.refireOnRewatch ?? false,
+      answered,
+      isCorrect,
+      attempts,
+      // SECURITY: NEVER return correctIndex or correctOption here!
+      // Explanation is only provided if answered/exhausted or teacher
+      explanation: (answered && (isCorrect || attempts >= 2)) || isTeacherOrAdmin
+        ? q.explanation
+        : undefined,
     };
   });
 

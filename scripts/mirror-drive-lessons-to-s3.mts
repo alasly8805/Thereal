@@ -92,13 +92,21 @@ log(`waiting for ${renditionQueueDepth()} rendition(s)…`);
 while (renditionQueueDepth() > 0) await new Promise((r) => setTimeout(r, 15_000));
 
 for (const v of verified) {
-  const rend = renditionFilename(v.base, 480);
-  const rSize = await renditionSize(rend);
-  log(`${rSize !== null ? "480p published" : "480p MISSING"}: ${rend}`);
-  if (rSize === null) failures++;
+  for (const h of [360, 480, 720] as const) {
+    const rend = renditionFilename(v.base, h);
+    const rSize = await renditionSize(rend);
+    log(`${rSize !== null ? `${h}p published` : `${h}p MISSING`}: ${rend}`);
+    if (rSize === null) failures++;
+  }
+  const { hlsReady } = await import("../src/lib/hls-package.ts");
+  const isHls = await hlsReady(v.id);
+  log(`HLS packaged: ${isHls}`);
+  if (!isHls) failures++;
   // S3 holds the verified original; the local mirror is only a cache.
-  fs.unlinkSync(v.local);
-  log(`local copy removed: ${v.base}`);
+  if (fs.existsSync(v.local)) {
+    fs.unlinkSync(v.local);
+    log(`local copy removed: ${v.base}`);
+  }
 }
 
 log(`done: ${verified.length} mirrored, ${failures} problem(s)`);

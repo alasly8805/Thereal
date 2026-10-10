@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { buildCourseSlug } from "@/lib/course-slug";
+import { inferCoursePlacement } from "@/lib/teacher-terms";
 
 const MAX_TITLE_LENGTH = 100;
 const MAX_SUBJECT_LENGTH = 50;
@@ -147,6 +148,17 @@ export async function POST(req: NextRequest) {
     const deliveryModeRaw = typeof body.deliveryMode === "string" ? body.deliveryMode.toUpperCase().trim() : "ONLINE";
     const deliveryMode = ["ONLINE", "CENTER", "BOTH"].includes(deliveryModeRaw) ? deliveryModeRaw : "ONLINE";
 
+    let bookingKind: string | null = typeof body.bookingKind === "string" ? body.bookingKind.trim() : null;
+    let bookingTerm: number | null = typeof body.bookingTerm === "number" ? body.bookingTerm : null;
+
+    if (!bookingKind) {
+      const inferred = inferCoursePlacement(title);
+      if (inferred) {
+        bookingKind = inferred.bookingKind;
+        bookingTerm = inferred.bookingTerm;
+      }
+    }
+
     const course = await prisma.course.create({
       data: {
         title,
@@ -157,6 +169,8 @@ export async function POST(req: NextRequest) {
         teacherId: actingTeacherId(session),
         contactPhone: contactPhone || null,
         deliveryMode,
+        bookingKind,
+        bookingTerm,
       },
     });
 

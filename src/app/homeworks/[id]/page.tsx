@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { useToast } from "@/components/ui/Toast";
 import { homeworkUploadNetworkMessage, uploadHomeworkFile } from "@/lib/student-homework-upload";
+import { WatermarkedText } from "@/components/content/WatermarkedText";
+import { studentHomeworkNotice } from "@/lib/homework-student-status";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -71,9 +73,31 @@ type HomeworkData = {
   video?: { id: string; title: string } | null;
   questions?: HWQuestion[];
   mySubmission?: HWSubmission | null;
+  /** The teacher keeps the key hidden after submit. */
+  answersHidden?: boolean;
+  shuffleQuestions?: boolean;
+  shuffleChoices?: boolean;
 };
 
+/** Page exits survive a reload, so refreshing does not wipe the count. */
+function focusKey(homeworkId: string) {
+  return `hw-focus-${homeworkId}`;
+}
+function readFocusLosses(homeworkId: string): number {
+  try {
+    return Number(window.localStorage.getItem(focusKey(homeworkId))) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 const OPTION_KEYS = ["A", "B", "C", "D"] as const;
+
+function optionOrderKey(questions: HWQuestion[] | undefined): string {
+  return (questions ?? [])
+    .map((q) => [q.id, q.optionA, q.optionB, q.optionC, q.optionD].join("\u0001"))
+    .join("\u0002");
+}
 
 const TYPE_CONFIG = {
   exam: { label: "اختبار اختيارات", icon: "📝", color: "bg-sky-500/10 text-sky-400 border-sky-500/20" },
@@ -96,6 +120,7 @@ export default function HomeworkDetailPage() {
 
   // Form states
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const optionOrderRef = useRef<string | null>(null);
   const [terminalOutput, setTerminalOutput] = useState("");
   const [userCode, setUserCode] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -139,6 +164,14 @@ export default function HomeworkDetailPage() {
       const hw: HomeworkData = data.homework;
       setHomework(hw);
 
+      const openAttempt = hw.type === "exam" && (!hw.mySubmission || hw.mySubmission.allowRetake);
+      const nextOrder = optionOrderKey(hw.questions);
+      if (openAttempt && optionOrderRef.current && optionOrderRef.current !== nextOrder) {
+        setAnswers({});
+        toastError("ترتيب الاختيارات اتغير. اختار الإجابات من جديد قبل التسليم.");
+      }
+      optionOrderRef.current = openAttempt ? nextOrder : null;
+
       if (hw.codeTemplate) {
         setUserCode(hw.codeTemplate);
       }
@@ -147,7 +180,7 @@ export default function HomeworkDetailPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [homeworkId, router]);
+  }, [homeworkId, router, toastError]);
 
   useEffect(() => {
     loadHomework();
@@ -161,8 +194,41 @@ export default function HomeworkDetailPage() {
   const answeredCount = useMemo(() => Object.keys(answers).length, [answers]);
   const isAllAnswered = questions.length > 0 && answeredCount === questions.length;
   const mySub = homework?.mySubmission;
-  const canResubmitRejectedPdf = homework?.type === "upload" && mySub?.status === "failed";
-  const canSubmit = !mySub || !!mySub.allowRetake || !!canResubmitRejectedPdf;
+  const canSubmit = !mySub || !!mySub.allowRetake;
+
+  // Exam homework: count the times the student leaves the page while an
+  // attempt is open. Only visibility changes count; window blur also fires
+  // for this page's own confirm dialog and would punish the student for it.
+  const examOpen = homework?.type === "exam" && canSubmit;
+  const [memFocusLosses, setMemFocusLosses] = useState(0);
+  // Stored count wins over memory so a reload keeps it; memory covers a
+  // browser that blocks storage. The page is client-loaded, so examOpen is
+  // false during SSR and localStorage is only read in the browser.
+  const focusLosses = examOpen && homeworkId ? Math.max(readFocusLosses(homeworkId), memFocusLosses) : 0;
+  useEffect(() => {
+    if (!examOpen || !homeworkId) return;
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      const next = readFocusLosses(homeworkId) + 1;
+      try {
+        window.localStorage.setItem(focusKey(homeworkId), String(next));
+      } catch {
+        // storage blocked: keep counting in memory only
+      }
+      setMemFocusLosses((n) => Math.max(n + 1, next));
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [examOpen, homeworkId]);
+  const submissionNotice = mySub
+    ? studentHomeworkNotice({
+        type: homework?.type,
+        status: mySub.status,
+        allowRetake: mySub.allowRetake,
+        completedAt: mySub.completedAt,
+        review: mySub.review,
+      })
+    : null;
 
   // Parsed past answers if any
   const parsedPastAnswers = useMemo(() => {
@@ -199,7 +265,7 @@ export default function HomeworkDetailPage() {
       const res = await fetch(`/api/homework/${homework.id}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers }),
+        body: JSON.stringify({ answers, focusLosses }),
       });
       const data = await res.json();
 
@@ -215,6 +281,11 @@ export default function HomeworkDetailPage() {
       }
 
       toastSuccess("شكراً — تم احتساب درجتك");
+      try {
+        window.localStorage.removeItem(focusKey(homework.id));
+      } catch {
+        // ignore
+      }
       // Refetch so the freshly locked attempt loads questions WITH the correct
       // answers — the pre-submit copy in state intentionally lacks them.
       await loadHomework(true);
@@ -418,30 +489,31 @@ export default function HomeworkDetailPage() {
                       <span>{TYPE_CONFIG[homework.type]?.label || homework.type}</span>
                     </span>
 
-                    {mySub && (
+                    {mySub && submissionNotice && (
                       <span
                         className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold ${
-                          mySub.allowRetake
-                            ? "bg-sky-500/20 text-sky-400 border border-sky-500/30"
-                            : mySub.status === "passed"
+                          submissionNotice.tone === "passed"
                             ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                            : mySub.status === "failed"
+                            : submissionNotice.tone === "failed"
                             ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                            : submissionNotice.tone === "retake"
+                            ? "bg-sky-500/20 text-sky-400 border border-sky-500/30"
                             : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
                         }`}
                       >
-                        {mySub.status === "passed"
-                          ? "✅ مكتمل بنجاح"
-                          : mySub.allowRetake
-                          ? "🔓 مسموح إعادة المحاولة"
-                          : mySub.status === "failed"
-                          ? "❌ مرفوض"
-                          : "⏳ قيد المراجعة"}
+                        {submissionNotice.tone === "passed"
+                          ? "✅ "
+                          : submissionNotice.tone === "failed"
+                          ? "❌ "
+                          : submissionNotice.tone === "retake"
+                          ? "🔓 "
+                          : "⏳ "}
+                        {submissionNotice.badge}
                       </span>
                     )}
                   </div>
 
-                  <h1 className="text-2xl sm:text-3xl font-black text-white">{homework.title}</h1>
+                  <h1 className="text-2xl sm:text-3xl font-black text-white"><WatermarkedText text={homework.title} /></h1>
 
                   <div className="flex flex-wrap items-center gap-y-1 gap-x-4 text-xs text-slate-400">
                     {course?.title && (
@@ -480,7 +552,7 @@ export default function HomeworkDetailPage() {
 
               {homework.description && (
                 <div className="mt-4 pt-4 border-t border-slate-800 text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
-                  {homework.description}
+                  <WatermarkedText text={homework.description} />
                 </div>
               )}
             </div>
@@ -492,27 +564,24 @@ export default function HomeworkDetailPage() {
               <div className="space-y-6">
                 <div
                   className={`rounded-3xl border p-6 sm:p-8 text-center space-y-3 ${
-                    mySub.status === "passed"
+                    submissionNotice?.tone === "passed"
                       ? "bg-emerald-950/30 border-emerald-500/40 text-emerald-300"
-                      : mySub.status === "failed"
+                      : submissionNotice?.tone === "failed"
                       ? "bg-red-950/30 border-red-500/40 text-red-300"
                       : "bg-amber-950/30 border-amber-500/40 text-amber-300"
                   }`}
                 >
                   <span className="text-5xl inline-block">
-                    {mySub.status === "passed" ? "🎉" : mySub.status === "failed" ? "📊" : "⏳"}
+                    {submissionNotice?.tone === "passed" ? "🎉" : submissionNotice?.tone === "failed" ? "❌" : "⏳"}
                   </span>
                   <h2 className="text-xl sm:text-2xl font-black text-white">
                     {homework.type === "exam"
                       ? "شكراً — تم احتساب درجتك"
-                      : mySub.status === "passed"
-                      ? "أحسنت! تم تسليم الواجب واجتيازه بنجاح"
-                      : mySub.status === "failed"
-                      ? homework.type === "upload"
-                        ? "تم رفض الملف — الواجب اتقفل لحد ما المعلم يسمح بمحاولة تانية"
-                        : "تم تسليم الواجب — درجتك أقل من نسبة النجاح المطلوبة"
-                      : "تم تسليم الواجب بنجاح — في انتظار مراجعة المعلم"}
+                      : submissionNotice?.title}
                   </h2>
+                  {homework.type !== "exam" && submissionNotice?.detail && (
+                    <p className="text-sm font-bold">{submissionNotice.detail}</p>
+                  )}
 
                   {mySub.score != null && (
                     <div className="inline-block px-5 py-2 rounded-2xl bg-slate-900/80 border border-slate-700 text-2xl font-black text-white my-2">
@@ -561,6 +630,11 @@ export default function HomeworkDetailPage() {
                 {homework.type === "exam" && questions.length > 0 && (
                   <div className="space-y-4">
                     <h3 className="text-lg font-black text-white px-1">مراجعة أسئلة الواجب</h3>
+                    {homework.answersHidden && (
+                      <p className="px-1 text-sm text-slate-400">
+                        المدرس مخبّي الإجابات الصحيحة للواجب ده. دي إجاباتك، ودرجتك محسوبة فوق.
+                      </p>
+                    )}
                     {parsedPastAnswers && questions.some((q) => q.correctAnswer) && (
                       <p className="px-1 text-sm font-bold text-slate-300">
                         <span className="text-emerald-400">
@@ -601,7 +675,7 @@ export default function HomeworkDetailPage() {
                             </span>
                             <div className="flex-1">
                               <p className="text-sm sm:text-base font-bold text-white leading-relaxed">
-                                {q.question}
+                                <WatermarkedText text={q.question} />
                               </p>
                               {q.imageUrl && (
                                 <div className="mt-3 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 p-2">
@@ -634,7 +708,7 @@ export default function HomeworkDetailPage() {
                                   }`}
                                 >
                                   <span>
-                                    ({opt}) {q[`option${opt}`]}
+                                    ({opt}) <WatermarkedText text={q[`option${opt}`] || ""} />
                                   </span>
                                   {isCorrectOpt && (
                                     <span className="text-xs text-emerald-400 font-bold mr-2">
@@ -671,16 +745,16 @@ export default function HomeworkDetailPage() {
                   SECTION B: SOLVING FORMS (NOT SUBMITTED YET)
                  ───────────────────────────────────────────────────────────── */
               <div className="space-y-6">
-                {(mySub?.allowRetake || canResubmitRejectedPdf) && (
+                {mySub?.allowRetake && (
                   <div className="rounded-3xl border border-sky-500/40 bg-sky-950/30 p-5 sm:p-6 text-center space-y-2">
                     <p className="text-lg font-black text-white">
-                      {canResubmitRejectedPdf && !mySub?.allowRetake
-                        ? "❌ الملف اترفض — ارفع نسخة جديدة"
+                      {submissionNotice?.tone === "failed"
+                        ? `❌ ${submissionNotice.title}`
                         : "🔓 المعلم فتح لك محاولة تانية"}
                     </p>
                     <p className="text-sm text-sky-200">
                       {homework.type === "upload"
-                        ? "ارفع نسخة جديدة من الملف. المحتوى التالي يبقى مقفول لحد ما المعلم يقبل الواجب."
+                        ? "ارفع نسخة جديدة من الملف. بعد الرفع المحتوى التالي يتفتح، ولو اتقبل يكمل مفتوح، ولو اترفض يتقفل."
                         : "حل من تاني وسلّم. اللي بعده هيفضل مقفول لحد ما الواجب يتقبل."}
                     </p>
                     {mySub.review?.note && (
@@ -703,6 +777,12 @@ export default function HomeworkDetailPage() {
                         ? "محاولة جديدة بعد السماح بالإعادة — بعد التسليم تُحسب الدرجة وتتقفل تاني"
                         : "محاولة واحدة فقط — بعد التسليم تُحسب الدرجة ولا يمكن الإعادة، حتى لو معاد التسليم لسه مفتوح"}
                     </div>
+                    <p className="text-center text-xs text-slate-400">
+                      الخروج من الصفحة أثناء الحل بيتسجل للمدرس.
+                      {focusLosses > 0 && (
+                        <span className="text-amber-300 font-bold"> خرجت من الصفحة {focusLosses} مرة.</span>
+                      )}
+                    </p>
                     {/* Progress Bar Header */}
                     <div className="sticky top-4 z-20 rounded-2xl border border-slate-800 bg-slate-900/90 backdrop-blur-xl p-4 shadow-lg flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
@@ -744,7 +824,7 @@ export default function HomeworkDetailPage() {
                             </span>
                             <div className="flex-1">
                               <h3 className="text-base sm:text-lg font-bold text-white leading-relaxed">
-                                {q.question}
+                                <WatermarkedText text={q.question} />
                               </h3>
 
                               {q.imageUrl && (
@@ -775,7 +855,7 @@ export default function HomeworkDetailPage() {
                                   }`}
                                 >
                                   <span>
-                                    ({opt}) {q[`option${opt}`]}
+                                    ({opt}) <WatermarkedText text={q[`option${opt}`] || ""} />
                                   </span>
                                   {active && <span className="text-sm">✓</span>}
                                 </button>

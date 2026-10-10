@@ -31,7 +31,7 @@ export function PendingPaymentsPanel({
       (s) =>
         s.name.toLowerCase().includes(q) ||
         (s.phone || "").includes(q) ||
-        s.transactions.some((t) => t.itemLabel.includes(q))
+        s.transactions.some((t) => t.itemLabel.toLowerCase().includes(q))
     );
   }, [students, query]);
 
@@ -78,11 +78,11 @@ export function PendingPaymentsPanel({
               بدأوا الدفع ولم يكتمل
             </h2>
             {expanded ? (
-              <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--ink-3)" }}>
+              <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--ink-3)" }}>
                 فواتير معلّقة لمن ليس لديهم حجز ساري ولا كورس مدفوع. من لديه حاجز أو كورس مدفوع لا يظهر هنا. «اعتباره مدفوعاً» يفعّل الاشتراك/الكورس بنفس مسار نجاح البوابة
               </p>
             ) : (
-              <p className="text-[11px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+              <p className="text-xs mt-0.5" style={{ color: "var(--ink-3)" }}>
                 اضغط للفتح · مجموع معلّق {egp(data?.amountPending)}
               </p>
             )}
@@ -107,18 +107,16 @@ export function PendingPaymentsPanel({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="بحث بالاسم أو الهاتف"
-              className="flex-1 min-w-[180px] rounded-lg px-3 py-1.5 text-xs"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--ink)" }}
+              aria-label="بحث في العالقين بالدفع"
+              className="adm-input is-sm flex-1 min-w-[180px]"
             />
-            <span className="text-[11px] font-semibold tabular-nums" style={{ color: "var(--ink-3)" }}>
+            <span className="text-xs font-semibold tabular-nums" style={{ color: "var(--ink-3)" }}>
               مجموع الفواتير المعلّقة {egp(data?.amountPending)}
             </span>
           </div>
 
           {error && (
-            <div className="mx-4 mt-3 rounded-lg px-3 py-2 text-xs font-bold" style={{ background: "color-mix(in srgb, #ef4444 12%, transparent)", color: tone.red }}>
-              {error}
-            </div>
+            <div className="mx-4 mt-3 adm-notice is-bad" role="alert">{error}</div>
           )}
 
           {filtered.length === 0 ? (
@@ -131,7 +129,7 @@ export function PendingPaymentsPanel({
                     <div>
                       <div className="font-black text-sm" style={{ color: "var(--ink)" }}>{student.name}</div>
                       {student.phone && (
-                        <div className="text-[11px] mt-0.5 inline-flex items-center gap-1" style={{ color: "var(--ink-3)" }}>
+                        <div className="text-xs mt-0.5 inline-flex items-center gap-1" style={{ color: "var(--ink-3)" }}>
                           <Phone size={11} /> {student.phone}
                         </div>
                       )}
@@ -149,7 +147,7 @@ export function PendingPaymentsPanel({
                           <div className="text-xs font-bold" style={{ color: "var(--ink)" }}>
                             {tx.itemLabel} · {egp(tx.amount)}
                           </div>
-                          <div className="text-[10px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+                          <div className="text-xs mt-0.5" style={{ color: "var(--ink-3)" }}>
                             {tx.provider === "sha7nawy" ? "محفظة (شحناوي)" : "Shake-Out / فوري"} · {fmtDate(tx.createdAt)} {fmtTime(tx.createdAt)}
                           </div>
                         </div>

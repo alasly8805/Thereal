@@ -4,18 +4,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   Bot,
+  Check,
   Loader2,
-  Sparkles,
   Trash2,
+  X,
   Wallet,
   Users,
   Tag,
   AlertTriangle,
   BarChart3,
 } from "lucide-react";
-import type { CopilotChart, CopilotKpi, CopilotModelInfo, CopilotTable } from "@/lib/superadmin-copilot/types";
+import type { CopilotChart, CopilotKpi, CopilotModelInfo, CopilotProposal, CopilotTable } from "@/lib/superadmin-copilot/types";
+import { Badge, PageHeader } from "@/components/admin/ui/kit";
 
 type Suggestion = { label: string; prompt: string };
+
+type ProposalState = CopilotProposal & {
+  state: "pending" | "applying" | "done" | "dismissed" | "error";
+  result?: string;
+};
 
 type ChatTurn = {
   id: string;
@@ -25,6 +32,7 @@ type ChatTurn = {
   charts?: CopilotChart[];
   tables?: CopilotTable[];
   kpis?: CopilotKpi[];
+  proposals?: ProposalState[];
   toolsUsed?: Array<{ name: string; label: string; ok: boolean; summary: string }>;
 };
 
@@ -32,10 +40,10 @@ type LiveTool = { id: string; label: string; done: boolean; ok?: boolean; summar
 
 const TONE: Record<NonNullable<CopilotKpi["tone"]>, string> = {
   default: "var(--ink)",
-  good: "#22c55e",
-  warn: "#f59e0b",
-  bad: "#ef4444",
-  gold: "var(--gold-2)",
+  good: "var(--ok)",
+  warn: "var(--warn)",
+  bad: "var(--danger)",
+  gold: "var(--gold)",
 };
 
 function uid() {
@@ -47,7 +55,6 @@ function MiniChart({ chart }: { chart: CopilotChart }) {
   const points = chart.points;
   const keys = series.map((s) => s.key);
   const max = Math.max(1, ...points.flatMap((p) => keys.map((k) => Math.abs(p.values[k] || 0))));
-  const barW = 100 / Math.max(points.length, 1);
 
   return (
     <div className="rounded-2xl p-4" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
@@ -56,7 +63,7 @@ function MiniChart({ chart }: { chart: CopilotChart }) {
           {chart.title}
         </h4>
         {chart.unit && (
-          <span className="text-[10px] font-bold" style={{ color: "var(--ink-3)" }}>
+          <span className="text-xs font-bold" style={{ color: "var(--ink-3)" }}>
             {chart.unit}
           </span>
         )}
@@ -74,7 +81,7 @@ function MiniChart({ chart }: { chart: CopilotChart }) {
                     className="rounded-t-md flex-1 min-w-[3px]"
                     style={{
                       height: h,
-                      background: v < 0 ? "#ef4444" : s.color || "var(--brand)",
+                      background: v < 0 ? "var(--danger)" : s.color || "var(--brand)",
                       opacity: v === 0 ? 0.25 : 1,
                     }}
                     title={`${s.label}: ${v.toLocaleString("ar-EG")}`}
@@ -82,7 +89,7 @@ function MiniChart({ chart }: { chart: CopilotChart }) {
                 );
               })}
             </div>
-            <span className="text-[9px] truncate w-full text-center leading-tight" style={{ color: "var(--ink-3)" }}>
+            <span className="text-xs truncate w-full text-center leading-tight" style={{ color: "var(--ink-3)" }}>
               {p.x.replace(/،.*/, "").split(" ").slice(0, 2).join(" ")}
             </span>
           </div>
@@ -90,14 +97,13 @@ function MiniChart({ chart }: { chart: CopilotChart }) {
       </div>
       <div className="flex flex-wrap gap-3 mt-3">
         {series.map((s) => (
-          <span key={s.key} className="inline-flex items-center gap-1.5 text-[10px] font-bold" style={{ color: "var(--ink-2)" }}>
+          <span key={s.key} className="inline-flex items-center gap-1.5 text-xs font-bold" style={{ color: "var(--ink-2)" }}>
             <span className="w-2 h-2 rounded-sm" style={{ background: s.color || "var(--brand)" }} />
             {s.label}
           </span>
         ))}
       </div>
       {points.length === 0 && <p className="text-xs text-center py-6" style={{ color: "var(--ink-3)" }}>لا نقاط في هذا الرسم</p>}
-      <span className="sr-only">{barW}</span>
     </div>
   );
 }
@@ -106,7 +112,7 @@ function DataTable({ table }: { table: CopilotTable }) {
   if (!table.rows.length) return null;
   return (
     <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-      <div className="px-3 py-2 text-[11px] font-black" style={{ background: "var(--surface-2)", color: "var(--ink)" }}>
+      <div className="px-3 py-2 text-xs font-black" style={{ background: "var(--surface-2)", color: "var(--ink)" }}>
         {table.title}
       </div>
       <div className="overflow-x-auto max-h-64 overflow-y-auto">
@@ -133,6 +139,57 @@ function DataTable({ table }: { table: CopilotTable }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function ProposalCard({
+  proposal,
+  onConfirm,
+  onDismiss,
+}: {
+  proposal: ProposalState;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) {
+  const locked = proposal.state !== "pending";
+  return (
+    <div className="rounded-xl p-3 space-y-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <div className="text-xs font-black" style={{ color: "var(--ink)" }}>{proposal.title}</div>
+      <div className="text-xs" style={{ color: "var(--ink-2)" }}>{proposal.detail}</div>
+      <div className="flex flex-wrap gap-3 text-sm font-black tabular-nums" style={{ color: "var(--ink)" }}>
+        <span>قبل: {proposal.before}</span>
+        <span style={{ color: "var(--brand)" }}>بعد: {proposal.after}</span>
+      </div>
+      {proposal.result && (
+        <div className="text-xs font-bold" style={{ color: proposal.state === "error" ? "var(--danger)" : "var(--ok)" }}>
+          {proposal.result}
+        </div>
+      )}
+      {proposal.state === "pending" || proposal.state === "applying" ? (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={locked}
+            onClick={onConfirm}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
+            style={{ background: "var(--brand)", color: "var(--on-brand)" }}
+          >
+            {proposal.state === "applying" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+            تأكيد الحفظ
+          </button>
+          <button
+            type="button"
+            disabled={locked}
+            onClick={onDismiss}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
+            style={{ background: "var(--surface-2)", color: "var(--ink-2)", border: "1px solid var(--border)" }}
+          >
+            <X size={12} />
+            إلغاء
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -258,6 +315,7 @@ export function SuperadminCopilot() {
           }
           if (type === "error") throw new Error(String(evt.message || "فشل المساعد"));
           if (type === "done") {
+            const rawProposals = Array.isArray(evt.proposals) ? (evt.proposals as CopilotProposal[]) : [];
             assistant = {
               ...assistant,
               content: String(evt.message || ""),
@@ -265,13 +323,14 @@ export function SuperadminCopilot() {
               charts: (evt.charts as CopilotChart[]) || [],
               tables: (evt.tables as CopilotTable[]) || [],
               kpis: (evt.kpis as CopilotKpi[]) || [],
+              proposals: rawProposals.map((p) => ({ ...p, state: "pending" as const })),
               toolsUsed: (evt.toolsUsed as ChatTurn["toolsUsed"]) || [],
             };
             setModel((evt.model as CopilotModelInfo) || null);
           }
         }
       }
-      if (assistant.content || assistant.charts?.length) {
+      if (assistant.content || assistant.charts?.length || assistant.tables?.length || assistant.proposals?.length) {
         setTurns((prev) => [...prev, assistant]);
       }
     } catch (err) {
@@ -291,6 +350,39 @@ export function SuperadminCopilot() {
     }
   }, [busy, turns]);
 
+  const patchProposal = useCallback((turnId: string, token: string, patch: Partial<ProposalState>) => {
+    setTurns((prev) =>
+      prev.map((turn) =>
+        turn.id !== turnId
+          ? turn
+          : {
+              ...turn,
+              proposals: turn.proposals?.map((p) => (p.token === token ? { ...p, ...patch } : p)),
+            }
+      )
+    );
+  }, []);
+
+  const confirmProposal = useCallback(async (turnId: string, token: string) => {
+    patchProposal(turnId, token, { state: "applying", result: undefined });
+    try {
+      const res = await fetch("/api/admin/superadmin/copilot/apply", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const data = (await res.json()) as { summary?: string; error?: string };
+      if (!res.ok) {
+        patchProposal(turnId, token, { state: "error", result: data.error || "تعذر الحفظ" });
+        return;
+      }
+      patchProposal(turnId, token, { state: "done", result: data.summary || "تم الحفظ." });
+    } catch {
+      patchProposal(turnId, token, { state: "error", result: "تعذر الاتصال بالخادم" });
+    }
+  }, [patchProposal]);
+
   const fallback = models.find((m) => m.fallback);
 
   const emptyHints = useMemo(
@@ -307,7 +399,7 @@ export function SuperadminCopilot() {
   if (bootError) {
     return (
       <div className="rounded-2xl p-8 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} dir="rtl">
-        <AlertTriangle className="mx-auto mb-2" style={{ color: "#ef4444" }} />
+        <AlertTriangle className="mx-auto mb-2" style={{ color: "var(--danger)" }} />
         <p className="font-bold" style={{ color: "var(--ink)" }}>{bootError}</p>
       </div>
     );
@@ -315,57 +407,18 @@ export function SuperadminCopilot() {
 
   return (
     <div dir="rtl" className="flex flex-col gap-4 min-h-[70vh]">
-      <div
-        className="rounded-2xl p-5"
-        style={{
-          background:
-            "linear-gradient(145deg, color-mix(in srgb, var(--brand) 16%, var(--surface)) 0%, var(--surface) 55%, color-mix(in srgb, var(--gold) 10%, var(--surface)) 100%)",
-          border: "1px solid var(--border-strong)",
-          boxShadow: "var(--shadow)",
-        }}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <span
-              className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
-              style={{ background: "var(--brand)", color: "#fff" }}
-            >
-              <Sparkles size={20} />
-            </span>
-            <div>
-              <h2 className="text-lg font-black" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
-                مساعد المقر — قراءة فقط
-              </h2>
-              <p className="text-xs mt-1 max-w-xl leading-relaxed" style={{ color: "var(--ink-2)" }}>
-                العقل: Antigravity (agy) · Gemini 3.8 Flash High — لا يستهلك مفاتيح شات الطلاب. قراءة فقط: يفتّش ولا يعدّل ولا يعيد تشغيل شيء.
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <span
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black"
-              style={{ background: "var(--gold-soft)", color: "var(--gold-2)", border: "1px solid color-mix(in srgb, var(--gold) 35%, transparent)" }}
-            >
-              <Bot size={12} />
-              {model ? `${model.provider} · ${model.label}` : "يتحقّق من النموذج..."}
-            </span>
-            <span className="text-[10px] font-black" style={{ color: "#15803d" }}>
-              لا إجراءات — inspect only
-            </span>
-            {model && (
-              <span className="text-[10px] font-mono" style={{ color: "var(--ink-3)" }}>
-                {model.id}
-                {model.fallback ? " · احتياطي" : " · أساسي"}
-              </span>
-            )}
-            {fallback && !model?.fallback && (
-              <span className="text-[10px]" style={{ color: "var(--ink-3)" }}>
-                احتياطي: {fallback.label}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="اسأل المساعد"
+        description="يجيب عن أسئلة المقر من البيانات مباشرة. يقدر يجهّز تعديل نقاط طالب أو درجة اختبار أو واجب، والحفظ لا يتم إلا لما تضغط تأكيد. لا يعدّل الكود ولا ينفّذ أوامر على قاعدة البيانات."
+        meta={
+          <>
+            <Badge tone="gold"><Bot size={12} aria-hidden /> {model ? `${model.provider} · ${model.label}` : "يتحقّق من النموذج…"}</Badge>
+            {model && <Badge>{model.fallback ? "النموذج الاحتياطي" : "النموذج الأساسي"}</Badge>}
+            {fallback && !model?.fallback && <Badge>الاحتياطي: {fallback.label}</Badge>}
+            <Badge tone="warn" dot>الحفظ بعد تأكيدك</Badge>
+          </>
+        }
+      />
 
       <div className="flex-1 rounded-2xl overflow-hidden flex flex-col" style={{ background: "var(--surface)", border: "1px solid var(--border)", minHeight: 480 }}>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -396,7 +449,7 @@ export function SuperadminCopilot() {
                 ].map((x) => (
                   <div key={x.t} className="rounded-xl p-3 text-center" style={{ background: "var(--surface-2)" }}>
                     <x.icon size={16} className="mx-auto mb-1" style={{ color: "var(--brand)" }} />
-                    <div className="text-[11px] font-bold" style={{ color: "var(--ink-2)" }}>{x.t}</div>
+                    <div className="text-xs font-bold" style={{ color: "var(--ink-2)" }}>{x.t}</div>
                   </div>
                 ))}
               </div>
@@ -409,12 +462,12 @@ export function SuperadminCopilot() {
                 className="max-w-[92%] sm:max-w-[80%] rounded-2xl px-4 py-3 space-y-3"
                 style={
                   t.role === "user"
-                    ? { background: "var(--brand)", color: "#fff" }
+                    ? { background: "var(--brand)", color: "var(--on-brand)" }
                     : { background: "var(--surface-2)", color: "var(--ink)", border: "1px solid var(--border)" }
                 }
               >
                 {t.role === "assistant" && t.model && (
-                  <div className="text-[10px] font-bold opacity-80">
+                  <div className="text-xs font-bold opacity-80">
                     {t.model.provider} · {t.model.label} · <span className="font-mono">{t.model.id}</span>
                     {t.model.fallback ? " · احتياطي" : ""}
                   </div>
@@ -423,16 +476,24 @@ export function SuperadminCopilot() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {t.kpis.map((k) => (
                       <div key={k.key} className="rounded-xl p-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                        <div className="text-[10px]" style={{ color: "var(--ink-3)" }}>{k.label}</div>
+                        <div className="text-xs" style={{ color: "var(--ink-3)" }}>{k.label}</div>
                         <div className="text-sm font-black tabular-nums" style={{ color: TONE[k.tone || "default"] }}>
                           {k.value}
                         </div>
-                        {k.hint && <div className="text-[10px]" style={{ color: "var(--ink-3)" }}>{k.hint}</div>}
+                        {k.hint && <div className="text-xs" style={{ color: "var(--ink-3)" }}>{k.hint}</div>}
                       </div>
                     ))}
                   </div>
                 )}
                 <div className="text-sm leading-relaxed whitespace-pre-wrap">{renderText(t.content)}</div>
+                {t.proposals?.map((p) => (
+                  <ProposalCard
+                    key={p.token}
+                    proposal={p}
+                    onConfirm={() => void confirmProposal(t.id, p.token)}
+                    onDismiss={() => patchProposal(t.id, p.token, { state: "dismissed", result: "أُلغي. لم يُحفظ شيء." })}
+                  />
+                ))}
                 {t.charts?.map((c) => (
                   <MiniChart key={c.id} chart={c} />
                 ))}
@@ -444,10 +505,10 @@ export function SuperadminCopilot() {
                     {t.toolsUsed.map((tool, i) => (
                       <span
                         key={`${tool.name}-${i}`}
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        className="text-xs font-bold px-2 py-0.5 rounded-full"
                         style={{
-                          background: tool.ok ? "color-mix(in srgb, #22c55e 15%, transparent)" : "color-mix(in srgb, #ef4444 15%, transparent)",
-                          color: tool.ok ? "#15803d" : "#b91c1c",
+                          background: tool.ok ? "var(--ok-soft)" : "var(--danger-soft)",
+                          color: tool.ok ? "var(--ok)" : "var(--danger)",
                         }}
                         title={tool.summary}
                       >
@@ -468,7 +529,7 @@ export function SuperadminCopilot() {
                   {status || "يعمل..."}
                 </div>
                 {liveTools.map((t) => (
-                  <div key={t.id} className="text-[11px]" style={{ color: t.done ? "#15803d" : "var(--ink-3)" }}>
+                  <div key={t.id} className="text-xs" style={{ color: t.done ? "var(--ok)" : "var(--ink-3)" }}>
                     {t.done ? "✓" : "…"} {t.label}
                     {t.summary ? ` — ${t.summary}` : ""}
                   </div>
@@ -498,6 +559,7 @@ export function SuperadminCopilot() {
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 cursor-pointer"
             style={{ background: "var(--surface-2)", color: "var(--ink-3)", border: "1px solid var(--border)" }}
             title="مسح المحادثة"
+            aria-label="مسح المحادثة"
           >
             <Trash2 size={16} />
           </button>
@@ -506,21 +568,24 @@ export function SuperadminCopilot() {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              // Don't send while an Arabic/IME composition is still in progress.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 void send(draft);
               }
             }}
             placeholder="مثال: الصافي من 9 سبتمبر إلى 20 سبتمبر مع الرسم..."
-            className="flex-1 rounded-xl px-3 py-2 text-sm resize-none outline-none"
-            style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--ink)" }}
+            aria-label="سؤالك للمساعد"
+            className="adm-input flex-1 resize-none"
+            style={{ minHeight: 44 }}
             disabled={busy}
           />
           <button
             type="submit"
             disabled={busy || !draft.trim()}
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-50"
-            style={{ background: "var(--brand)", color: "#fff" }}
+            style={{ background: "var(--brand)", color: "var(--on-brand)" }}
+            aria-label="إرسال"
           >
             {busy ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}
           </button>

@@ -95,8 +95,8 @@ export async function POST(req: NextRequest) {
       }
 
       // Durable copy in S3; local disk is only a cache from here on. The
-      // low-bandwidth rendition is queued off the back of it so every lesson
-      // gets one without anyone having to remember to ask.
+      // 360p/480p/720p copies are queued off the back of it so every lesson
+      // gets them without anyone having to remember to ask.
       const { uploadVideoToS3 } = await import("@/lib/video-storage");
       void uploadVideoToS3(filePath, filename).then(async () => {
         const { enqueueRenditions } = await import("@/lib/rendition-queue");

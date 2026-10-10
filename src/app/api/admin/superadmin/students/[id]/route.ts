@@ -29,10 +29,29 @@ export async function GET(
         phone: true,
         parentPhone: true,
         educationalStage: true,
+        role: true,
         isActive: true,
         profileCompleted: true,
         createdAt: true,
         lastLoginAt: true,
+        referralCode: true,
+        balance: true,
+        loginStreak: true,
+        streakFreezes: true,
+        overallIQ: true,
+        practiceTrack: true,
+        parentVerified: true,
+        parentVerificationStatus: true,
+        verificationStatus: true,
+        isVerified: true,
+        parentToken: {
+          select: {
+            sentAt: true,
+            lastAccessedAt: true,
+            issueCount: true,
+            parentPhoneSnapshot: true,
+          },
+        },
         accessCodes: {
           select: {
             id: true,
@@ -77,7 +96,9 @@ export async function GET(
       return NextResponse.json({ error: "المتعلم غير موجود" }, { status: 404 });
     }
 
-    const [rawQuizResults, watchedCount, devices, maxDevices] = await Promise.all([
+    const courseIds = student.accessCodes.filter((ac) => ac.isActive).map((ac) => ac.course.id);
+
+    const [rawQuizResults, watchedCount, completedProgress, totalVideos, homeworkSubmissions, totalHomework, devices, maxDevices] = await Promise.all([
       prisma.quizResult.findMany({
         where: { studentId: id },
         select: {
@@ -103,6 +124,56 @@ export async function GET(
         orderBy: { completedAt: "desc" },
       }),
       prisma.progress.count({ where: { studentId: id, watched: true } }),
+      prisma.progress.findMany({
+        where: { studentId: id, watched: true },
+        select: {
+          lastWatchedAt: true,
+          watchedSecondsTotal: true,
+          video: {
+            select: {
+              id: true,
+              title: true,
+              durationMinutes: true,
+              folder: {
+                select: {
+                  name: true,
+                  course: { select: { id: true, title: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { lastWatchedAt: "desc" },
+        take: 50,
+      }),
+      courseIds.length > 0
+        ? prisma.video.count({
+            where: { folder: { courseId: { in: courseIds } } },
+          })
+        : Promise.resolve(0),
+      prisma.homeworkSubmission.findMany({
+        where: { studentId: id },
+        select: {
+          score: true,
+          totalQ: true,
+          status: true,
+          completedAt: true,
+          homework: {
+            select: {
+              id: true,
+              title: true,
+              course: { select: { id: true, title: true } },
+            },
+          },
+        },
+        orderBy: { completedAt: "desc" },
+        take: 20,
+      }),
+      courseIds.length > 0
+        ? prisma.homework.count({
+            where: { courseId: { in: courseIds }, isPublished: true },
+          })
+        : Promise.resolve(0),
       prisma.device.findMany({
         where: { userId: id },
         select: { id: true, label: true, lastSeenAt: true, ipAddress: true },
@@ -117,7 +188,27 @@ export async function GET(
       gradingStatus: answers.length > 0 ? ("PENDING" as const) : ("GRADED" as const),
     }));
 
-    return NextResponse.json({ student, quizResults, watchedCount, devices, maxDevices });
+    const completedVideos = completedProgress.map((p) => ({
+      id: p.video.id,
+      title: p.video.title,
+      durationMinutes: p.video.durationMinutes,
+      folderName: p.video.folder.name,
+      courseTitle: p.video.folder.course?.title,
+      lastWatchedAt: p.lastWatchedAt ? p.lastWatchedAt.toISOString() : null,
+      watchedSecondsTotal: p.watchedSecondsTotal,
+    }));
+
+    return NextResponse.json({
+      student,
+      quizResults,
+      watchedCount,
+      totalVideos,
+      completedVideos,
+      homeworkSubmissions,
+      totalHomework,
+      devices,
+      maxDevices,
+    });
   } catch (error) {
     console.error("Superadmin student detail error:", error);
     return NextResponse.json({ error: "تعذر جلب بيانات المتعلم" }, { status: 500 });

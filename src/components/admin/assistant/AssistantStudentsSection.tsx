@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { StudentPhoneActions } from "@/components/admin/StudentPhoneActions";
 import { StudentDossierButton } from "@/components/admin/TeacherStudentDossierModal";
+import { CopyStudentReport } from "@/components/CopyStudentReport";
 
 type Course = { id: string; title: string };
 type Student = {
@@ -110,13 +111,16 @@ export function AssistantStudentsSection({
                   <p className="truncate font-black">{s.name}</p>
                   <p className="mt-1 truncate text-xs text-[var(--ink-3)]">{s.email}</p>
                 </div>
-                <span
-                  className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-black ${
-                    s.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/10 text-rose-500"
-                  }`}
-                >
-                  {s.isActive ? "نشط" : "موقوف"}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <CopyStudentReport student={s} />
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-black ${
+                      s.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/10 text-rose-500"
+                    }`}
+                  >
+                    {s.isActive ? "نشط" : "موقوف"}
+                  </span>
+                </div>
               </div>
               <div className="mt-3">
                 {canSeePhones ? (

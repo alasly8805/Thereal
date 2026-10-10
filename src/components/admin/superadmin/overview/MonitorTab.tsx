@@ -55,8 +55,8 @@ export function MonitorTab({ events, alertCount }: { events: AccessMonitorEvent[
             <button
               key={k}
               onClick={() => setSev(k)}
-              className="px-2.5 py-1.5 text-[11px] font-bold cursor-pointer"
-              style={{ background: sev === k ? "var(--brand)" : "var(--surface)", color: sev === k ? "#fff" : "var(--ink-2)" }}
+              className="px-2.5 py-1.5 text-xs font-bold cursor-pointer"
+              style={{ background: sev === k ? "var(--brand)" : "var(--surface)", color: sev === k ? "var(--on-brand)" : "var(--ink-2)" }}
             >
               {l}
             </button>
@@ -72,14 +72,14 @@ export function MonitorTab({ events, alertCount }: { events: AccessMonitorEvent[
             <button
               key={k}
               onClick={() => setKind(k)}
-              className="px-2.5 py-1.5 text-[11px] font-bold cursor-pointer"
-              style={{ background: kind === k ? "var(--brand)" : "var(--surface)", color: kind === k ? "#fff" : "var(--ink-2)" }}
+              className="px-2.5 py-1.5 text-xs font-bold cursor-pointer"
+              style={{ background: kind === k ? "var(--brand)" : "var(--surface)", color: kind === k ? "var(--on-brand)" : "var(--ink-2)" }}
             >
               {l}
             </button>
           ))}
         </div>
-        <span className="text-[10px] mr-auto" style={{ color: "var(--ink-3)" }}>
+        <span className="text-xs mr-auto" style={{ color: "var(--ink-3)" }}>
           🟢 موثّق · 🟡 يحتاج نظرة · 🔴 شاذ
         </span>
       </div>
@@ -98,15 +98,15 @@ export function MonitorTab({ events, alertCount }: { events: AccessMonitorEvent[
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-xs" style={{ color: "var(--ink)" }}>{ev.studentName}</span>
-                    <span className="text-[11px] truncate" style={{ color: "var(--ink-2)" }}>{ev.target}</span>
+                    <span className="text-xs truncate" style={{ color: "var(--ink-2)" }}>{ev.target}</span>
                   </div>
-                  <div className="text-[10px] mt-0.5" style={{ color: ev.severity === "ok" ? "var(--ink-3)" : color }}>{ev.reason}</div>
+                  <div className="text-xs mt-0.5" style={{ color: ev.severity === "ok" ? "var(--ink-3)" : color }}>{ev.reason}</div>
                 </div>
                 <Pill color="slate" title="مصدر الوصول">{ev.source}</Pill>
                 <span className="shrink-0 text-xs font-black tabular-nums w-20 text-left" style={{ color: ev.amount > 0 ? tone.green : "var(--ink-3)" }}>
                   {egp(Math.abs(ev.amount))}
                 </span>
-                <span className="shrink-0 text-[10px] tabular-nums text-left w-24" style={{ color: "var(--ink-3)" }}>
+                <span className="shrink-0 text-xs tabular-nums text-left w-24" style={{ color: "var(--ink-3)" }}>
                   {fmtDate(ev.createdAt)}<br />{fmtTime(ev.createdAt)}
                 </span>
               </div>

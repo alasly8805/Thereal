@@ -35,6 +35,8 @@ type CoursePreview = {
   allowDirectInstall: boolean;
   isOwnerTeacher?: boolean;
   deliveryMode?: string;
+  isRenewalRequired?: boolean;
+  renewalMonth?: number | null;
 };
 
 function buildWhatsAppUrl(phone: string, message: string) {
@@ -394,6 +396,37 @@ export default function CourseProductPage() {
 
           {/* Left: content overview */}
           <div className="lg:col-span-2 space-y-6">
+            {/* Renewal Banner for Old Subscribers */}
+            {!course.hasAccess && course.isRenewalRequired && (
+              <div className="p-4 sm:p-5 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-transparent flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+                <div className="flex items-center gap-3.5">
+                  <span className="w-11 h-11 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-500/30 text-xl font-black">
+                    ⚡
+                  </span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-500 dark:text-amber-300">
+                        مشترك سابق لدى المعلم ⚡
+                      </span>
+                      <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
+                        مطلوب تجديد الاشتراك ({course.renewalMonth ? `الشهر ${course.renewalMonth}` : "الشهر الجديد"})
+                      </h3>
+                    </div>
+                    <p className="text-xs text-gray-600 dark:text-gray-300 mt-1 leading-relaxed">
+                      أنت مشترك سابق لدى أستاذ {course.teacher.name}. هذا الكورس متاح ضمن باقة {course.renewalMonth ? `الشهر ${course.renewalMonth}` : "الشهر التالي"}، يمكنك التجديد الآن بضغطة واحدة من رصيد محفظتك وفتحه فوراً.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/choose-course?teacherId=${course.teacher.id}`)}
+                  className="px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 whitespace-nowrap transition-all cursor-pointer shrink-0"
+                >
+                  <span>تجديد الاشتراك الآن ⚡</span>
+                </button>
+              </div>
+            )}
+
             {/* Free / demo videos — watchable without enrollment */}
             {course.freeVideos && course.freeVideos.length > 0 && !course.hasAccess && (
               <div className="bg-white dark:bg-gray-800 rounded-2xl border border-emerald-500/30 shadow-sm overflow-hidden">
@@ -619,6 +652,25 @@ export default function CourseProductPage() {
                 ) : (
                   /* Paid course — wallet / fawry / balance / whatsapp / code choices */
                   <div className="space-y-3">
+                    {!course.hasAccess && course.isRenewalRequired && (
+                      <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-2.5">
+                        <div className="flex items-center gap-2 text-xs font-bold text-amber-500 dark:text-amber-400">
+                          <span>⚡</span>
+                          <span>مطلوب تجديد الاشتراك (الشهر {course.renewalMonth || 2})</span>
+                        </div>
+                        <p className="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">
+                          أنت مشترك في الشهر السابق. لتفعيل هذا الكورس ومتابعة دروسه، جدد اشتراكك الآن:
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/choose-course?teacherId=${course.teacher.id}`)}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 transition-all cursor-pointer"
+                        >
+                          <span>تجديد الاشتراك للشهر {course.renewalMonth || 2} ⚡</span>
+                        </button>
+                      </div>
+                    )}
+
                     {/* Pay mode toggle */}
                     <div className="grid grid-cols-5 gap-1 p-1 rounded-xl" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
                       <button onClick={() => { setPayMode("wallet"); setSelectedWalletMethod("vf_cash"); }}

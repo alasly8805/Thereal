@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { WatermarkedText } from "@/components/content/WatermarkedText";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Navbar } from "@/components/ui/Navbar";
@@ -238,7 +239,7 @@ function AnswerModal({ resultId, quizTitle, onClose }: { resultId: string; quizT
                 return (
                 <div key={a.id} style={{ padding: "14px 16px", borderRadius: 12, border: `1px solid ${edge}`, background: soft }}>
                   <p style={{ fontWeight: 700, fontSize: 14, color: "var(--ink)", margin: "0 0 10px" }}>
-                    <span style={{ color: "var(--ink-3)", marginLeft: 6 }}>س{i + 1}.</span> {a.question}
+                    <span style={{ color: "var(--ink-3)", marginLeft: 6 }}>س{i + 1}.</span> <WatermarkedText text={a.question} />
                   </p>
                   {a.imageUrl && (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -273,7 +274,7 @@ function AnswerModal({ resultId, quizTitle, onClose }: { resultId: string; quizT
                           display: "flex", alignItems: "center", gap: 8,
                         }}>
                           <span style={{ fontFamily: "var(--font-head)", fontWeight: 800 }}>{OPTION_LABELS[opt]}</span>
-                          {a[`option${opt}` as keyof AnswerDetail] as string}
+                          <WatermarkedText text={String(a[`option${opt}` as keyof AnswerDetail] ?? "")} />
                           {isCorrect && <span style={{ marginRight: "auto" }}>✓</span>}
                           {isSelected && !isCorrect && <span style={{ marginRight: "auto" }}>✗</span>}
                         </div>
@@ -1078,7 +1079,7 @@ export default function AccountPage() {
                       {wrongExam.map((q, i) => (
                         <div key={q.questionId} style={{ padding: "16px", borderRadius: 14, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
                           <p style={{ fontWeight: 700, fontSize: 14.5, color: "var(--ink)", margin: "0 0 12px" }}>
-                            <span style={{ color: "var(--ink-3)", marginLeft: 6 }}>س{i + 1}.</span> {q.question}
+                            <span style={{ color: "var(--ink-3)", marginLeft: 6 }}>س{i + 1}.</span> <WatermarkedText text={q.question} />
                           </p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {(["A", "B", "C", "D"] as const).map(opt => {
@@ -1088,7 +1089,7 @@ export default function AccountPage() {
                                   className="flex items-center gap-2 cursor-pointer rounded-[10px] text-right transition-all"
                                   style={{ padding: "12px 14px", minHeight: 48, border: `1px solid ${chosen ? "var(--brand)" : "var(--border)"}`, background: chosen ? "var(--brand-soft)" : "transparent", fontFamily: "var(--font-body)", fontSize: 14, color: chosen ? "var(--brand)" : "var(--ink-2)", fontWeight: chosen ? 700 : 400 }}>
                                   <span style={{ fontFamily: "var(--font-head)", fontWeight: 800, minWidth: 20 }}>{OPTION_LABELS[opt]}</span>
-                                  {q[`option${opt}` as keyof WrongQuestion] as string}
+                                  <WatermarkedText text={String(q[`option${opt}` as keyof WrongQuestion] ?? "")} />
                                 </button>
                               );
                             })}

@@ -85,6 +85,13 @@ export function verifyWalletPassword(password: string): boolean {
   return timingSafeCompare(password, env);
 }
 
+/** Verifies the AI Agent / Claude terminal access password (gates Terminal page). */
+export function verifyTerminalPassword(password: string): boolean {
+  if (!password) return false;
+  const env = process.env.TERMINAL_PASSWORD || "telluswhat#2156";
+  return timingSafeCompare(password, env);
+}
+
 /** Verifies the DRM video protection password (gates restricted Axinom DRM options). */
 export function verifyDrmPassword(password: string): boolean {
   if (!password) return false;

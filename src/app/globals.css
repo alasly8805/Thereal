@@ -25,6 +25,7 @@
   --brand-strong:  #0A574D;
   --brand-soft:    #E2F0ED;
   --brand-shadow:  rgba(14, 110, 98, .40);
+  --on-brand:      #FFFFFF; /* text on a solid --brand fill */
 
   /* Gold accent */
   --gold:          #B07D26;
@@ -86,6 +87,7 @@ html.dark {
   --brand-strong:  #4FD2C0;
   --brand-soft:    #11302D;
   --brand-shadow:  rgba(47, 182, 164, .35);
+  --on-brand:      #04201C; /* dark text: #2FB6A4 is too light for white */
 
   --gold:          #E0B354;
   --gold-2:        #EBC36A;
@@ -402,3 +404,105 @@ html:not(.dark) .classic-admin-surface .bg-gray-700 {
   color: #334155 !important;
 }
 
+/* Exam and homework wording is drawn on canvas, not as selectable text. */
+.cu-locked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.35em;
+  row-gap: 0.2em;
+  width: 100%;
+  max-width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.cu-locked,
+.cu-locked * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
+.cu-locked canvas {
+  display: block;
+  pointer-events: none;
+  flex: 0 0 auto;
+}
+
+
+/* ─── Lesson player controls (shared by native, DRM and YouTube players) ───
+   The player is always a dark surface, so it uses the dark-theme brand teal
+   regardless of the page theme. */
+.vp-bar {
+  --vp-accent: #2FB6A4;
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.vp-bar.is-hidden { opacity: 0; pointer-events: none; }
+.vp-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  color: #fff;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+.vp-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.vp-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.vp-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 28px;
+  cursor: pointer;
+  touch-action: none;
+}
+.vp-range::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(to right,
+    var(--vp-accent, #2FB6A4) 0 var(--p, 0%),
+    rgba(255, 255, 255, 0.5) var(--p, 0%) var(--b, 0%),
+    rgba(255, 255, 255, 0.22) var(--b, 0%) 100%);
+}
+.vp-range::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(to right,
+    var(--vp-accent, #2FB6A4) 0 var(--p, 0%),
+    rgba(255, 255, 255, 0.5) var(--p, 0%) var(--b, 0%),
+    rgba(255, 255, 255, 0.22) var(--b, 0%) 100%);
+}
+.vp-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.3);
+}
+.vp-range::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}
+.vp-range:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 6px; }
+.vp-spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #fff;
+  animation: vp-spin 0.8s linear infinite;
+}
+@keyframes vp-spin { to { transform: rotate(360deg); } }
+.vp-hide-cursor, .vp-hide-cursor * { cursor: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .vp-bar { transition: none; }
+  .vp-spinner { animation-duration: 2.4s; }
+}

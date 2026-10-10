@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
 
       try {
       const session = await getSession();
-      if (!session) return NextResponse.json({ error: "غير مصحح" }, { status: 401 });
+      if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
       if (!hasPermission(session.role, "view_error_logs")) {
         return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
       }
@@ -43,7 +43,7 @@ export async function DELETE() {
 
       try {
       const session = await getSession();
-      if (!session) return NextResponse.json({ error: "غير مصحح" }, { status: 401 });
+      if (!session) return NextResponse.json({ error: "غير مصرح" }, { status: 401 });
       if (!hasPermission(session.role, "view_error_logs")) {
         return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
       }

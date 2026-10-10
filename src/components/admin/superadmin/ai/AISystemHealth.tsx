@@ -22,7 +22,7 @@ export default function AISystemHealth() {
                 <span className="font-mono text-xs text-[var(--ink-3)]">الاستجابة: {s.latency}</span>
               </div>
             </div>
-            <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-3 py-1 rounded-full">سليم 100%</span>
+            <span className="text-xs font-bold text-[var(--ok)] bg-emerald-500/10 px-3 py-1 rounded-full">سليم 100%</span>
           </div>
         ))}
       </div>

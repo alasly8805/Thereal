@@ -5,6 +5,7 @@ import { Navbar } from "@/components/ui/Navbar";
 import { Footer } from "@/components/ui/Footer";
 import { awardDailyExamPoints } from "@/lib/points";
 import { Clock, Target, CheckCircle } from "lucide-react";
+import { WatermarkedText } from "@/components/content/WatermarkedText";
 
 export default async function StudentDailyExamPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession({ preferStudent: true });
@@ -13,7 +14,7 @@ export default async function StudentDailyExamPage({ params }: { params: Promise
   const resolvedParams = await params;
   const exam = await prisma.dailyExam.findUnique({
     where: { id: resolvedParams.id },
-    include: { questions: true }
+    include: { questions: { orderBy: { order: "asc" } } }
   });
 
   if (!exam || !exam.isActive) return notFound();
@@ -49,12 +50,9 @@ export default async function StudentDailyExamPage({ params }: { params: Promise
   async function submitExam(formData: FormData) {
     "use server";
     
-    // In a real implementation, you'd check answers against DB and calculate score
-    // For this prototype we'll assume 1 question
-    const q1Answer = formData.get(`q_${exam?.questions[0].id}`);
-    const isCorrect = q1Answer === exam?.questions[0].correctAnswer;
-    const score = isCorrect ? 1 : 0;
-    const totalQ = exam?.questions.length || 1;
+    const questions = exam?.questions ?? [];
+    const score = questions.filter((q) => formData.get(`q_${q.id}`) === q.correctAnswer).length;
+    const totalQ = questions.length;
 
     // Save result
     await prisma.dailyExamResult.create({
@@ -80,7 +78,7 @@ export default async function StudentDailyExamPage({ params }: { params: Promise
         
         <div className="bg-amber-500 rounded-t-2xl p-6 text-white text-center">
           <Target className="w-12 h-12 mx-auto mb-2 opacity-80" />
-          <h1 className="text-3xl font-bold mb-2">{exam.title}</h1>
+          <h1 className="text-3xl font-bold mb-2"><WatermarkedText text={exam.title} /></h1>
           <div className="flex items-center justify-center gap-2 text-amber-100">
             <Clock className="w-5 h-5" />
             <span>المدة المحددة: {exam.timeLimitMinutes} دقيقة</span>
@@ -94,7 +92,7 @@ export default async function StudentDailyExamPage({ params }: { params: Promise
               <div key={q.id} className="space-y-4">
                 <h3 className="text-xl font-bold text-slate-800 border-b pb-4">
                   <span className="text-amber-500 ml-2">{i + 1}.</span> 
-                  {q.question}
+                  <WatermarkedText text={q.question} />
                 </h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -111,7 +109,7 @@ export default async function StudentDailyExamPage({ params }: { params: Promise
                         className="w-5 h-5 text-amber-600 focus:ring-amber-500"
                       />
                       <span className="text-slate-700 font-medium">
-                        {q[`option${opt}` as keyof typeof q]}
+                        <WatermarkedText text={String(q[`option${opt}` as keyof typeof q] ?? "")} />
                       </span>
                     </label>
                   ))}

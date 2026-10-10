@@ -118,6 +118,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Stop a student paying (by any method) for a term they already own.
+    if (teacherId && planType === "termly") {
+      const { termForSale, ownsActiveTerm } = await import("@/lib/teacher-terms");
+      const stageUser = grade ? null : await prisma.user.findUnique({ where: { id: session.id }, select: { educationalStage: true } });
+      const saleTerm = await termForSale(teacherId, grade || stageUser?.educationalStage);
+      if (saleTerm && saleTerm.termNumber === null) {
+        return NextResponse.json({ error: "حجز الترم غير متاح حالياً عند هذا المعلم" }, { status: 400 });
+      }
+      if (saleTerm && saleTerm.termNumber !== null) {
+        const owned = await prisma.teacherSubscription.findUnique({
+          where: { studentId_teacherId_planType: { studentId: session.id, teacherId, planType } },
+          select: { status: true, expiresAt: true, termNumbers: true },
+        });
+        if (ownsActiveTerm(owned, saleTerm.termNumber)) {
+          return NextResponse.json(
+            { error: saleTerm.termNumber === 2 ? "أنت مشترك بالفعل في الترم الثاني مع هذا المعلم" : "أنت مشترك بالفعل في الترم الأول مع هذا المعلم" },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     const verifiedFinalPrice = priceCheck.finalPrice ?? priceCheck.expectedPrice;
 
     // ────────────────────────────────────────────────────────────────────────

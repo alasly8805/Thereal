@@ -156,6 +156,7 @@ export async function PATCH(
       optionD,
       correctAnswer,
       degree,
+      ...(body.modelNumber !== undefined ? { modelNumber: Number(body.modelNumber) || 1 } : {}),
     },
   });
 

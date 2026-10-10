@@ -23,6 +23,8 @@ interface CourseCardProps {
     discountExpiresAt?: string | null;
     allowDirectInstall?: boolean;
     isOwnerTeacher?: boolean;
+    isRenewalRequired?: boolean;
+    renewalMonth?: number | null;
   };
   onCodeApplied: () => void;
 }
@@ -202,6 +204,21 @@ export function CourseCard({ course, onCodeApplied }: CourseCardProps) {
           </div>
         )}
 
+        {/* Renewal Required ribbon for existing subscribers */}
+        {!hasAccessOrInLibrary && course.isRenewalRequired && (
+          <div
+            className="absolute top-3 right-0 flex items-center gap-1.5 font-bold text-xs text-white z-10"
+            style={{
+              padding: "6px 14px 6px 10px",
+              background: "linear-gradient(135deg, #f59e0b, #d97706)",
+              borderRadius: "0 0 0 12px",
+              boxShadow: "-3px 3px 12px rgba(217,119,6,.4)",
+            }}
+          >
+            <span>⚡ تجديد الشهر {course.renewalMonth || 2}</span>
+          </div>
+        )}
+
         {/* Free / Discount badge */}
         {!hasAccessOrInLibrary && (
           <div className="absolute top-3 left-3 flex flex-col gap-1.5">
@@ -350,6 +367,23 @@ export function CourseCard({ course, onCodeApplied }: CourseCardProps) {
                 <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>سجّل الآن — مجاناً</>
               )}
             </button>
+          ) : course.isRenewalRequired ? (
+            /* Renewal required for existing subscriber */
+            <div className="space-y-2">
+              <button
+                onClick={() => router.push(`/choose-course?teacherId=${course.teacher.id}`)}
+                className="w-full py-2.5 rounded-xl font-black text-sm text-white flex items-center justify-center gap-2 shadow-md shadow-amber-500/25 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 transition-all active:scale-[0.98] cursor-pointer"
+              >
+                <span>تجديد الاشتراك ({course.renewalMonth ? `الشهر ${course.renewalMonth}` : "الشهر الجديد"}) ⚡</span>
+              </button>
+              <button
+                onClick={() => router.push(`/courses/${course.id}`)}
+                className="w-full py-2 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
+                style={{ background: "var(--surface-2)", color: "var(--ink-2)", border: "1px solid var(--border)" }}
+              >
+                تفاصيل الكورس
+              </button>
+            </div>
           ) : (
             /* Paid course — balance purchase OR code input */
             <div className="space-y-2">

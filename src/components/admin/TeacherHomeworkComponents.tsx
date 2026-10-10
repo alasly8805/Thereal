@@ -2,6 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EditHomeworkModal } from "@/components/admin/teacher/EditHomeworkModal";
+import { HomeworkIntegrityModal } from "@/components/admin/teacher/HomeworkIntegrityModal";
+import { Badge, Button, Chip, EmptyState, IconButton, SkeletonRows, Switch, admConfirm } from "@/components/admin/ui/kit";
+import {
+  BarChart3,
+  CalendarClock,
+  Eye,
+  EyeOff,
+  FileText,
+  Link2,
+  ListChecks,
+  Pencil,
+  ShieldCheck,
+  Terminal,
+  Trash2,
+  Upload,
+} from "lucide-react";
 
 function toDatetimeLocal(value: string | null | undefined): string {
   if (!value) return "";
@@ -36,6 +52,10 @@ interface Submission {
   snapshot?: ReviewSnapshot | null;
   contentChanged?: boolean;
   allowRetake?: boolean;
+  /** Order/draw this student saw (JSON). Answers above are in original letters. */
+  presentation?: string | null;
+  focusLosses?: number | null;
+  startedAt?: string | null;
 }
 
 interface HWQuestion {
@@ -76,7 +96,11 @@ function hwTypeLabel(type: string) {
   return type;
 }
 
-function statusLabel(status: string, allowRetake?: boolean) {
+function statusLabel(status: string, allowRetake?: boolean, reviewVerdict?: string | null, contentChanged?: boolean) {
+  if (contentChanged && reviewVerdict === "failed" && (status === "review_requested" || status === "pending")) {
+    return { text: "اترفض — رُفع من جديد", cls: "bg-rose-500/15 text-rose-500" };
+  }
+  if (allowRetake && status === "failed") return { text: "مرفوض — مسموح إعادة الرفع", cls: "bg-rose-500/15 text-rose-500" };
   if (allowRetake) return { text: "مسموح إعادة المحاولة", cls: "bg-sky-500/15 text-sky-500" };
   if (status === "passed") return { text: "تمت الموافقة", cls: "bg-emerald-500/15 text-emerald-500" };
   if (status === "failed") return { text: "مرفوض", cls: "bg-rose-500/15 text-rose-500" };
@@ -91,18 +115,53 @@ function isPendingStatus(status: string) {
 // ─── ExamAnswersBreakdown ─────────────────────────────────────────────────────
 // Per-question right/wrong view for an MCQ exam submission.
 
+/** Page exits and solving time for one exam sheet. Hints, not verdicts. */
+function IntegrityLine({ sub }: { sub: Submission }) {
+  const minutes =
+    sub.startedAt && sub.completedAt
+      ? Math.max(0, Math.round((new Date(sub.completedAt).getTime() - new Date(sub.startedAt).getTime()) / 6000) / 10)
+      : null;
+  if (sub.focusLosses == null && minutes == null) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {minutes != null && <Badge tone="neutral">حلّه في {minutes} دقيقة</Badge>}
+      {sub.focusLosses != null &&
+        (sub.focusLosses >= 3 ? (
+          <Badge tone="bad">خرج من الصفحة {sub.focusLosses} مرة</Badge>
+        ) : (
+          <Badge tone="ok">خرج من الصفحة {sub.focusLosses} مرة</Badge>
+        ))}
+    </div>
+  );
+}
+
 function ExamAnswersBreakdown({
   answersJson,
-  questions,
+  presentationJson,
+  questions: allQuestions,
   score,
   totalQ,
 }: {
   answersJson?: string | null;
+  presentationJson?: string | null;
   questions: HWQuestion[];
   score?: number | null;
   totalQ?: number | null;
 }) {
   const [open, setOpen] = useState(false);
+
+  // A bank draw: list only the questions this student was given.
+  const questions = useMemo(() => {
+    if (!presentationJson) return allQuestions;
+    try {
+      const p = JSON.parse(presentationJson) as { pool?: boolean; questionIds?: string[] };
+      if (!p?.pool || !Array.isArray(p.questionIds)) return allQuestions;
+      const ids = new Set(p.questionIds);
+      return allQuestions.filter((q) => ids.has(q.id));
+    } catch {
+      return allQuestions;
+    }
+  }, [allQuestions, presentationJson]);
 
   const answers = useMemo(() => {
     if (!answersJson) return {} as Record<string, string>;
@@ -539,7 +598,7 @@ export function LiveReviewPanel({ notify }: { notify: (t: "success" | "error", m
             </div>
           ) : (
             visibleSubs.map((sub) => {
-              const st = statusLabel(sub.status, sub.allowRetake);
+              const st = statusLabel(sub.status, sub.allowRetake, sub.review?.verdict, sub.contentChanged);
               const open = !!diffOpen[sub.id];
               return (
                 <div
@@ -557,12 +616,16 @@ export function LiveReviewPanel({ notify }: { notify: (t: "success" | "error", m
                   </div>
 
                   {selected.type === "exam" && (
-                    <ExamAnswersBreakdown
-                      answersJson={sub.answers}
-                      questions={questions}
-                      score={sub.score}
-                      totalQ={sub.totalQ}
-                    />
+                    <>
+                      <IntegrityLine sub={sub} />
+                      <ExamAnswersBreakdown
+                        answersJson={sub.answers}
+                        presentationJson={sub.presentation}
+                        questions={questions}
+                        score={sub.score}
+                        totalQ={sub.totalQ}
+                      />
+                    </>
                   )}
 
                   {sub.submittedOutput && (
@@ -576,14 +639,22 @@ export function LiveReviewPanel({ notify }: { notify: (t: "success" | "error", m
                   {sub.fileUrl && (
                     <div>
                       <p className="text-xs font-bold text-[var(--ink-muted)] mb-1">ملف مرفق:</p>
-                      <a
-                        href={`/api/homework/${selected.id}/file?studentId=${sub.studentId}&fileName=${encodeURIComponent(sub.fileUrl.split("/").pop() || "")}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-sm text-sky-500 font-mono hover:underline flex items-center gap-1"
-                      >
-                        📎 {sub.fileName || "تحميل الملف"}
-                      </a>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <a
+                          href={`/api/homework/${selected.id}/file?studentId=${sub.studentId}&fileName=${encodeURIComponent(sub.fileUrl.split("/").pop() || "")}&inline=1`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="adm-btn is-sm is-primary"
+                        >
+                          <Eye size={14} aria-hidden /> افتح الملف
+                        </a>
+                        <a
+                          href={`/api/homework/${selected.id}/file?studentId=${sub.studentId}&fileName=${encodeURIComponent(sub.fileUrl.split("/").pop() || "")}`}
+                          className="text-sm text-sky-500 font-mono hover:underline truncate max-w-full"
+                        >
+                          📎 {sub.fileName || "تحميل الملف"}
+                        </a>
+                      </div>
                     </div>
                   )}
 
@@ -597,7 +668,7 @@ export function LiveReviewPanel({ notify }: { notify: (t: "success" | "error", m
                           : "bg-slate-900 text-white dark:bg-amber-500 dark:text-black"
                       }`}
                     >
-                      {open ? "إخفاء المقارنة" : sub.contentChanged ? "⚠️ المحتوى اتغيّر بعد الموافقة — دوس هنا" : "عرض هل المحتوى مختلف؟"}
+                      {open ? "إخفاء المقارنة" : sub.contentChanged ? (sub.review?.verdict === "failed" ? "⚠️ الملف اتغيّر بعد الرفض — دوس هنا" : "⚠️ المحتوى اتغيّر بعد الموافقة — دوس هنا") : "عرض هل المحتوى مختلف؟"}
                     </button>
                   )}
 
@@ -751,11 +822,18 @@ export function HomeworkManagerSection({
     allowedFileTypes: "pdf,py,js,zip",
     // exam
     questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
+    // exam anti-cheating
+    shuffleQuestions: false,
+    shuffleChoices: false,
+    revealAnswers: true,
+    questionsPerStudent: "",
   });
 
   const [showGuide, setShowGuide] = useState(false);
   const [listType, setListType] = useState<"all" | "upload" | "exam" | "terminal" | "link">("all");
   const [closeDrafts, setCloseDrafts] = useState<Record<string, { enableAutoClose: boolean; closeAt: string }>>({});
+  const [openSchedule, setOpenSchedule] = useState<Record<string, boolean>>({});
+  const [integrityFor, setIntegrityFor] = useState<{ hw: any; tab: "settings" | "report" } | null>(null);
   const [editHomework, setEditHomework] = useState<{
     id: string;
     title: string;
@@ -841,7 +919,13 @@ export function HomeworkManagerSection({
         payload.codeLanguage = form.codeLanguage;
       }
       if (form.type === "upload") payload.allowedFileTypes = form.allowedFileTypes || undefined;
-      if (form.type === "exam") payload.questions = form.questions;
+      if (form.type === "exam") {
+        payload.questions = form.questions;
+        payload.shuffleQuestions = form.shuffleQuestions;
+        payload.shuffleChoices = form.shuffleChoices;
+        payload.revealAnswers = form.revealAnswers;
+        payload.questionsPerStudent = form.questionsPerStudent ? Number(form.questionsPerStudent) : null;
+      }
 
       const res = await fetch("/api/admin/homework", {
         method: "POST",
@@ -861,12 +945,22 @@ export function HomeworkManagerSection({
     } finally { setSaving(false); }
   };
 
-  const deleteHw = async (hwId: string) => {
+  const deleteHw = async (hw: any) => {
+    const subs = hw._count?.submissions ?? 0;
+    const ok = await admConfirm({
+      title: `حذف «${hw.title}»؟`,
+      text: subs
+        ? `هيتمسح الواجب و${subs} تسليم ودرجات الطلاب عليه نهائياً. مفيش رجوع.`
+        : "هيتمسح الواجب نهائياً. مفيش رجوع.",
+      confirmLabel: "حذف نهائي",
+      danger: true,
+    });
+    if (!ok) return;
     const res = await fetch("/api/admin/homework", {
       method: "DELETE",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ homeworkId: hwId }),
+      body: JSON.stringify({ homeworkId: hw.id }),
     });
     if (res.ok) { notify("success", "تم حذف الواجب"); void fetchHomeworks(); }
     else notify("error", "تعذر حذف الواجب");
@@ -1272,6 +1366,45 @@ export function HomeworkManagerSection({
             </div>
           )}
 
+          {form.type === "exam" && (
+            <fieldset className="adm-well p-4 space-y-3">
+              <legend className="px-1 text-sm font-black text-[var(--ink)] flex items-center gap-1.5">
+                <ShieldCheck size={15} aria-hidden /> منع الغش
+              </legend>
+              {(
+                [
+                  ["revealAnswers", "إظهار الإجابات الصحيحة للطالب بعد التسليم"],
+                ] as const
+              ).map(([key, text]) => (
+                <div key={key} className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-[var(--ink)]">{text}</span>
+                  <Switch checked={form[key]} onChange={(v) => setForm((f) => ({ ...f, [key]: v }))} label={text} />
+                </div>
+              ))}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-sm text-[var(--ink)]">
+                  بنك أسئلة: كل طالب ياخد
+                  <span className="text-[var(--ink-muted)]"> (فاضي = كل الأسئلة)</span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={form.questions.length}
+                    value={form.questionsPerStudent}
+                    onChange={(e) => setForm((f) => ({ ...f, questionsPerStudent: e.target.value }))}
+                    className="adm-input is-sm"
+                    style={{ width: 90 }}
+                    dir="ltr"
+                    aria-label="عدد الأسئلة لكل طالب"
+                    placeholder="الكل"
+                  />
+                  <span className="text-xs text-[var(--ink-muted)]">من {form.questions.length} سؤال</span>
+                </div>
+              </div>
+            </fieldset>
+          )}
+
           <div className="flex items-center gap-3 pt-2">
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input type="checkbox" checked={form.isPublished} onChange={e => setForm(f => ({ ...f, isPublished: e.target.checked }))} className="w-4 h-4 rounded" />
@@ -1286,7 +1419,7 @@ export function HomeworkManagerSection({
       )}
 
       {/* Homeworks List */}
-      <div className="space-y-2">
+      <section className="space-y-3" aria-label="الواجبات الحالية">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-bold text-[var(--ink-muted)] ml-auto">
             الواجبات الحالية ({listType === "all" ? homeworks.length : homeworks.filter((h) => h.type === listType).length})
@@ -1294,124 +1427,174 @@ export function HomeworkManagerSection({
           {(
             [
               { id: "all", label: "الكل" },
-              { id: "upload", label: "📎 رفع ملف" },
+              { id: "upload", label: "رفع ملف" },
               { id: "exam", label: "اختبار" },
               { id: "terminal", label: "كود" },
               { id: "link", label: "رابط" },
             ] as const
           ).map((t) => (
-            <button
+            <Chip
               key={t.id}
-              type="button"
+              pressed={listType === t.id}
               onClick={() => setListType(t.id)}
-              className={`min-h-9 px-3 rounded-xl text-xs font-black border ${
-                listType === t.id
-                  ? t.id === "upload"
-                    ? "border-amber-500 bg-amber-500 text-white"
-                    : "border-sky-500 bg-sky-500 text-white"
-                  : "border-[var(--border)] text-[var(--ink-muted)]"
-              }`}
+              count={t.id === "all" ? homeworks.length : homeworks.filter((h) => h.type === t.id).length}
             >
               {t.label}
-            </button>
+            </Chip>
           ))}
         </div>
-        {loadingHw ? (
-          <div className="text-center py-8 text-[var(--ink-muted)] text-sm">جارٍ التحميل...</div>
-        ) : homeworks.length === 0 ? (
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-10 text-center text-[var(--ink-muted)] text-sm">
-            لا توجد واجبات بعد — أنشئ واجباً أولاً
-          </div>
-        ) : (
-          homeworks.filter((hw) => listType === "all" || hw.type === listType).map((hw) => (
-            <div key={hw.id} className={`bg-[var(--surface)] border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 ${hw.type === "upload" ? "border-amber-400/70" : "border-[var(--border)]"}`}>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-bold text-[var(--ink)] truncate">{hw.title}</p>
-                  <span className="text-xs bg-sky-500/10 text-sky-500 px-2 py-0.5 rounded-full font-bold">{TYPE_LABELS[hw.type] ?? hw.type}</span>
-                  {(hw.reviewQueueCount ?? 0) > 0 && (
-                    <span className="text-xs bg-amber-500/15 text-amber-500 px-2 py-0.5 rounded-full font-bold">🔍 {hw.reviewQueueCount} معلق</span>
-                  )}
-                </div>
-                <p className="text-xs text-[var(--ink-muted)] mt-0.5">
-                  {hw._count?.submissions ?? 0} تسليم · {hw.video?.title ?? "الكورس كله"}
-                </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {hw.type === "exam" && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEditHomework({
-                        id: hw.id,
-                        title: hw.title || "واجب",
-                        questions: hw.questions || [],
-                      })
-                    }
-                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-600 bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
-                  >
-                    تعديل الأسئلة
-                  </button>
-                )}
-                <button
-                  onClick={() => togglePublish(hw)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${hw.isPublished ? "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20" : "text-[var(--ink-muted)] bg-[var(--border)] hover:bg-[var(--border)]/70"}`}
-                >
-                  {hw.isPublished ? "✅ منشور" : "إخفاء"}
-                </button>
-                <button onClick={() => deleteHw(hw.id)} className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-red-500 hover:bg-red-500/10 transition-colors">
-                  حذف
-                </button>
-              </div>
-              <div className="basis-full mt-3 rounded-xl border border-rose-400/30 bg-rose-500/5 p-3 space-y-2">
-                <label className="flex items-center gap-2 text-xs font-bold text-[var(--ink)]">
-                  <input
-                    type="checkbox"
-                    checked={(closeDrafts[hw.id]?.enableAutoClose ?? !!hw.enableAutoClose) === true}
-                    onChange={(e) =>
-                      setCloseDrafts((prev) => ({
-                        ...prev,
-                        [hw.id]: {
-                          enableAutoClose: e.target.checked,
-                          closeAt: prev[hw.id]?.closeAt ?? toDatetimeLocal(hw.closeAt),
-                        },
-                      }))
-                    }
-                    className="w-4 h-4 rounded"
-                  />
-                  إغلاق تلقائي بعد الوقت المحدد
-                </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="datetime-local"
-                    value={closeDrafts[hw.id]?.closeAt ?? toDatetimeLocal(hw.closeAt)}
-                    disabled={!(closeDrafts[hw.id]?.enableAutoClose ?? hw.enableAutoClose)}
-                    onChange={(e) =>
-                      setCloseDrafts((prev) => ({
-                        ...prev,
-                        [hw.id]: {
-                          enableAutoClose: prev[hw.id]?.enableAutoClose ?? !!hw.enableAutoClose,
-                          closeAt: e.target.value,
-                        },
-                      }))
-                    }
-                    className={input}
-                    dir="ltr"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => saveClose(hw)}
-                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-rose-500 bg-rose-500/10 hover:bg-rose-500/20"
-                  >
-                    حفظ وقت الإغلاق
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
 
+        {loadingHw && homeworks.length === 0 ? (
+          <SkeletonRows rows={4} h={76} />
+        ) : homeworks.length === 0 ? (
+          <EmptyState icon={<FileText size={22} />} title="لا توجد واجبات بعد" text="أنشئ أول واجب من الزرار اللي فوق." />
+        ) : (
+          homeworks.filter((hw) => listType === "all" || hw.type === listType).map((hw) => {
+            const scheduleOpen = openSchedule[hw.id] ?? false;
+            const isExam = hw.type === "exam";
+            const qCount = hw._count?.questions ?? hw.questions?.length ?? 0;
+            return (
+              <article
+                key={hw.id}
+                className="adm-panel"
+                style={hw.isPublished ? undefined : { borderStyle: "dashed" }}
+              >
+                <div className="adm-row" style={{ alignItems: "flex-start" }}>
+                  <span className="adm-avatar" aria-hidden>
+                    {hw.type === "upload" ? <Upload size={17} /> : hw.type === "terminal" ? <Terminal size={17} /> : hw.type === "link" ? <Link2 size={17} /> : <ListChecks size={17} />}
+                  </span>
+                  <div className="min-w-0 flex-1" style={{ flexBasis: 240 }}>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="font-bold text-[var(--ink)] truncate">{hw.title}</p>
+                      <Badge tone="info">{TYPE_LABELS[hw.type] ?? hw.type}</Badge>
+                      {hw.isPublished ? <Badge tone="ok" dot>منشور</Badge> : <Badge tone="neutral" dot>مخفي عن الطلاب</Badge>}
+                      {(hw.reviewQueueCount ?? 0) > 0 && <Badge tone="warn" live>{hw.reviewQueueCount} مستني مراجعة</Badge>}
+                      {(hw.focusFlagCount ?? 0) > 0 && <Badge tone="bad" title="طلاب خرجوا من صفحة الواجب 3 مرات أو أكتر">{hw.focusFlagCount} خروج متكرر</Badge>}
+                    </div>
+                    <p className="adm-muted text-[12.5px] mt-1">
+                      {hw._count?.submissions ?? 0} تسليم
+                      {hw.avgScore != null && <> · متوسط الدرجة {Math.round(hw.avgScore)}٪</>}
+                      {isExam && <> · {qCount} سؤال</>}
+                      {" · "}
+                      {hw.video?.title ?? "الكورس كله"}
+                    </p>
+                    {isExam && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {hw.questionsPerStudent != null && <Badge tone="gold">بنك: {hw.questionsPerStudent} من {qCount}</Badge>}
+                        {hw.revealAnswers === false && <Badge tone="neutral">الحل مخفي بعد التسليم</Badge>}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 ms-auto">
+                    {isExam && (
+                      <>
+                        <Button size="sm" icon={<ShieldCheck size={14} />} onClick={() => setIntegrityFor({ hw, tab: "settings" })}>
+                          منع الغش
+                        </Button>
+                        <Button size="sm" icon={<BarChart3 size={14} />} onClick={() => setIntegrityFor({ hw, tab: "report" })}>
+                          تقرير
+                        </Button>
+                        <Button
+                          size="sm"
+                          icon={<Pencil size={14} />}
+                          onClick={() => setEditHomework({ id: hw.id, title: hw.title || "واجب", questions: hw.questions || [] })}
+                        >
+                          الأسئلة
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      size="sm"
+                      variant={hw.isPublished ? "secondary" : "primary"}
+                      icon={hw.isPublished ? <EyeOff size={14} /> : <Eye size={14} />}
+                      onClick={() => togglePublish(hw)}
+                    >
+                      {hw.isPublished ? "إخفاء" : "نشر"}
+                    </Button>
+                    <IconButton
+                      size="sm"
+                      label={scheduleOpen ? "إخفاء موعد الإغلاق" : "موعد الإغلاق التلقائي"}
+                      aria-expanded={scheduleOpen}
+                      onClick={() => setOpenSchedule((m) => ({ ...m, [hw.id]: !scheduleOpen }))}
+                    >
+                      <CalendarClock size={15} />
+                    </IconButton>
+                    <IconButton size="sm" variant="danger" label="حذف الواجب" onClick={() => void deleteHw(hw)}>
+                      <Trash2 size={15} />
+                    </IconButton>
+                  </div>
+                </div>
+
+                {hw.enableAutoClose && hw.closeAt && !scheduleOpen && (
+                  <div className="adm-panel-foot adm-muted text-[12.5px]">
+                    بيتقفل تلقائي: {new Date(hw.closeAt).toLocaleString("ar-EG")}
+                  </div>
+                )}
+
+                {scheduleOpen && (
+                  <div className="adm-panel-foot flex flex-wrap items-end gap-3">
+                    <label className="adm-check">
+                      <input
+                        type="checkbox"
+                        checked={(closeDrafts[hw.id]?.enableAutoClose ?? !!hw.enableAutoClose) === true}
+                        onChange={(e) =>
+                          setCloseDrafts((prev) => ({
+                            ...prev,
+                            [hw.id]: {
+                              enableAutoClose: e.target.checked,
+                              closeAt: prev[hw.id]?.closeAt ?? toDatetimeLocal(hw.closeAt),
+                            },
+                          }))
+                        }
+                      />
+                      إغلاق تلقائي بعد الوقت المحدد
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={closeDrafts[hw.id]?.closeAt ?? toDatetimeLocal(hw.closeAt)}
+                      disabled={!(closeDrafts[hw.id]?.enableAutoClose ?? hw.enableAutoClose)}
+                      onChange={(e) =>
+                        setCloseDrafts((prev) => ({
+                          ...prev,
+                          [hw.id]: {
+                            enableAutoClose: prev[hw.id]?.enableAutoClose ?? !!hw.enableAutoClose,
+                            closeAt: e.target.value,
+                          },
+                        }))
+                      }
+                      className="adm-input is-sm"
+                      style={{ maxWidth: 240 }}
+                      dir="ltr"
+                      aria-label="وقت الإغلاق"
+                    />
+                    <Button size="sm" variant="primary" onClick={() => saveClose(hw)}>
+                      حفظ وقت الإغلاق
+                    </Button>
+                  </div>
+                )}
+              </article>
+            );
+          })
+        )}
+      </section>
+      {integrityFor && (
+        <HomeworkIntegrityModal
+          homework={{
+            id: integrityFor.hw.id,
+            title: integrityFor.hw.title,
+            questionCount: integrityFor.hw._count?.questions ?? integrityFor.hw.questions?.length ?? 0,
+            shuffleQuestions: false,
+            shuffleChoices: false,
+            questionsPerStudent: integrityFor.hw.questionsPerStudent ?? null,
+            revealAnswers: integrityFor.hw.revealAnswers !== false,
+          }}
+          initialTab={integrityFor.tab}
+          onClose={() => setIntegrityFor(null)}
+          onSaved={(next) =>
+            setHomeworks((list) => list.map((h) => (h.id === integrityFor.hw.id ? { ...h, ...next } : h)))
+          }
+        />
+      )}
       {showGuide && <HwJsonGuideModal onClose={() => setShowGuide(false)} notify={notify} />}
 
       {editHomework && (

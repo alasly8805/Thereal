@@ -109,10 +109,10 @@ function PaymentContent() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d?.user) {
+          // Not pre-filling the number box: students kept paying with their own
+          // phone while the wallet was on another line. Non-wallet methods still
+          // fall back to the account phone on submit.
           setUser({ id: d.user.id, name: d.user.name, role: d.user.role, balance: d.user.balance, phone: d.user.phone });
-          if (d.user.phone) {
-            setPhone((prev) => (prev ? prev : normalizeEgyptianPhone(d.user.phone)));
-          }
         } else {
           setUser(null);
         }
@@ -397,7 +397,11 @@ function PaymentContent() {
         return;
       }
 
-      const normalizedPhone = normalizeEgyptianPhone(phone) || (user?.phone ? normalizeEgyptianPhone(user.phone) : "");
+      // Wallet methods must use the number the student typed: the account phone is
+      // often not the wallet's number (e.g. the wallet is on a parent's line).
+      const normalizedPhone =
+        normalizeEgyptianPhone(phone) ||
+        (!methodObj.needsPhone && user?.phone ? normalizeEgyptianPhone(user.phone) : "");
       if (methodObj.needsPhone && !normalizedPhone) {
         setPhoneError("يرجى إدخال رقم محفظة صالح (010, 011, 012, 015)");
         return;
@@ -488,6 +492,31 @@ function PaymentContent() {
   };
 
   // ── Manual & Background Check Function ──
+  // Payment confirmed. With the owner's auto-enroll switch off nothing was
+  // bought for the student: the money is in their wallet, so send them to pick
+  // what to enroll in (a single course → that course's page; a booking → the
+  // teacher's options on /choose-course).
+  const onPaid = useCallback(async (message: string) => {
+    const hasItem = teacherIdParam || courseIdParam || folderIdParam || videoIdParam || planIdParam;
+    if (hasItem) {
+      try {
+        const r = await fetch("/api/student/choose-course", { credentials: "include" });
+        const d = await r.json();
+        if (d && d.autoEnroll === false) {
+          toastSuccess("تم الدفع ✅ المبلغ اتضاف لمحفظتك — اختار دلوقتي الكورس اللي عايز تشترك فيه");
+          router.push(
+            courseIdParam
+              ? `/courses/${courseIdParam}`
+              : `/choose-course${teacherIdParam ? `?teacherId=${encodeURIComponent(teacherIdParam)}` : ""}`
+          );
+          return;
+        }
+      } catch {}
+    }
+    setStep("success");
+    toastSuccess(message);
+  }, [teacherIdParam, courseIdParam, folderIdParam, videoIdParam, planIdParam, router, toastSuccess]);
+
   const performStatusCheck = useCallback(async (isSilent = false) => {
     if (!intent) return;
     if (!isSilent) {
@@ -504,8 +533,7 @@ function PaymentContent() {
           const data = await shaRes.json();
           const st = String(data.status || "").toLowerCase();
           if (st === "completed" || st === "paid" || st === "success" || data.paid) {
-            setStep("success");
-            toastSuccess(data.message || "تم التحقق من نجاح عملية الدفع وتفعيل المحتوى بنجاح! 🎉");
+            await onPaid(data.message || "تم التحقق من نجاح عملية الدفع وتفعيل المحتوى بنجاح! 🎉");
             return;
           }
         }
@@ -516,8 +544,7 @@ function PaymentContent() {
           const data = await soRes.json();
           const st = String(data.status || "").toLowerCase();
           if (st === "completed" || st === "paid" || st === "success" || data.paid) {
-            setStep("success");
-            toastSuccess(data.message || "تم التحقق من نجاح عملية الدفع وتفعيل المحتوى بنجاح! 🎉");
+            await onPaid(data.message || "تم التحقق من نجاح عملية الدفع وتفعيل المحتوى بنجاح! 🎉");
             return;
           }
         }
@@ -532,8 +559,7 @@ function PaymentContent() {
         if (confRes.ok) {
           const confData = await confRes.json();
           if (confData.success && (confData.status === "completed" || confData.status === "paid" || confData.status === true)) {
-            setStep("success");
-            toastSuccess(confData.message || "تم التحقق وتأكيد سداد العملية بنجاح! 🎉");
+            await onPaid(confData.message || "تم التحقق وتأكيد سداد العملية بنجاح! 🎉");
             return;
           }
         }
@@ -551,7 +577,7 @@ function PaymentContent() {
         setIsCheckingStatus(false);
       }
     }
-  }, [intent, toastSuccess]);
+  }, [intent, onPaid]);
 
   // ── Background Auto-Polling ──
   useEffect(() => {
@@ -820,7 +846,7 @@ function PaymentContent() {
                 )}
                 <p className="text-xs text-[#667085] dark:text-[#98A2B3]">
                   {selectedMethod.needsPhone
-                    ? "سيصلك طلب تأكيد ودفع فوري على هذا الرقم المسجل به المحفظة."
+                    ? "اكتب الرقم المسجّل عليه المحفظة (ممكن يكون رقم ولي الأمر) — هيوصلك طلب الدفع عليه."
                     : "يتم تسجيل هذا الرقم في بيانات الفاتورة والحجز لتأكيد اشتراكك والتواصل معك فور السداد."}
                 </p>
               </div>

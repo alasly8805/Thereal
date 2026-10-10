@@ -15,9 +15,9 @@ export async function GET() {
       displayName: k.displayName,
       status: k.status,
       requestsToday: k.dailyRequests || 0,
-      remainingQuota: k.remainingQuota || 50000,
+      remainingQuota: typeof k.remainingQuota === "number" ? k.remainingQuota : null,
       latencyMs: k.averageLatencyMs || 0,
-      lastUsed: k.lastError ? "خطأ في آخر استخدام" : "متاح",
+      lastError: k.lastError ? String(k.lastError) : null,
     }));
 
     return NextResponse.json({ keys });

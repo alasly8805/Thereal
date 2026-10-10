@@ -99,7 +99,13 @@ export async function GET(req: NextRequest) {
 
     if (!session) {
       const response = NextResponse.json({
-        courses: courses.map((course) => ({ ...withLessons(course), hasAccess: false, inLibrary: false })),
+        courses: courses.map((course) => ({
+          ...withLessons(course),
+          hasAccess: false,
+          inLibrary: false,
+          isRenewalRequired: false,
+          renewalMonth: null,
+        })),
         teachers: formattedTeachers,
       });
       response.headers.set("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
@@ -110,7 +116,7 @@ export async function GET(req: NextRequest) {
     const teacherIds = Array.from(new Set(courses.map((course) => course.teacherId).filter(Boolean)));
 
     // Batch-query all forms of course ownership / library access in parallel
-    const [accessCodes, directEnrollments, teacherSubs, activePlanLinks] = await Promise.all([
+    const [accessCodes, directEnrollments, teacherSubs, allTeacherSubs, activePlanLinks] = await Promise.all([
       prisma.accessCode.findMany({
         where: {
           studentId: session.id,
@@ -134,7 +140,14 @@ export async function GET(req: NextRequest) {
           teacherId: { in: teacherIds },
           OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         },
-        select: { teacherId: true, languageTrack: true, amount: true, status: true },
+        select: { teacherId: true, languageTrack: true, planType: true, amount: true, status: true, educationalStage: true, termNumbers: true },
+      }),
+      prisma.teacherSubscription.findMany({
+        where: {
+          studentId: session.id,
+          teacherId: { in: teacherIds },
+        },
+        select: { teacherId: true, planType: true, termNumbers: true },
       }),
       prisma.planCourseLink.findMany({
         where: {
@@ -154,6 +167,10 @@ export async function GET(req: NextRequest) {
 
     const { getCourseLanguageTrack, isSubscriptionTrackMatching } = await import("@/lib/course-track");
     const { teacherSubscriptionCoversCourse } = await import("@/lib/standalone-lessons");
+    const { bookingCoversCourse, loadTeacherTerms, parseCoursePlacements } = await import("@/lib/teacher-terms");
+    const bookingTerms = await loadTeacherTerms(
+      courses.map((c) => c.teacherId ?? "")
+    );
 
     const accessCodeSet = new Set(accessCodes.map((code) => code.courseId));
     const directEnrollSet = new Set(directEnrollments.map((e) => e.courseId));
@@ -165,21 +182,10 @@ export async function GET(req: NextRequest) {
         const isAdminPreview = session.role === "admin" || session.role === "superadmin";
         const isDemoBypass = await canBypassPayment(session.role, course.teacherId, session.accountMode);
 
-        const matchesTeacherSub =
-          course.teacherId &&
-          teacherSubs.some(
-            (s) =>
-              s.teacherId === course.teacherId &&
-              (teacherSubscriptionCoversCourse(course) ||
-                (course.deliveryMode || "").toUpperCase() === "CENTER") &&
-              isSubscriptionTrackMatching(s.languageTrack, getCourseLanguageTrack(course))
-          );
-
         const inLibrary =
           accessCodeSet.has(course.id) ||
           directEnrollSet.has(course.id) ||
-          planCourseSet.has(course.id) ||
-          matchesTeacherSub;
+          planCourseSet.has(course.id);
 
         const hasAccess =
           inLibrary ||
@@ -189,11 +195,37 @@ export async function GET(req: NextRequest) {
           isTesterUser ||
           (centerGrant?.isActive === true && centerGrant.courseIds.has(course.id));
 
+        let isRenewalRequired = false;
+        let renewalMonth: number | null = null;
+
+        if (!hasAccess && session.role === "student" && course.teacherId) {
+          const teacherAll = allTeacherSubs.filter((s) => s.teacherId === course.teacherId);
+          if (teacherAll.length > 0) {
+            const placements = parseCoursePlacements(course);
+            const monthPlacements = placements.filter((p) => p.kind === "month");
+            if (monthPlacements.length > 0) {
+              const ownedMonths = Array.from(
+                new Set(teacherAll.flatMap((s) => (s.termNumbers || []).filter((n) => typeof n === "number" && n > 0)))
+              );
+              if (ownedMonths.length === 0 && teacherAll.some((s) => s.planType === "monthly")) {
+                ownedMonths.push(1);
+              }
+              const targetMonthPlacement = monthPlacements.find((p) => !ownedMonths.includes(p.term)) || monthPlacements[0];
+              if (targetMonthPlacement) {
+                isRenewalRequired = true;
+                renewalMonth = targetMonthPlacement.term || 2;
+              }
+            }
+          }
+        }
+
         return {
           ...withLessons(course),
           hasAccess,
           inLibrary,
           isOwnerTeacher,
+          isRenewalRequired,
+          renewalMonth,
         };
       })
     );

@@ -1,7 +1,7 @@
 import { logAdminAction } from "@/lib/admin-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { verifyBulkPassword, verifyWalletPassword } from "@/lib/admin-auth";
+import { verifyBulkPassword, verifyWalletPassword, verifyTerminalPassword } from "@/lib/admin-auth";
 
 /**
  * Verifies the access password (BULK_DELETE_PASSWORD) that gates the Danger Zone
@@ -29,6 +29,10 @@ export async function POST(req: NextRequest) {
   
   if (body.type === "wallet") {
     if (!verifyWalletPassword(body.password ?? "")) {
+      return NextResponse.json({ ok: false, error: "كلمة المرور غير صحيحة" }, { status: 401 });
+    }
+  } else if (body.type === "ai-terminal" || body.type === "terminal") {
+    if (!verifyTerminalPassword(body.password ?? "")) {
       return NextResponse.json({ ok: false, error: "كلمة المرور غير صحيحة" }, { status: 401 });
     }
   } else {

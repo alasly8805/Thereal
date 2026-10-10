@@ -15,6 +15,7 @@ import {
   Paperclip,
   FileText,
   Sparkles,
+  Copy,
 } from "lucide-react";
 import {
   TeacherJSONGuideModal,
@@ -81,6 +82,8 @@ export interface QuizQuestion {
   optionsCount?: 2 | 3 | 4;
   /** Points this question is worth. Default 1. */
   degree?: number;
+  /** Exam model number (1, 2, ...). Default 1. */
+  modelNumber?: number;
 }
 
 export function exportQuizToJson(quiz: { title?: string; timeLimitMinutes?: number; questions?: any[] }) {
@@ -155,6 +158,9 @@ export function AddQuizModal({
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(30);
   const [enableAutoClose, setEnableAutoClose] = useState(false);
   const [closeAt, setCloseAt] = useState("");
+  const [hideAnswersUntilEssayGraded, setHideAnswersUntilEssayGraded] = useState(false);
+  const [quizModels, setQuizModels] = useState<number[]>([1]);
+  const [activeQuizModel, setActiveQuizModel] = useState<number>(1);
   const [showGuide, setShowGuide] = useState(false);
   const [questions, setQuestions] = useState<QuizQuestion[]>([
     {
@@ -168,6 +174,7 @@ export function AddQuizModal({
       optionD: "",
       correctAnswer: "A",
       degree: 1,
+      modelNumber: 1,
     },
   ]);
   const [submitting, setSubmitting] = useState(false);
@@ -188,8 +195,55 @@ export function AddQuizModal({
         optionD: "",
         correctAnswer: "A",
         degree: 1,
+        modelNumber: activeQuizModel,
       },
     ]);
+  };
+
+  const handleAddQuizModel = () => {
+    const nextModel = (quizModels.length > 0 ? Math.max(...quizModels) : 0) + 1;
+    setQuizModels((prev) => [...prev, nextModel]);
+    setActiveQuizModel(nextModel);
+    setQuestions((prev) => [
+      ...prev,
+      {
+        question: "",
+        imageUrl: "",
+        questionType: "mcq",
+        optionsCount: 4,
+        optionA: "",
+        optionB: "",
+        optionC: "",
+        optionD: "",
+        correctAnswer: "A",
+        degree: 1,
+        modelNumber: nextModel,
+      },
+    ]);
+  };
+
+  const handleRemoveQuizModel = (m: number) => {
+    if (m === 1) return;
+    setQuizModels((prev) => prev.filter((item) => item !== m));
+    setQuestions((prev) => prev.filter((q) => (q.modelNumber || 1) !== m));
+    setActiveQuizModel(1);
+  };
+
+  const handleCopyFromModel1 = () => {
+    const model1Questions = questions.filter((q) => (q.modelNumber || 1) === 1);
+    if (!model1Questions.length || !model1Questions.some((q) => q.question.trim())) {
+      toastError("لا توجد أسئلة مكتوبة في نموذج 1 لنسخها");
+      return;
+    }
+    const cloned = model1Questions.map((q) => ({
+      ...q,
+      modelNumber: activeQuizModel,
+    }));
+    setQuestions((prev) => [
+      ...prev.filter((q) => (q.modelNumber || 1) !== activeQuizModel),
+      ...cloned,
+    ]);
+    toastSuccess(`تم نسخ ${cloned.length} سؤال من نموذج 1 إلى نموذج ${activeQuizModel} بنجاح ✅`);
   };
 
   const handleRemoveQuestion = (index: number) => {
@@ -294,11 +348,15 @@ export function AddQuizModal({
             optionD: optD,
             correctAnswer: isEssay ? "A" : correct,
             degree: Number(row.degree) > 0 ? Math.round(Number(row.degree)) : 1,
+            modelNumber: typeof row.modelNumber === "number" ? row.modelNumber : activeQuizModel,
           };
         });
 
         if (importedTitle) setTitle(importedTitle);
         if (importedTime) setTimeLimitMinutes(importedTime);
+        const importedModels = [...new Set(validQuestions.map((q) => q.modelNumber || 1))];
+        setQuizModels(importedModels.length ? importedModels : [1]);
+        setActiveQuizModel(importedModels[0] || 1);
         setQuestions(validQuestions);
         toastSuccess(`تم استيراد ${validQuestions.length} سؤال بنجاح ✅`);
       } catch (err: unknown) {
@@ -320,22 +378,23 @@ export function AddQuizModal({
     // Validation
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
+      const modelNum = q.modelNumber || 1;
       if (!q.question.trim()) {
-        toastError(`يرجى كتابة نص السؤال رقم ${i + 1}`);
+        toastError(`يرجى كتابة نص السؤال رقم ${i + 1} (النموذج ${modelNum})`);
         return;
       }
       if (q.questionType !== "essay") {
         if (!q.optionA.trim() || !q.optionB.trim()) {
-          toastError(`يرجى كتابة الخيار (أ) والخيار (ب) للسؤال رقم ${i + 1}`);
+          toastError(`يرجى كتابة الخيار (أ) والخيار (ب) للسؤال رقم ${i + 1} (النموذج ${modelNum})`);
           return;
         }
         const count = q.optionsCount ?? (q.optionD ? 4 : q.optionC ? 3 : 2);
         if (count >= 3 && !q.optionC.trim()) {
-          toastError(`يرجى كتابة الخيار (ج) للسؤال رقم ${i + 1}`);
+          toastError(`يرجى كتابة الخيار (ج) للسؤال رقم ${i + 1} (النموذج ${modelNum})`);
           return;
         }
         if (count === 4 && !q.optionD.trim()) {
-          toastError(`يرجى كتابة الخيار (د) للسؤال رقم ${i + 1}`);
+          toastError(`يرجى كتابة الخيار (د) للسؤال رقم ${i + 1} (النموذج ${modelNum})`);
           return;
         }
       }
@@ -356,6 +415,7 @@ export function AddQuizModal({
           optionD: isEssay || count < 4 ? "" : q.optionD.trim(),
           correctAnswer: isEssay ? "A" : q.correctAnswer,
           degree: Number(q.degree) > 0 ? Math.round(Number(q.degree)) : 1,
+          modelNumber: q.modelNumber || 1,
         };
       });
 
@@ -368,6 +428,7 @@ export function AddQuizModal({
           timeLimitMinutes: Number(timeLimitMinutes) || 30,
           enableAutoClose,
           closeAt: enableAutoClose ? closeAt : closeAt || undefined,
+          hideAnswersUntilEssayGraded,
           questions: formattedQuestions,
         }),
       });
@@ -455,6 +516,82 @@ export function AddQuizModal({
               onCloseAtChange={setCloseAt}
             />
 
+            {/* Toggle: Hide answers until essay graded */}
+            <div className="p-3.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/50">
+              <label className="flex items-center gap-2.5 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={hideAnswersUntilEssayGraded}
+                  onChange={(e) => setHideAnswersUntilEssayGraded(e.target.checked)}
+                  className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>إخفاء الإجابات الصحيحة حتى تصحيح المقالي</span>
+              </label>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 mr-6">
+                عند تفعيل هذا الخيار: لن تظهر درجات الأسئلة أو الإجابات الصحيحة للطالب بعد التسليم حتى يقوم المعلم بتصحيح الأسئلة المقالية ورصد درجاتها.
+              </p>
+            </div>
+
+            {/* Multi-Model Tabs */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3 pt-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-400">نماذج الاختبار:</span>
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl">
+                  {quizModels.map((m) => {
+                    const qCount = questions.filter((q) => (q.modelNumber || 1) === m).length;
+                    const isActive = activeQuizModel === m;
+                    return (
+                      <div key={m} className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => setActiveQuizModel(m)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                            isActive
+                              ? "bg-sky-600 text-white shadow-xs"
+                              : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-700"
+                          }`}
+                        >
+                          <span>نموذج {m}</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isActive ? "bg-white/20 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"}`}>
+                            {qCount}
+                          </span>
+                        </button>
+                        {m !== 1 && (
+                          <button
+                            type="button"
+                            title={`حذف نموذج ${m}`}
+                            onClick={() => handleRemoveQuizModel(m)}
+                            className="mr-1 text-red-400 hover:text-red-600 text-xs px-1 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={handleAddQuizModel}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/50 transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>إضافة نموذج</span>
+                  </button>
+                </div>
+              </div>
+
+              {activeQuizModel !== 1 && (
+                <button
+                  type="button"
+                  onClick={handleCopyFromModel1}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>نسخ أسئلة من نموذج 1</span>
+                </button>
+              )}
+            </div>
+
             {/* JSON Bulk Import Banner */}
             <div className="p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
               <div className="text-xs text-sky-800 dark:text-sky-300">
@@ -505,9 +642,12 @@ export function AddQuizModal({
             {/* Questions Header */}
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
               <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <span>أسئلة الاختبار</span>
+                <span>أسئلة نموذج {activeQuizModel}</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-mono font-bold">
-                  {questions.length} سؤال
+                  {questions.filter((q) => (q.modelNumber || 1) === activeQuizModel).length} سؤال
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  (إجمالي كل النماذج: {questions.length})
                 </span>
               </h4>
               <button
@@ -522,9 +662,45 @@ export function AddQuizModal({
 
             {/* Questions List */}
             <div className="space-y-4">
-              {questions.map((q, idx) => {
-                const count = q.optionsCount ?? (q.optionD ? 4 : q.optionC ? 3 : 2);
-                const isEssay = q.questionType === "essay";
+              {(() => {
+                const activeQuestions = questions
+                  .map((q, originalIdx) => ({ ...q, originalIdx }))
+                  .filter((q) => (q.modelNumber || 1) === activeQuizModel);
+
+                if (activeQuestions.length === 0) {
+                  return (
+                    <div className="p-8 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+                      <p className="text-sm font-bold text-slate-600 dark:text-slate-400">
+                        لا توجد أسئلة في نموذج {activeQuizModel} حتى الآن
+                      </p>
+                      <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={handleAddQuestion}
+                          className="px-3 py-1.5 rounded-xl bg-sky-600 text-white text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>إضافة سؤال في نموذج {activeQuizModel}</span>
+                        </button>
+                        {activeQuizModel !== 1 && (
+                          <button
+                            type="button"
+                            onClick={handleCopyFromModel1}
+                            className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>نسخ أسئلة من نموذج 1</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return activeQuestions.map((q, displayIdx) => {
+                  const idx = q.originalIdx;
+                  const count = q.optionsCount ?? (q.optionD ? 4 : q.optionC ? 3 : 2);
+                  const isEssay = q.questionType === "essay";
 
                 return (
                   <div
@@ -534,7 +710,10 @@ export function AddQuizModal({
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono font-black text-sky-600 dark:text-sky-400">
-                          السؤال #{idx + 1}
+                          السؤال #{displayIdx + 1}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300 font-bold">
+                          نموذج {activeQuizModel}
                         </span>
 
                         {/* Type toggle */}
@@ -719,8 +898,18 @@ export function AddQuizModal({
                     )}
                   </div>
                 );
-              })}
+              });
+            })()}
             </div>
+
+            <button
+              type="button"
+              onClick={handleAddQuestion}
+              className="w-full py-2.5 rounded-xl border border-dashed border-sky-300 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/20 hover:bg-sky-50 dark:hover:bg-sky-950/40 text-sky-600 dark:text-sky-400 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>إضافة سؤال جديد في نموذج {activeQuizModel}</span>
+            </button>
 
             {/* Footer Submit Bar */}
             <div className="border-t border-slate-200 dark:border-slate-800 pt-4 flex items-center justify-end gap-2.5">

@@ -76,16 +76,24 @@ export async function renditionSize(name: string): Promise<number | null> {
 
 /**
  * The filename /api/videos/stream should actually serve for a requested
- * quality. Falls back to the original whenever that rendition has not been
- * generated, so a stale `?q=` in a bookmarked URL never 404s a student.
+ * quality. When that tier is not built yet, the closest built one wins
+ * (smaller first, then larger): any rendition is far lighter than the 1-2 GB
+ * original, which a student who asked for 360p must not be handed. Only when
+ * no rendition exists does it fall back to the original, so a stale `?q=`
+ * never 404s a student.
  */
 export async function resolveRenditionName(
   baseFilename: string,
   height: RenditionHeight | null
 ): Promise<string> {
   if (!height || isRenditionFilename(baseFilename)) return baseFilename;
-  const candidate = renditionFilename(baseFilename, height);
-  return (await renditionSize(candidate)) !== null ? candidate : baseFilename;
+  const smaller = RENDITION_HEIGHTS.filter((h) => h <= height).sort((a, b) => b - a);
+  const larger = RENDITION_HEIGHTS.filter((h) => h > height).sort((a, b) => a - b);
+  for (const h of [...smaller, ...larger]) {
+    const candidate = renditionFilename(baseFilename, h);
+    if ((await renditionSize(candidate)) !== null) return candidate;
+  }
+  return baseFilename;
 }
 
 /**

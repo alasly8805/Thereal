@@ -1,447 +1,382 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Activity, FlaskConical, KeyRound, RefreshCw, ScrollText, Send } from "lucide-react";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Notice,
+  PageHeader,
+  Panel,
+  Select,
+  SkeletonRows,
+  Stat,
+  Tabs,
+  Textarea,
+  fmtDateTime,
+  fmtNum,
+  readJson,
+  type Tone,
+} from "@/components/admin/ui/kit";
+
+interface ProviderView {
+  id: string;
+  status: "Healthy" | "Degraded" | "Offline";
+  requests: number;
+  avgLatencyMs: number;
+  successRate: number | null;
+  fallbacks: number;
+}
 
 interface AIOverviewData {
-  status: string;
+  status: "healthy" | "degraded" | "unknown";
   requestsToday: number;
   studentsUsingAI: number;
   teachersUsingAI: number;
+  parentsReading: number;
   todayCost: number;
+  monthCost: number;
   todayTokens: number;
   avgResponse: number;
   cacheHit: number;
   budgetUsed: number;
   providersOnline: string;
+  providers: ProviderView[];
+  topSubjects: Array<{ name: string; count: number }>;
 }
 
 interface GeminiKey {
   displayName: string;
-  status: "active" | "cooldown" | "exhausted" | "error";
+  status: string;
   requestsToday: number;
-  remainingQuota: number;
+  remainingQuota: number | null;
   latencyMs: number;
-  cooldownEnds?: string;
-  lastUsed?: string;
+  lastError: string | null;
 }
 
-interface AuditLogItem {
+interface AuditRecord {
   id: string;
-  action: string;
-  details: string;
   timestamp: string;
+  who: string;
+  action: string;
+  previousValue: string;
+  newValue: string;
+  reason?: string;
+}
+
+type StudioTab = "telemetry" | "gemini" | "playground" | "audit";
+
+const PROVIDER_TONE: Record<ProviderView["status"], Tone> = { Healthy: "ok", Degraded: "warn", Offline: "bad" };
+const PROVIDER_LABEL: Record<ProviderView["status"], string> = { Healthy: "يعمل", Degraded: "متعثّر", Offline: "متوقف" };
+
+function keyTone(status: string): Tone {
+  const s = status.toLowerCase();
+  if (s === "active" || s === "healthy") return "ok";
+  if (s.includes("cool") || s.includes("degrad") || s.includes("limit")) return "warn";
+  return "bad";
+}
+
+function useJson<T>(url: string | null) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    if (!url) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      const json = await readJson<T & { error?: string }>(res);
+      if (!res.ok || !json) {
+        setError(json?.error || "تعذر تحميل البيانات");
+        return;
+      }
+      setData(json);
+    } catch {
+      setError("تعذر الاتصال بالخادم");
+    } finally {
+      setLoading(false);
+    }
+  }, [url]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  return { data, loading, error, reload: load };
 }
 
 export function UnifiedAIStudio() {
-  const [activeTab, setActiveTab] = useState<"telemetry" | "gemini" | "playground" | "audit">("telemetry");
-  const [overview, setOverview] = useState<AIOverviewData | null>(null);
+  const [tab, setTab] = useState<StudioTab>("telemetry");
 
-  // Gemini Pool State
-  const [keys, setKeys] = useState<GeminiKey[]>([]);
+  return (
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="استوديو الذكاء الاصطناعي"
+        description="استهلاك مساعد الطلاب، حالة المزوّدين ومفاتيح Gemini، تجربة المحرك، وسجل تغييرات الإعدادات. الأرقام من ذاكرة السيرفر وتبدأ من الصفر بعد كل إعادة تشغيل."
+      />
+      <Tabs<StudioTab>
+        label="أقسام الاستوديو"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { id: "telemetry", label: "الاستهلاك والمزوّدون", icon: <Activity size={15} /> },
+          { id: "gemini", label: "مفاتيح Gemini", icon: <KeyRound size={15} /> },
+          { id: "playground", label: "تجربة المحرك", icon: <FlaskConical size={15} /> },
+          { id: "audit", label: "سجل التغييرات", icon: <ScrollText size={15} /> },
+        ]}
+      />
+      {tab === "telemetry" && <TelemetryTab />}
+      {tab === "gemini" && <GeminiTab />}
+      {tab === "playground" && <PlaygroundTab />}
+      {tab === "audit" && <AuditTab />}
+    </div>
+  );
+}
 
-  // Playground State
+function TelemetryTab() {
+  const { data, loading, error, reload } = useJson<AIOverviewData>("/api/admin/ai/overview");
+
+  if (error) return <Notice tone="bad" title={error} action={<Button size="sm" onClick={() => void reload()}>إعادة المحاولة</Button>} />;
+  if (!data) return <SkeletonRows rows={3} h={96} />;
+
+  const noTraffic = data.requestsToday === 0 && data.providers.every((p) => p.requests === 0);
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Badge tone={data.status === "healthy" ? "ok" : data.status === "degraded" ? "warn" : "neutral"} dot>
+          {data.status === "healthy" ? "المزوّدون يعملون" : data.status === "degraded" ? "كل المزوّدين متعثّرون" : "لا توجد بيانات مزوّدين بعد"} · {data.providersOnline}
+        </Badge>
+        <Button size="sm" onClick={() => void reload()} loading={loading} icon={<RefreshCw size={14} />}>تحديث</Button>
+      </div>
+
+      {noTraffic && (
+        <Notice tone="neutral" title="لا توجد طلبات مسجلة منذ آخر تشغيل للسيرفر">
+          ستظهر الأرقام بمجرد أن يستخدم الطلاب المساعد.
+        </Notice>
+      )}
+
+      <div className="adm-stats">
+        <Stat label="طلبات اليوم" value={fmtNum(data.requestsToday)} />
+        <Stat label="طلاب يستخدمون المساعد" value={fmtNum(data.studentsUsingAI)} />
+        <Stat label="متوسط الاستجابة" value={data.avgResponse ? `${fmtNum(data.avgResponse)} ms` : "—"} />
+        <Stat label="من الكاش" value={`${fmtNum(data.cacheHit)}٪`} sub="أسئلة خُدمت بدون استدعاء المزوّد" />
+        <Stat label="تكلفة اليوم" value={`$${data.todayCost.toFixed(2)}`} sub={`الشهر $${data.monthCost.toFixed(2)} · ${fmtNum(data.budgetUsed)}٪ من ٥٠$`} tone={data.budgetUsed > 80 ? "warn" : "neutral"} />
+        <Stat label="توكنز اليوم" value={fmtNum(data.todayTokens)} />
+      </div>
+
+      <Panel title="المزوّدون" icon={<Activity size={16} />} padded={data.providers.length === 0}>
+        {data.providers.length === 0 ? (
+          <EmptyState title="لم يستخدم أي مزوّد بعد" text="يظهر كل مزوّد هنا بعد أول طلب يمر عبره." />
+        ) : (
+          <div className="adm-table-wrap">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th>المزوّد</th>
+                  <th>الحالة</th>
+                  <th className="is-num">الطلبات</th>
+                  <th className="is-num">نسبة النجاح</th>
+                  <th className="is-num">متوسط الاستجابة</th>
+                  <th className="is-num">تحويل احتياطي</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.providers.map((p) => (
+                  <tr key={p.id}>
+                    <td className="adm-mono font-bold">{p.id}</td>
+                    <td><Badge tone={PROVIDER_TONE[p.status] ?? "neutral"} dot>{PROVIDER_LABEL[p.status] ?? p.status}</Badge></td>
+                    <td className="is-num">{fmtNum(p.requests)}</td>
+                    <td className="is-num">{p.successRate == null ? "—" : `${fmtNum(p.successRate)}٪`}</td>
+                    <td className="is-num">{p.avgLatencyMs ? `${fmtNum(p.avgLatencyMs)} ms` : "—"}</td>
+                    <td className="is-num">{fmtNum(p.fallbacks)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      {data.topSubjects.length > 0 && (
+        <Panel title="المواد الأكثر سؤالاً">
+          <ul className="flex flex-col gap-2">
+            {data.topSubjects.map((s) => {
+              const max = Math.max(...data.topSubjects.map((x) => x.count), 1);
+              return (
+                <li key={s.name} className="grid grid-cols-[8rem_1fr_auto] items-center gap-3 text-sm">
+                  <span className="truncate">{s.name}</span>
+                  <span className="adm-bar"><span style={{ width: `${(s.count / max) * 100}%`, background: "var(--brand)" }} /></span>
+                  <span className="adm-num adm-muted text-xs">{fmtNum(s.count)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </Panel>
+      )}
+    </>
+  );
+}
+
+function GeminiTab() {
+  const { data, loading, error, reload } = useJson<{ keys: GeminiKey[] }>("/api/admin/ai/gemini-pool");
+  const keys = data?.keys ?? [];
+
+  return (
+    <Panel
+      padded={false}
+      title="مفاتيح Gemini"
+      icon={<KeyRound size={16} />}
+      description="تدوير تلقائي بين المفاتيح لتوزيع الحمل وتفادي حدود الحصة."
+      actions={
+        <>
+          {keys.length > 0 && <Badge>{fmtNum(keys.filter((k) => keyTone(k.status) === "ok").length)} من {fmtNum(keys.length)} نشط</Badge>}
+          <Button size="sm" onClick={() => void reload()} loading={loading} icon={<RefreshCw size={14} />}>تحديث</Button>
+        </>
+      }
+    >
+      {error ? (
+        <div className="p-4"><Notice tone="bad" title={error} /></div>
+      ) : !data ? (
+        <SkeletonRows rows={3} />
+      ) : keys.length === 0 ? (
+        <EmptyState icon={<KeyRound size={22} />} title="لا توجد مفاتيح Gemini مُعدّة" text="أضف المفاتيح في متغيرات البيئة على السيرفر." />
+      ) : (
+        <div className="adm-table-wrap">
+          <table className="adm-table" style={{ minWidth: 620 }}>
+            <thead>
+              <tr>
+                <th>المفتاح</th>
+                <th>الحالة</th>
+                <th className="is-num">طلبات اليوم</th>
+                <th className="is-num">الحصة المتبقية</th>
+                <th className="is-num">الاستجابة</th>
+                <th>آخر خطأ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k) => (
+                <tr key={k.displayName}>
+                  <td className="adm-mono font-bold">{k.displayName}</td>
+                  <td><Badge tone={keyTone(k.status)} dot>{k.status}</Badge></td>
+                  <td className="is-num">{fmtNum(k.requestsToday)}</td>
+                  <td className="is-num">{k.remainingQuota == null ? "—" : fmtNum(k.remainingQuota)}</td>
+                  <td className="is-num">{k.latencyMs ? `${fmtNum(k.latencyMs)} ms` : "—"}</td>
+                  <td className="text-xs adm-muted" style={{ maxWidth: 240 }}>
+                    <span className="block truncate" title={k.lastError ?? undefined}>{k.lastError ?? "—"}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function PlaygroundTab() {
   const [prompt, setPrompt] = useState("");
-  const [provider, setProvider] = useState("gemini");
   const [subject, setSubject] = useState("الفيزياء");
-  const [playgroundOutput, setPlaygroundOutput] = useState<string | null>(null);
-  const [playgroundLoading, setPlaygroundLoading] = useState(false);
-  const [playgroundMeta, setPlaygroundMeta] = useState<{ latency: number; tokens: number; cost: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<{ response: string; latency: number; tokens: number | null; provider: string | null } | null>(null);
 
-  // Audit Logs State
-  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
-
-  // Fetch Overview Data
-  useEffect(() => {
-    let isMounted = true;
-    const fetchOverview = async () => {
-      try {
-        const res = await fetch("/api/admin/ai/overview", { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted) setOverview(data);
-          return;
-        }
-      } catch {
-        // Fallback default structure
-      }
-      if (isMounted) {
-        setOverview({
-          status: "healthy",
-          requestsToday: 1420,
-          studentsUsingAI: 285,
-          teachersUsingAI: 18,
-          todayCost: 1.84,
-          todayTokens: 382900,
-          avgResponse: 420,
-          cacheHit: 44.5,
-          budgetUsed: 12.2,
-          providersOnline: "Google Gemini 2.0, DeepSeek V3",
-        });
-      }
-    };
-    void fetchOverview();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // Fetch Gemini Keys on tab change
-  useEffect(() => {
-    let isMounted = true;
-    if (activeTab === "gemini") {
-      fetch("/api/admin/ai/gemini-pool", { credentials: "include" })
-        .then(async (res) => {
-          if (res.ok) {
-            const data = await res.json();
-            if (data.keys?.length && isMounted) {
-              setKeys(data.keys);
-              return;
-            }
-          }
-          throw new Error("no keys");
-        })
-        .catch(() => {
-          if (isMounted) {
-            setKeys([
-              { displayName: "GEMINI_PROD_PRIMARY", status: "active", requestsToday: 1420, remainingQuota: 48580, latencyMs: 340, lastUsed: "الآن" },
-              { displayName: "GEMINI_BACKUP_A", status: "active", requestsToday: 680, remainingQuota: 49320, latencyMs: 380, lastUsed: "منذ دقيقتين" },
-              { displayName: "GEMINI_FALLBACK_BURST", status: "cooldown", requestsToday: 2100, remainingQuota: 47900, latencyMs: 510, cooldownEnds: "15 دقيقة" },
-            ]);
-          }
-        });
-    } else if (activeTab === "audit") {
-      fetch("/api/admin/ai/audit", { credentials: "include" })
-        .then(async (res) => {
-          if (res.ok) {
-            const data = await res.json();
-            if (isMounted) setAuditLogs(data.logs || []);
-            return;
-          }
-          throw new Error("fail");
-        })
-        .catch(() => {
-          if (isMounted) {
-            setAuditLogs([
-              { id: "1", action: "KEY_ROTATION", details: "تم تدوير مفتاح Gemini تلقائياً لتفادي استهلاك الحصة", timestamp: new Date(Date.now() - 1000 * 60 * 12).toLocaleTimeString("ar-EG") },
-              { id: "2", action: "CACHE_HIT", details: "تمت خدمة سؤال فيزيائي مكرر من الكاش المحلي (توفير توكنز)", timestamp: new Date(Date.now() - 1000 * 60 * 25).toLocaleTimeString("ar-EG") },
-              { id: "3", action: "PROVIDER_HEALTH", details: "تحقق تلقائي: جميع مزودي الذكاء الاصطناعي متصلون ويعملون بكفاءة", timestamp: new Date(Date.now() - 1000 * 60 * 60).toLocaleTimeString("ar-EG") },
-            ]);
-          }
-        });
-    }
-    return () => {
-      isMounted = false;
-    };
-  }, [activeTab]);
-
-  const handleTestPlayground = async () => {
+  const run = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!prompt.trim()) return;
-    setPlaygroundLoading(true);
+    setLoading(true);
+    setError("");
+    setResult(null);
     try {
       const res = await fetch("/api/admin/ai/playground", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, provider, subject }),
+        body: JSON.stringify({ prompt, subject }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPlaygroundOutput(data.response || "تمت المعالجة بنجاح.");
-        setPlaygroundMeta({ latency: data.latency || 380, tokens: data.tokens || 240, cost: data.cost || 0.0004 });
-      } else {
-        throw new Error("fail");
+      const data = await readJson<{ response?: string; latency?: number; tokens?: number | null; provider?: string | null; error?: string }>(res);
+      if (!res.ok || !data?.response) {
+        setError(data?.error || "لم يرد المحرك");
+        return;
       }
+      setResult({ response: data.response, latency: data.latency ?? 0, tokens: data.tokens ?? null, provider: data.provider ?? null });
     } catch {
-      setTimeout(() => {
-        setPlaygroundOutput(`[استجابة محرك ${provider.toUpperCase()}] تم استلام السؤال بنجاح عن مادة (${subject}): "${prompt}". المحرك يعمل بكفاءة وتكامل تام مع منظومة الحصص.`);
-        setPlaygroundMeta({ latency: 390, tokens: 215, cost: 0.0003 });
-        setPlaygroundLoading(false);
-      }, 500);
-      return;
+      setError("تعذر الاتصال بالخادم");
+    } finally {
+      setLoading(false);
     }
-    setPlaygroundLoading(false);
   };
 
   return (
-    <div dir="rtl" className="space-y-6">
-      {/* Studio Header (Smooth White / Pure Dark) */}
-      <div className="bg-white text-slate-900 border border-slate-200/90 shadow-sm dark:bg-slate-900/90 dark:text-white dark:border-slate-800/90 rounded-2xl p-6 backdrop-blur-sm transition-colors">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-[#c5a880]/15 dark:text-[#c5a880] dark:border-[#c5a880]/30 mb-2">
-              <span>✦ استوديو الذكاء الاصطناعي التنفيذي</span>
-            </div>
-            <h2 className="text-xl font-black text-slate-900 dark:text-white">مركز التحكم الموحد للذكاء الاصطناعي</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              مراقبة حية، إدارة مجمع المفاتيح (Gemini Pool)، وتجربة النماذج وسجلات الأمان الفعلية.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-            </span>
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">الأنظمة متصلة وتعمل</span>
-          </div>
+    <Panel title="تجربة المحرك" icon={<FlaskConical size={16} />} description="أرسل سؤالاً كما يرسله الطالب، وشاهد الإجابة وزمنها والمزوّد الذي اختاره المحرك تلقائياً.">
+      <form onSubmit={run} className="flex flex-col gap-4">
+        <Field label="المادة" htmlFor="pg-subject" className="max-w-xs">
+          <Select id="pg-subject" value={subject} onChange={(e) => setSubject(e.target.value)}>
+            {["الفيزياء", "الكيمياء", "الرياضيات", "الأحياء", "اللغة العربية", "البرمجة"].map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="السؤال" htmlFor="pg-prompt">
+          <Textarea id="pg-prompt" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="مثال: اشرح قانون نيوتن الثاني باختصار مع مثال من الحياة" />
+        </Field>
+        <div>
+          <Button type="submit" variant="primary" loading={loading} disabled={!prompt.trim()} icon={<Send size={15} />}>إرسال</Button>
         </div>
-
-        {/* Tab Selector */}
-        <div className="flex flex-wrap gap-2 mt-6 pt-5 border-t border-slate-200 dark:border-slate-800/80">
-          {[
-            { id: "telemetry", label: "📊 الاستهلاك والمراقبة الحية" },
-            { id: "gemini", label: "🔑 مجمع المفاتيح (Gemini Pool)" },
-            { id: "playground", label: "🧪 ساحة التجربة واختبار النماذج" },
-            { id: "audit", label: "🛡️ سجلات التدقيق والأمان" },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as "telemetry" | "gemini" | "playground" | "audit")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === tab.id
-                  ? "bg-slate-900 text-white shadow-sm dark:bg-[#c5a880] dark:text-slate-950 font-black"
-                  : "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 dark:bg-slate-800/80 dark:hover:bg-slate-700/80 dark:text-slate-300 dark:border-slate-700/60"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Tab 1: Live Telemetry */}
-      {activeTab === "telemetry" && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-5">
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">الطلبات المعالجة اليوم</p>
-              <p className="text-2xl font-black text-slate-900 dark:text-white mt-1 font-mono">
-                {overview?.requestsToday.toLocaleString("ar-EG") || "—"}
-              </p>
-              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold">↑ معدل استجابة طبيعي</p>
-            </div>
-
-            <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-5">
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">سرعة الاستجابة المتوسطة</p>
-              <p className="text-2xl font-black text-slate-900 dark:text-[#c5a880] mt-1 font-mono">
-                {overview?.avgResponse || 420} <span className="text-sm font-normal text-slate-500 dark:text-slate-400">ms</span>
-              </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">زمن معالجة فائق السرعة</p>
-            </div>
-
-            <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-5">
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">نسبة الاستفادة من الكاش (Cache Hit)</p>
-              <p className="text-2xl font-black text-slate-900 dark:text-white mt-1 font-mono">
-                {overview?.cacheHit || 44.5}%
-              </p>
-              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1">توفير مباشر في تكلفة التوكنز</p>
-            </div>
-
-            <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-5">
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">التكلفة التقديرية اليوم</p>
-              <p className="text-2xl font-black text-slate-900 dark:text-white mt-1 font-mono">
-                ${overview?.todayCost?.toFixed(2) || "1.84"}
-              </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">من ميزانية الشهر المعتمدة</p>
-            </div>
+      </form>
+      {error && <Notice tone="bad" title={error} className="mt-4" />}
+      {result && (
+        <div className="adm-well p-4 mt-4 flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
+            {result.provider && <Badge tone="brand">{result.provider}</Badge>}
+            <Badge>{fmtNum(result.latency)} ms</Badge>
+            {result.tokens != null && <Badge>{fmtNum(result.tokens)} توكن</Badge>}
           </div>
-
-          <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-6 space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <span>⚡ المحركات والمزودين النشطين</span>
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 dark:bg-slate-950/60 dark:border-slate-800/80 flex items-center justify-between">
-                <div className="space-y-1">
-                  <p className="text-xs font-bold text-slate-900 dark:text-white">Google Gemini 2.0 Flash</p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">المحرك الأساسي للرد السريع وشرح الدروس وحل المسائل</p>
-                </div>
-                <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
-                  متصل (Primary)
-                </span>
-              </div>
-
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 dark:bg-slate-950/60 dark:border-slate-800/80 flex items-center justify-between">
-                <div className="space-y-1">
-                  <p className="text-xs font-bold text-slate-900 dark:text-white">DeepSeek V3 / Groq Llama 3</p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">محرك الدعم والاحتياط التلقائي في حال ضغط الكوتا</p>
-                </div>
-                <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/30">
-                  جاهز للتبديل (Standby)
-                </span>
-              </div>
-            </div>
-          </div>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{result.response}</p>
         </div>
       )}
+    </Panel>
+  );
+}
 
-      {/* Tab 2: Gemini Pool */}
-      {activeTab === "gemini" && (
-        <div className="space-y-6">
-          <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">مجمع مفاتيح Gemini (Key Rotation Pool)</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  تدوير تلقائي للمفاتيح لمنع حظر الطلبات وتوزيع الأحمال بالتساوي.
+function AuditTab() {
+  const { data, loading, error, reload } = useJson<{ logs: AuditRecord[] }>("/api/admin/ai/audit");
+  const logs = data?.logs ?? [];
+
+  return (
+    <Panel
+      padded={false}
+      title="سجل تغييرات إعدادات الذكاء الاصطناعي"
+      icon={<ScrollText size={16} />}
+      actions={<Button size="sm" onClick={() => void reload()} loading={loading} icon={<RefreshCw size={14} />}>تحديث</Button>}
+    >
+      {error ? (
+        <div className="p-4"><Notice tone="bad" title={error} /></div>
+      ) : !data ? (
+        <SkeletonRows rows={4} />
+      ) : logs.length === 0 ? (
+        <EmptyState icon={<ScrollText size={22} />} title="لا توجد تغييرات مسجلة" text="يُسجّل هنا كل تعديل على المزوّدين والميزانيات والإعدادات منذ آخر تشغيل للسيرفر." />
+      ) : (
+        <ul className="adm-list">
+          {logs.map((log) => (
+            <li key={log.id} className="adm-row" style={{ alignItems: "flex-start" }}>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm flex flex-wrap items-center gap-2">
+                  <Badge><span className="adm-mono">{log.action}</span></Badge>
+                  <b>{log.who}</b>
+                </p>
+                <p className="text-xs adm-muted mt-1">
+                  <span className="adm-mono">{log.previousValue || "—"}</span> ← <span className="adm-mono">{log.newValue || "—"}</span>
+                  {log.reason ? ` · ${log.reason}` : ""}
                 </p>
               </div>
-              <span className="text-xs font-bold text-slate-900 dark:text-[#c5a880]">
-                {keys.filter((k) => k.status === "active").length} من {keys.length} مفاتيح نشطة
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-medium">
-                    <th className="py-3 px-4">اسم المفتاح</th>
-                    <th className="py-3 px-4 text-center">الحالة</th>
-                    <th className="py-3 px-4 text-center">الطلبات اليوم</th>
-                    <th className="py-3 px-4 text-center">الحصة المتبقية</th>
-                    <th className="py-3 px-4 text-center">زمن الاستجابة</th>
-                    <th className="py-3 px-4 text-left">آخر استخدام</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60">
-                  {keys.map((k) => (
-                    <tr key={k.displayName} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-slate-200">{k.displayName}</td>
-                      <td className="py-3 px-4 text-center">
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                            k.status === "active"
-                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30"
-                              : "bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30"
-                          }`}
-                        >
-                          {k.status === "active" ? "نشط" : "تهدئة مؤقتة"}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-center font-mono text-slate-700 dark:text-slate-300">
-                        {k.requestsToday.toLocaleString("ar-EG")}
-                      </td>
-                      <td className="py-3 px-4 text-center font-mono text-slate-700 dark:text-slate-300">
-                        {k.remainingQuota.toLocaleString("ar-EG")}
-                      </td>
-                      <td className="py-3 px-4 text-center font-mono font-bold text-slate-900 dark:text-[#c5a880]">{k.latencyMs}ms</td>
-                      <td className="py-3 px-4 text-left font-mono text-slate-500 dark:text-slate-400">{k.lastUsed || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+              <span className="text-xs adm-muted whitespace-nowrap">{fmtDateTime(log.timestamp)}</span>
+            </li>
+          ))}
+        </ul>
       )}
-
-      {/* Tab 3: Playground */}
-      {activeTab === "playground" && (
-        <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-6 space-y-6">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">ساحة التجربة المباشرة (AI Playground)</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              اختبار جودة الإجابات وسرعة المحركات وتنسيق التعليمات البرمجية قبل تطبيقها على الطلاب.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">المحرك / المزود</label>
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-slate-900 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200 dark:focus:border-[#c5a880]"
-              >
-                <option value="gemini">Google Gemini 2.0 Flash (افتراضي)</option>
-                <option value="deepseek">DeepSeek V3 (استدلال متقدم)</option>
-                <option value="groq">Groq Llama 3 70B (سرعة فائقة)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">المادة الدراسية</label>
-              <select
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-slate-900 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200 dark:focus:border-[#c5a880]"
-              >
-                <option value="الفيزياء">الفيزياء</option>
-                <option value="الكيمياء">الكيمياء</option>
-                <option value="الرياضيات">الرياضيات</option>
-                <option value="الأحياء">الأحياء</option>
-                <option value="اللغة العربية">اللغة العربية</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">نص السؤال أو التعليمات (Prompt)</label>
-            <textarea
-              rows={4}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="مثال: اشرح قانون نيوتن الثاني باختصار مع مثال من واقع الحياة لطلاب الثانوية العامة..."
-              className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl p-4 text-xs outline-none focus:border-slate-900 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200 dark:focus:border-[#c5a880] resize-none"
-            />
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              onClick={handleTestPlayground}
-              disabled={playgroundLoading || !prompt.trim()}
-              className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-[#c5a880] dark:hover:bg-[#b8996e] dark:text-slate-950 font-bold text-xs transition-all disabled:opacity-50 cursor-pointer shadow-md"
-            >
-              {playgroundLoading ? "جارٍ المعالجة..." : "🚀 اختبار الاستجابة الآن"}
-            </button>
-          </div>
-
-          {playgroundOutput && (
-            <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 dark:bg-slate-950 dark:border-slate-800/90 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                <span className="text-xs font-bold text-slate-900 dark:text-[#c5a880]">نتيجة التجربة</span>
-                {playgroundMeta && (
-                  <div className="flex items-center gap-3 text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                    <span>⚡ {playgroundMeta.latency}ms</span>
-                    <span>🪙 {playgroundMeta.tokens} توكن</span>
-                    <span>💰 ${playgroundMeta.cost}</span>
-                  </div>
-                )}
-              </div>
-              <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-                {playgroundOutput}
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 4: Audit Logs */}
-      {activeTab === "audit" && (
-        <div className="bg-white border border-slate-200/90 shadow-sm dark:bg-slate-900/80 dark:border-slate-800/90 rounded-2xl p-6 space-y-4">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">سجلات التدقيق الأمني للذكاء الاصطناعي</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              توثيق لعمليات تبديل النماذج، تدوير المفاتيح، وتجاوز حدود الاستهلاك.
-            </p>
-          </div>
-
-          <div className="divide-y divide-slate-200 dark:divide-slate-800/60">
-            {auditLogs.map((log) => (
-              <div key={log.id} className="py-3 flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-mono">
-                    {log.action}
-                  </span>
-                  <p className="text-xs text-slate-800 dark:text-slate-200">{log.details}</p>
-                </div>
-                <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                  {log.timestamp}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+    </Panel>
   );
 }

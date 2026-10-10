@@ -129,10 +129,10 @@ export function PricingTab({
                   <button
                     key={f}
                     onClick={() => setFilter(f)}
-                    className="px-2.5 py-1.5 text-[11px] font-bold cursor-pointer transition-colors"
+                    className="px-2.5 py-1.5 text-xs font-bold cursor-pointer transition-colors"
                     style={{
                       background: filter === f ? "var(--brand)" : "var(--surface-2)",
-                      color: filter === f ? "#fff" : "var(--ink-2)",
+                      color: filter === f ? "var(--on-brand)" : "var(--ink-2)",
                     }}
                   >
                     {f === "all" ? "الكل" : f === "paid" ? "مدفوع" : "مجاني"}
@@ -153,18 +153,18 @@ export function PricingTab({
                 <div key={teacher.id}>
                   <div className="px-4 py-2 flex items-center justify-between gap-2" style={{ background: "var(--surface-2)" }}>
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-6 h-6 rounded-md text-white text-xs font-black flex items-center justify-center shrink-0" style={{ background: "var(--brand)" }}>
+                      <span className="w-6 h-6 rounded-md text-[var(--on-brand)] text-xs font-black flex items-center justify-center shrink-0" style={{ background: "var(--brand)" }}>
                         {teacher.name[0]}
                       </span>
                       <span className="text-xs font-black truncate" style={{ color: "var(--ink)" }}>{teacher.name}</span>
-                      <span className="text-[10px]" style={{ color: "var(--ink-3)" }}>{ar(courses.length)} كورس</span>
+                      <span className="text-xs" style={{ color: "var(--ink-3)" }}>{ar(courses.length)} كورس</span>
                     </div>
-                    <span className="text-[11px] font-bold tabular-nums" style={{ color: tone.green }}>{egp(groupRevenue)}</span>
+                    <span className="text-xs font-bold tabular-nums" style={{ color: tone.green }}>{egp(groupRevenue)}</span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="text-[10px]" style={{ color: "var(--ink-3)" }}>
+                        <tr className="text-xs" style={{ color: "var(--ink-3)" }}>
                           <th className="px-4 py-1.5 text-right font-medium">الكورس</th>
                           <th className="px-3 py-1.5 text-center font-medium">السعر</th>
                           <th className="px-3 py-1.5 text-right font-medium min-w-[220px]">الطلاب — من أين جاء الدفع</th>
@@ -216,7 +216,7 @@ function TeacherPlanCard({ teacher: t }: { teacher: OverviewTeacher }) {
           </div>
         </div>
         <div className="text-left shrink-0">
-          <div className="text-[10px]" style={{ color: "var(--ink-3)" }}>حصة المنصة</div>
+          <div className="text-xs" style={{ color: "var(--ink-3)" }}>حصة المنصة</div>
           <div className="text-sm font-black tabular-nums" style={{ color: tone.sky }}>{ar(t.platformPercentage ?? 25)}٪</div>
         </div>
       </div>
@@ -231,21 +231,21 @@ function TeacherPlanCard({ teacher: t }: { teacher: OverviewTeacher }) {
           const b = bookingsByPlan[k];
           return (
             <div key={k} className="rounded-lg p-2.5 flex flex-col gap-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <div className="text-[10px] font-bold" style={{ color: "var(--ink-3)" }}>{PLAN_LABEL[k]}</div>
+              <div className="text-xs font-bold" style={{ color: "var(--ink-3)" }}>{PLAN_LABEL[k]}</div>
               <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className="text-base font-black tabular-nums leading-none" style={{ color: tone.gold, fontFamily: "var(--font-head)" }}>
                   {ar(after ?? base)}
                 </span>
-                <span className="text-[10px]" style={{ color: "var(--ink-3)" }}>ج.م</span>
+                <span className="text-xs" style={{ color: "var(--ink-3)" }}>ج.م</span>
                 {after !== null && (
-                  <span className="text-[10px] line-through tabular-nums" style={{ color: "var(--ink-3)" }}>{ar(base)}</span>
+                  <span className="text-xs line-through tabular-nums" style={{ color: "var(--ink-3)" }}>{ar(base)}</span>
                 )}
               </div>
               {disc > 0 && <Pill color="amber" className="self-start">خصم {ar(disc)}٪</Pill>}
               {p?.enableLanguagesTrack && lang > 0 && (
-                <div className="text-[10px]" style={{ color: "var(--ink-2)" }}>لغات: +{ar(lang)}</div>
+                <div className="text-xs" style={{ color: "var(--ink-2)" }}>لغات: +{ar(lang)}</div>
               )}
-              <div className="text-[10px] mt-auto pt-1 tabular-nums" style={{ color: b?.count ? tone.green : "var(--ink-3)" }}>
+              <div className="text-xs mt-auto pt-1 tabular-nums" style={{ color: b?.count ? tone.green : "var(--ink-3)" }}>
                 {b?.count ? `${ar(b.count)} حجز · ${egp(b.revenue)}` : "لا حجوزات"}
               </div>
             </div>
@@ -256,10 +256,10 @@ function TeacherPlanCard({ teacher: t }: { teacher: OverviewTeacher }) {
       {/* Stage overrides */}
       {p && p.stages.length > 0 && (
         <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-          <div className="px-2.5 py-1.5 text-[10px] font-bold" style={{ background: "var(--surface)", color: "var(--ink-2)" }}>
+          <div className="px-2.5 py-1.5 text-xs font-bold" style={{ background: "var(--surface)", color: "var(--ink-2)" }}>
             أسعار خاصة بالمرحلة
           </div>
-          <table className="w-full text-[11px]">
+          <table className="w-full text-xs">
             <tbody className="divide-y divide-[var(--border)]">
               {p.stages.map((s) => (
                 <tr key={s.key}>
@@ -301,7 +301,7 @@ function CourseRow({
     <tr className="hover:bg-[var(--surface-2)]/50 transition-colors">
       <td className="px-4 py-2.5 max-w-[260px]">
         <div className="font-bold truncate" style={{ color: "var(--ink)" }} title={c.title}>{c.title}</div>
-        <div className="text-[10px] mt-0.5 flex items-center gap-1.5" style={{ color: "var(--ink-3)" }}>
+        <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: "var(--ink-3)" }}>
           <span>{c.subject}</span>
           {isPaid ? <Pill color="gold">مدفوع</Pill> : <Pill color="slate">مجاني</Pill>}
         </div>
@@ -311,13 +311,13 @@ function CourseRow({
           <div className="flex flex-col items-center">
             <span className="font-black tabular-nums" style={{ color: tone.gold }}>{egp(after ?? c.price)}</span>
             {after !== null && (
-              <span className="text-[10px]" style={{ color: "var(--ink-3)" }}>
+              <span className="text-xs" style={{ color: "var(--ink-3)" }}>
                 <span className="line-through">{ar(c.price)}</span> · خصم {ar(c.discountPercent ?? 0)}٪
               </span>
             )}
           </div>
         ) : (
-          <span className="text-[11px]" style={{ color: "var(--ink-3)" }}>—</span>
+          <span className="text-xs" style={{ color: "var(--ink-3)" }}>—</span>
         )}
       </td>
       <td className="px-3 py-2.5">
@@ -328,10 +328,10 @@ function CourseRow({
           title="عرض وإدارة طلاب الكورس"
         >
           <div className="flex items-center justify-between mb-1">
-            <span className="inline-flex items-center gap-1 text-[11px] font-black tabular-nums" style={{ color: "var(--ink)" }}>
+            <span className="inline-flex items-center gap-1 text-xs font-black tabular-nums" style={{ color: "var(--ink)" }}>
               <Users size={11} /> {ar(c.enrolledStudents)} طالب
             </span>
-            <span className="text-[10px] underline opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: tone.brand }}>إدارة</span>
+            <span className="text-xs underline opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: tone.brand }}>إدارة</span>
           </div>
           <StackedBar
             height={6}
@@ -343,14 +343,14 @@ function CourseRow({
           />
         </button>
       </td>
-      <td className="px-3 py-2.5 text-center text-[11px] tabular-nums whitespace-nowrap" style={{ color: "var(--ink-2)" }} title="أكواد مستخدمة / إجمالي الأكواد">
+      <td className="px-3 py-2.5 text-center text-xs tabular-nums whitespace-nowrap" style={{ color: "var(--ink-2)" }} title="أكواد مستخدمة / إجمالي الأكواد">
         {ar(c.usedCodes ?? 0)} / {ar(c.totalCodes ?? 0)}
       </td>
       <td className="px-3 py-2.5 text-center whitespace-nowrap">
         {c.revenue > 0 ? (
           <span className="font-black tabular-nums" style={{ color: tone.green }}>{egp(c.revenue)}</span>
         ) : (
-          <span className="text-[11px]" style={{ color: "var(--ink-3)" }}>—</span>
+          <span className="text-xs" style={{ color: "var(--ink-3)" }}>—</span>
         )}
       </td>
     </tr>

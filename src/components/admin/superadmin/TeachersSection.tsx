@@ -1,10 +1,25 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, DoorOpen, GraduationCap, KeyRound, Layers, Pencil, RefreshCw, Share2, Trash2, UserPlus } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { ResetPasswordModal } from "./ResetPasswordModal";
 import { ConfirmActionModal } from "./ConfirmActionModal";
 import { hasPermission } from "@/lib/rbac";
-import { BananaKeySvg, AdminActionPasswordBar } from "@/components/admin/AdminActionPasswordBar";
+import {
+  Button,
+  EmptyState,
+  IconButton,
+  Notice,
+  PageHeader,
+  Panel,
+  SearchInput,
+  SkeletonRows,
+  Switch,
+  fmtDate,
+  fmtNum,
+  readJson,
+} from "@/components/admin/ui/kit";
+import { normalizeSearch } from "@/components/admin/admin-nav";
 
 interface CourseItem {
   id: string;
@@ -33,50 +48,47 @@ export function TeachersSection({
   const { success: toastSuccess, error: toastError } = useToast();
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [query, setQuery] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null);
   const [editTarget, setEditTarget] = useState<{ id: string; name: string } | null>(null);
   const [editName, setEditName] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; courses: number } | null>(null);
   const [togglingPromo, setTogglingPromo] = useState<string | null>(null);
 
-  const refreshTeachers = async () => {
+  const isSuper = userRole === "superadmin";
+  const canEditName = hasPermission(userRole, "edit_teacher_name");
+  const canResetPass = hasPermission(userRole, "reset_teacher_password");
+  const canDelete = hasPermission(userRole, "delete_teacher");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
     try {
       const res = await fetch(`/api/admin/teachers?_t=${Date.now()}`, { credentials: "include" });
+      const data = await readJson<{ teachers?: Teacher[]; error?: string }>(res);
       if (!res.ok) {
-        toastError("فشل تحميل قائمة المعلمين");
+        setLoadError(data?.error || "تعذر تحميل قائمة المعلمين");
         return;
       }
-      const data = await res.json();
-      setTeachers(data?.teachers || []);
+      setTeachers(data?.teachers ?? []);
     } catch {
-      toastError("تعذر الاتصال بالخادم");
+      setLoadError("تعذر الاتصال بالخادم");
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    let isMounted = true;
-    const loadTeachers = async () => {
-      try {
-        const res = await fetch(`/api/admin/teachers?_t=${Date.now()}`, { credentials: "include" });
-        if (!isMounted) return;
-        if (!res.ok) {
-          toastError("فشل تحميل قائمة المعلمين");
-          return;
-        }
-        const data = await res.json();
-        if (isMounted) setTeachers(data?.teachers || []);
-      } catch {
-        if (isMounted) toastError("تعذر الاتصال بالخادم");
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-    void loadTeachers();
-    return () => {
-      isMounted = false;
-    };
-  }, [toastError]);
+    void load();
+  }, [load]);
+
+  const rows = useMemo(() => {
+    const q = normalizeSearch(query);
+    if (!q) return teachers;
+    return teachers.filter((t) => normalizeSearch(`${t.name} ${t.email}`).includes(q));
+  }, [teachers, query]);
 
   const togglePromoProgram = async (t: Teacher) => {
     setTogglingPromo(t.id);
@@ -88,17 +100,12 @@ export function TeachersSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ promoProgramEnabled: newVal }),
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setTeachers((prev) =>
-          prev.map((item) => (item.id === t.id ? { ...item, promoProgramEnabled: newVal } : item))
-        );
-        toastSuccess(`تم ${newVal ? "تفعيل" : "تعطيل"} برنامج الإحالة للمعلم "${t.name}"`);
-      } else {
-        toastError(data.error || "تعذر تغيير حالة البرنامج");
-      }
-    } catch {
-      toastError("تعذر الاتصال بالخادم");
+      const data = await readJson<{ success?: boolean; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر تغيير حالة البرنامج");
+      setTeachers((prev) => prev.map((item) => (item.id === t.id ? { ...item, promoProgramEnabled: newVal } : item)));
+      toastSuccess(`برنامج الإحالة ${newVal ? "مفعّل" : "متوقف"} للمعلم "${t.name}"`);
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "تعذر الاتصال بالخادم");
     } finally {
       setTogglingPromo(null);
     }
@@ -106,19 +113,20 @@ export function TeachersSection({
 
   const handleEditName = async (password: string) => {
     if (!editTarget) return;
+    const name = editName.trim();
+    if (!name) throw new Error("اكتب الاسم الجديد");
     const res = await fetch(`/api/admin/teachers/${editTarget.id}`, {
       method: "PATCH",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actionPassword: password, name: editName }),
+      body: JSON.stringify({ actionPassword: password, name }),
     });
-    const json = (await res.json()) as { error?: string; teacher?: { id: string; name: string } };
-    if (!res.ok) throw new Error(json.error ?? "تعذر تعديل الاسم");
-    setTeachers((prev) =>
-      prev.map((t) => (t.id === editTarget.id ? { ...t, name: json.teacher?.name ?? editName } : t))
-    );
-    toastSuccess(`تم تعديل اسم المعلم بنجاح`);
+    const json = await readJson<{ error?: string; teacher?: { id: string; name: string } }>(res);
+    if (!res.ok) throw new Error(json?.error ?? "تعذر تعديل الاسم");
+    setTeachers((prev) => prev.map((t) => (t.id === editTarget.id ? { ...t, name: json?.teacher?.name ?? name } : t)));
+    toastSuccess("تم تعديل اسم المعلم");
     setEditTarget(null);
+    onChanged?.();
   };
 
   const handleDelete = async (password: string) => {
@@ -129,205 +137,179 @@ export function TeachersSection({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ actionPassword: password }),
     });
-    const json = (await res.json()) as { error?: string };
-    if (!res.ok) throw new Error(json.error ?? "تعذر حذف حساب المعلم");
+    const json = await readJson<{ error?: string }>(res);
+    if (!res.ok) throw new Error(json?.error ?? "تعذر حذف حساب المعلم");
     setTeachers((prev) => prev.filter((t) => t.id !== deleteTarget.id));
-    toastSuccess(`تم حذف حساب المعلم بنجاح`);
+    toastSuccess(`حُذف حساب "${deleteTarget.name}" وكورساته نهائياً`);
     setDeleteTarget(null);
     onChanged?.();
   };
 
-  if (loading) {
-    return (
-      <div className="p-16 text-center text-slate-500" dir="rtl">
-        <div className="w-6 h-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-        <span className="text-xs font-bold">جارٍ تحميل قائمة المعلمين...</span>
-      </div>
-    );
-  }
-
   return (
-    <div dir="rtl" className="space-y-5">
-      {/* Top Banner with Custom Banana Key Password Manager */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <BananaKeySvg className="w-8 h-8 shrink-0" />
-          <div>
-            <h3 className="text-xs font-black text-slate-900 dark:text-white">مفتاح إجراءات المشرف للأمان</h3>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              أدخل كلمة مرور المشرف مرة واحدة لتعديل الحسابات والحذف دون تكرار.
-            </p>
-          </div>
-        </div>
-        <AdminActionPasswordBar />
-      </div>
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="المعلمون"
+        description="حسابات المعلمين وكورساتهم. ادخل لوحة أي معلم، فعّل برنامج الإحالة، أو غيّر الاسم وكلمة المرور."
+        actions={
+          <>
+            <Button onClick={() => void load()} loading={loading} icon={<RefreshCw size={15} />}>
+              تحديث
+            </Button>
+          </>
+        }
+      />
 
-      {/* Teachers List Card */}
-      <div className="bg-white dark:bg-slate-900/90 rounded-2xl border border-slate-200/90 dark:border-slate-800/90 shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/70 dark:bg-slate-950/40">
-          <h3 className="text-slate-900 dark:text-white font-black text-sm">
-            المعلمون المسجلون ({teachers.length})
-          </h3>
-          <button
-            type="button"
-            onClick={() => void refreshTeachers()}
-            className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-          >
-            ↻ تحديث
-          </button>
-        </div>
-
-        {teachers.length === 0 ? (
-          <div className="p-12 text-center text-slate-500">
-            <div className="text-4xl mb-2">👨‍🏫</div>
-            <p className="font-bold text-sm text-slate-700 dark:text-slate-300">لا يوجد مدرسون حالياً</p>
+      <Panel
+        padded={false}
+        title={loading && teachers.length === 0 ? "جارٍ التحميل" : `${fmtNum(teachers.length)} معلم`}
+        actions={<SearchInput value={query} onChange={setQuery} placeholder="ابحث بالاسم أو البريد" inputSize="sm" className="w-64 max-w-full" />}
+      >
+        {loadError ? (
+          <div className="p-4">
+            <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void load()}>إعادة المحاولة</Button>} />
           </div>
+        ) : loading && teachers.length === 0 ? (
+          <SkeletonRows rows={5} h={56} />
+        ) : rows.length === 0 ? (
+          <EmptyState
+            icon={<GraduationCap size={22} />}
+            title={teachers.length === 0 ? "لا يوجد معلمون بعد" : "لا نتائج مطابقة"}
+            text={teachers.length === 0 ? "أضف أول معلم من «إضافة معلم»." : "جرّب جزءاً من الاسم أو البريد."}
+          />
         ) : (
-          <div className="divide-y divide-slate-200 dark:divide-slate-800">
-            {teachers.map((t) => (
-              <div key={t.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                {/* Teacher row */}
-                <div className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 bg-slate-900 dark:bg-slate-800 text-white rounded-xl flex items-center justify-center font-bold text-sm shrink-0 border border-slate-700">
-                      {t.name[0]}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-bold text-slate-900 dark:text-white truncate text-sm">{t.name}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate font-mono">{t.email}</p>
-                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-                        {t._count.courses} كورس · انضم {new Date(t.createdAt).toLocaleDateString("ar-EG")}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    {/* Enter Teacher Panel Button */}
-                    {userRole === "superadmin" && (
-                    <form action="/adminpanel/enter-teacher" method="post">
-                      <input type="hidden" name="teacherId" value={t.id} />
-                      <button
-                        type="submit"
-                        className="px-3.5 py-1.5 text-xs bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/40 dark:hover:bg-sky-900/50 dark:text-sky-300 dark:border-sky-800/60 rounded-xl transition-all font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
-                        title={`دخول لوحة تحكم المعلم (${t.name})`}
-                      >
-                        <span>🚪</span>
-                        <span>لوحة المعلم</span>
-                      </button>
-                    </form>
-                    )}
-
-                    {userRole === "superadmin" && (
-                      <button
-                        type="button"
-                        onClick={() => togglePromoProgram(t)}
-                        disabled={togglingPromo === t.id}
-                        className={`px-3 py-1.5 text-xs rounded-xl transition-all border font-bold flex items-center gap-1 cursor-pointer ${
-                          t.promoProgramEnabled
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60"
-                            : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700"
-                        }`}
-                      >
-                        <span>{t.promoProgramEnabled ? "✅ مفعّل" : "❌ معطّل"}</span>
-                        <span>الإحالة</span>
-                      </button>
-                    )}
-
-                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "edit_teacher_name") && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditTarget({ id: t.id, name: t.name });
-                          setEditName(t.name);
-                        }}
-                        className="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 dark:border-slate-700 rounded-xl transition-all font-medium cursor-pointer"
-                      >
-                        تعديل الاسم
-                      </button>
-                    )}
-
-                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "reset_teacher_password") && (
-                      <button
-                        type="button"
-                        onClick={() => setResetTarget({ id: t.id, name: t.name })}
-                        className="px-3 py-1.5 text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 dark:text-amber-300 dark:border-amber-800/50 rounded-xl transition-all font-medium cursor-pointer"
-                      >
-                        كلمة المرور
-                      </button>
-                    )}
-
-                    {hasPermission(userRole as "superadmin" | "admin" | "staff", "delete_teacher") && (
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget({ id: t.id, name: t.name })}
-                        className="px-3 py-1.5 text-xs bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 dark:text-rose-300 dark:border-rose-800/50 rounded-xl transition-all font-medium cursor-pointer"
-                      >
-                        حذف
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}
-                      className="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 dark:border-slate-700 rounded-xl transition-all font-medium cursor-pointer"
-                    >
-                      {expandedId === t.id ? "إخفاء الكورسات" : `الكورسات (${t._count.courses})`}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Expanded courses */}
-                {expandedId === t.id && (
-                  <div className="px-6 pb-4 pt-1 bg-slate-50/50 dark:bg-slate-950/30">
-                    {t.courses.length === 0 ? (
-                      <p className="text-xs text-slate-500 py-2">لا توجد كورسات لهذا المعلم</p>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                        {t.courses.map((c) => (
-                          <div
-                            key={c.id}
-                            className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-xs shadow-xs"
-                          >
-                            <p className="font-bold text-slate-900 dark:text-white truncate">{c.title}</p>
-                            <p className="text-slate-500 text-[11px] mt-0.5">{c.subject}</p>
-                          </div>
-                        ))}
+          <ul className="adm-list">
+            {rows.map((t) => {
+              const expanded = expandedId === t.id;
+              return (
+                <li key={t.id}>
+                  <div className="adm-row">
+                    <div className="flex items-center gap-3 min-w-0 flex-1 basis-64">
+                      <span className="adm-avatar" aria-hidden>{t.name?.[0] ?? "؟"}</span>
+                      <div className="min-w-0">
+                        <p className="font-bold text-sm truncate">{t.name}</p>
+                        <p className="text-xs adm-muted truncate">
+                          <span className="adm-mono">{t.email}</span> · انضم {fmtDate(t.createdAt)}
+                        </p>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+                    </div>
 
-      {/* Modals */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {isSuper && (
+                        <label className="inline-flex items-center gap-2 text-xs font-semibold me-2" style={{ color: "var(--ink-2)" }}>
+                          <Share2 size={14} aria-hidden />
+                          الإحالة
+                          <Switch
+                            checked={!!t.promoProgramEnabled}
+                            onChange={() => void togglePromoProgram(t)}
+                            disabled={togglingPromo === t.id}
+                            label={`برنامج الإحالة للمعلم ${t.name}`}
+                          />
+                        </label>
+                      )}
+
+                      {isSuper && (
+                        <form action="/adminpanel/enter-teacher" method="post">
+                          <input type="hidden" name="teacherId" value={t.id} />
+                          <Button type="submit" size="sm" variant="primary" icon={<DoorOpen size={14} />} title={`دخول لوحة ${t.name}`}>
+                            لوحة المعلم
+                          </Button>
+                        </form>
+                      )}
+                      {isSuper && (
+                        <a
+                          href={`/adminpanel/superadmin?section=teacher-packages&teacherId=${t.id}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                          style={{ background: "rgba(16, 185, 129, 0.12)", color: "#10b981", border: "1px solid rgba(16, 185, 129, 0.25)" }}
+                          title={`إدارة باقات وكورسات ${t.name} ومقارنة الفرق البياني`}
+                        >
+                          <Layers size={14} />
+                          <span>باقات وكورسات ومقارنة 📊</span>
+                        </a>
+                      )}
+                      {canEditName && (
+                        <IconButton
+                          label="تعديل الاسم"
+                          size="sm"
+                          onClick={() => {
+                            setEditTarget({ id: t.id, name: t.name });
+                            setEditName(t.name);
+                          }}
+                        >
+                          <Pencil size={15} />
+                        </IconButton>
+                      )}
+                      {canResetPass && (
+                        <IconButton label="تغيير كلمة المرور" size="sm" onClick={() => setResetTarget({ id: t.id, name: t.name })}>
+                          <KeyRound size={15} />
+                        </IconButton>
+                      )}
+                      {canDelete && (
+                        <IconButton
+                          label="حذف نهائي"
+                          size="sm"
+                          onClick={() => setDeleteTarget({ id: t.id, name: t.name, courses: t._count.courses })}
+                          style={{ color: "var(--danger)" }}
+                        >
+                          <Trash2 size={15} />
+                        </IconButton>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setExpandedId(expanded ? null : t.id)}
+                        aria-expanded={expanded}
+                      >
+                        {fmtNum(t._count.courses)} كورس
+                        <ChevronDown size={14} style={{ transform: expanded ? "rotate(180deg)" : undefined, transition: "transform 180ms" }} aria-hidden />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {expanded && (
+                    <div className="px-4 pb-4 sm:px-[18px]">
+                      {t.courses.length === 0 ? (
+                        <p className="adm-hint">لا توجد كورسات لهذا المعلم.</p>
+                      ) : (
+                        <ul className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}>
+                          {t.courses.map((c) => (
+                            <li key={c.id} className="adm-well px-3 py-2.5">
+                              <p className="text-sm font-semibold truncate" title={c.title}>{c.title}</p>
+                              <p className="text-xs adm-muted">{c.subject}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Panel>
+
+      {!loading && teachers.length > 0 && (
+        <p className="adm-hint flex items-center gap-1.5">
+          <UserPlus size={14} aria-hidden /> لإضافة معلم جديد استخدم «إضافة معلم» من القائمة.
+        </p>
+      )}
+
       {resetTarget && (
         <ResetPasswordModal
           teacherId={resetTarget.id}
           teacherName={resetTarget.name}
           onClose={() => setResetTarget(null)}
-          onSuccess={() => {
-            setResetTarget(null);
-            refreshTeachers();
-          }}
+          onSuccess={() => setResetTarget(null)}
         />
       )}
 
       {editTarget && (
         <ConfirmActionModal
-          title={`تعديل اسم المعلم: ${editTarget.name}`}
-          description="أدخل الاسم الجديد وكلمة مرور المشرف لتأكيد التعديل."
-          actionLabel="تعديل الاسم"
+          title="تعديل اسم المعلم"
+          description={`الاسم الحالي: ${editTarget.name}`}
+          actionLabel="حفظ الاسم"
           variant="warning"
-          extraField={{
-            label: "الاسم الجديد",
-            placeholder: "أدخل اسم المعلم...",
-            value: editName,
-            onChange: setEditName,
-            type: "text",
-          }}
+          extraField={{ label: "الاسم الجديد", placeholder: "اسم المعلم", value: editName, onChange: setEditName, type: "text" }}
           onConfirm={handleEditName}
           onClose={() => setEditTarget(null)}
         />
@@ -335,9 +317,9 @@ export function TeachersSection({
 
       {deleteTarget && (
         <ConfirmActionModal
-          title={`حذف حساب المعلم: ${deleteTarget.name}`}
-          description={`هل أنت متأكد من حذف حساب "${deleteTarget.name}"؟ سيتم نقل الحساب إلى سلة المحذوفات.`}
-          actionLabel="تأكيد الحذف"
+          title="حذف المعلم نهائياً"
+          description={`سيُحذف حساب "${deleteTarget.name}"${deleteTarget.courses > 0 ? ` مع كل كورساته (${fmtNum(deleteTarget.courses)} كورس)` : ""} نهائياً من قاعدة البيانات. لا يمكن التراجع، ولن يظهر في «المعلمون المحذوفون».`}
+          actionLabel="حذف نهائياً"
           variant="danger"
           onConfirm={handleDelete}
           onClose={() => setDeleteTarget(null)}

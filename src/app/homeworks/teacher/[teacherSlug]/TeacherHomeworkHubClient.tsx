@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useToast } from "@/components/ui/Toast";
 import { homeworkUploadNetworkMessage, uploadHomeworkFile } from "@/lib/student-homework-upload";
+import { WatermarkedText } from "@/components/content/WatermarkedText";
+import { studentHomeworkNotice } from "@/lib/homework-student-status";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -26,7 +28,8 @@ type HWSubmission = {
   fileUrl?: string | null;
   fileName?: string | null;
   allowRetake?: boolean;
-  review?: { verdict?: string | null; note?: string | null } | null;
+  completedAt?: string | null;
+  review?: { verdict?: string | null; note?: string | null; reviewedAt?: string | null } | null;
 };
 
 export type HomeworkItem = {
@@ -50,9 +53,18 @@ export type HomeworkItem = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function statusBadge(sub?: HWSubmission | null) {
+function statusBadge(sub?: HWSubmission | null, type?: string) {
   if (!sub) return { label: "لم يُرسل", color: "bg-slate-500/15 text-slate-400" };
-  if (sub.allowRetake) return { label: "🔓 مسموح الإعادة", color: "bg-sky-500/15 text-sky-400" };
+  const notice = studentHomeworkNotice({
+    type,
+    status: sub.status,
+    allowRetake: sub.allowRetake,
+    completedAt: sub.completedAt,
+    review: sub.review,
+  });
+  if (notice.tone === "failed") return { label: `❌ ${notice.badge}`, color: "bg-red-500/15 text-red-400" };
+  if (notice.tone === "retake") return { label: `🔓 ${notice.badge}`, color: "bg-sky-500/15 text-sky-400" };
+  if (notice.tone === "passed") return { label: `✅ ${notice.badge}`, color: "bg-emerald-500/15 text-emerald-400" };
   switch (sub.status) {
     case "passed":          return { label: "✅ ناجح",       color: "bg-emerald-500/15 text-emerald-400" };
     case "failed":          return { label: "❌ راسب",        color: "bg-red-500/15 text-red-400" };
@@ -148,13 +160,28 @@ function TerminalForm({ hw, onSuccess }: { hw: HomeworkItem; onSuccess: (sub: HW
 
 // ─── ExamForm ────────────────────────────────────────────────────────────────
 
+function optionOrderKey(questions: HWQuestion[]): string {
+  return questions
+    .map((q) => [q.id, q.optionA, q.optionB, q.optionC, q.optionD].join("\u0001"))
+    .join("\u0002");
+}
+
 function ExamForm({ hw, onSuccess }: { hw: HomeworkItem; onSuccess: (sub: HWSubmission) => void }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState<HWSubmission | null>(null);
   const { error: toastError } = useToast();
+  const optionOrderRef = useRef<string | null>(null);
 
   const questions = hw.questions ?? [];
+  const orderKey = optionOrderKey(questions);
+  useEffect(() => {
+    if (optionOrderRef.current && optionOrderRef.current !== orderKey) {
+      setAnswers({});
+      toastError("ترتيب الاختيارات اتغير. اختار الإجابات من جديد قبل التسليم.");
+    }
+    optionOrderRef.current = orderKey;
+  }, [orderKey, toastError]);
   const allAnswered = questions.every(q => answers[q.id]);
 
   const submit = async () => {
@@ -184,10 +211,10 @@ function ExamForm({ hw, onSuccess }: { hw: HomeworkItem; onSuccess: (sub: HWSubm
 
   return (
     <div className="space-y-5 mt-4">
-      {hw.description && <p className="text-sm text-slate-400">{hw.description}</p>}
+      {hw.description && <p className="text-sm text-slate-400"><WatermarkedText text={hw.description} /></p>}
       {questions.map((q, qi) => (
         <div key={q.id} className="rounded-xl border border-slate-700 p-4 space-y-3">
-          <p className="text-sm font-semibold text-white">{qi + 1}. {q.question}</p>
+          <p className="text-sm font-semibold text-white">{qi + 1}. <WatermarkedText text={q.question} /></p>
           {q.imageUrl && <img src={q.imageUrl} alt="" className="rounded-lg max-h-60 object-contain" />}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {(["A","B","C","D"] as const)
@@ -198,7 +225,7 @@ function ExamForm({ hw, onSuccess }: { hw: HomeworkItem; onSuccess: (sub: HWSubm
                 onClick={() => setAnswers(a => ({ ...a, [q.id]: opt }))}
                 className={`text-right px-3 py-2.5 rounded-xl text-sm border transition-colors ${answers[q.id] === opt ? "bg-sky-600 border-sky-500 text-white font-bold" : "border-slate-700 text-slate-300 hover:border-sky-600"}`}
               >
-                ({opt}) {q[`option${opt}` as "optionA" | "optionB" | "optionC" | "optionD"]}
+                ({opt}) <WatermarkedText text={q[`option${opt}` as "optionA" | "optionB" | "optionC" | "optionD"] || ""} />
               </button>
             ))}
           </div>
@@ -314,7 +341,16 @@ function HomeworkCard({ hw: initHw }: { hw: HomeworkItem }) {
   const [hw, setHw] = useState(initHw);
   const [open, setOpen] = useState(false);
 
-  const badge = statusBadge(hw.mySubmission);
+  const badge = statusBadge(hw.mySubmission, hw.type);
+  const notice = hw.mySubmission
+    ? studentHomeworkNotice({
+        type: hw.type,
+        status: hw.mySubmission.status,
+        allowRetake: hw.mySubmission.allowRetake,
+        completedAt: hw.mySubmission.completedAt,
+        review: hw.mySubmission.review,
+      })
+    : null;
   const isDone =
     ["passed", "failed", "pending", "review_requested"].includes(hw.mySubmission?.status ?? "") &&
     !hw.mySubmission?.allowRetake;
@@ -349,7 +385,13 @@ function HomeworkCard({ hw: initHw }: { hw: HomeworkItem }) {
 
       {open && (
         <div className="border-t border-slate-700/60 px-5 pb-5">
-          {hw.mySubmission?.allowRetake && !isDone && (
+          {notice?.tone === "failed" && (
+            <div className="mt-4 rounded-xl p-4 border border-rose-500/40 bg-rose-950/30 space-y-1">
+              <p className="text-sm font-bold text-rose-200">❌ {notice.title}</p>
+              {notice.detail && <p className="text-xs text-rose-100">{notice.detail}</p>}
+            </div>
+          )}
+          {hw.mySubmission?.allowRetake && !isDone && notice?.tone !== "failed" && (
             <div className="mt-4 rounded-xl p-4 border border-sky-500/40 bg-sky-950/30 space-y-1">
               <p className="text-sm font-bold text-sky-200">🔓 المعلم فتح لك محاولة تانية — سلّم نسخة جديدة</p>
               {hw.mySubmission.review?.note && (

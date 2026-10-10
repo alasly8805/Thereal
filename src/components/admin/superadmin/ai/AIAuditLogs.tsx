@@ -49,16 +49,16 @@ export default function AIAuditLogs() {
                 <div>
                   <span className="font-bold text-[var(--brand)] ml-2">{l.who}</span>
                   <span className="font-semibold text-[var(--ink)] ml-2">{l.action}</span>
-                  {l.reason && <span className="text-[var(--ink-2)] text-[11px]">({l.reason})</span>}
-                  <div className="text-[11px] font-mono text-[var(--ink-3)] mt-0.5 dir-ltr text-right">
+                  {l.reason && <span className="text-[var(--ink-2)] text-xs">({l.reason})</span>}
+                  <div className="text-xs font-mono text-[var(--ink-3)] mt-0.5 dir-ltr text-right">
                     prev: {l.previousValue} → new: {l.newValue}
                   </div>
                 </div>
                 <div className="text-left shrink-0">
-                  <span className="font-mono text-[var(--ink-3)] text-[11px] block">
+                  <span className="font-mono text-[var(--ink-3)] text-xs block">
                     {new Date(l.timestamp).toLocaleString("ar-EG")}
                   </span>
-                  <span className="font-mono text-[var(--ink-3)] text-[10px] block">{l.ip}</span>
+                  <span className="font-mono text-[var(--ink-3)] text-xs block">{l.ip}</span>
                 </div>
               </div>
             ))}

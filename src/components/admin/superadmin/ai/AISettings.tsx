@@ -111,7 +111,7 @@ export default function AISettings() {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[var(--brand)] text-white hover:opacity-90 transition-opacity cursor-pointer border-none disabled:opacity-60"
+          className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[var(--brand)] text-[var(--on-brand)] hover:opacity-90 transition-opacity cursor-pointer border-none disabled:opacity-60"
         >
           {saving ? "جارٍ الحفظ..." : "حفظ التغييرات"}
         </button>

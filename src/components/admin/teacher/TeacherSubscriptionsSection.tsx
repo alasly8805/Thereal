@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconPlus, IconUsers, IconBook } from "@/components/admin/AdminIcons";
 import { StudentPhoneActions } from "@/components/admin/StudentPhoneActions";
 import { useToast } from "@/components/ui/Toast";
+import { phonesMatch } from "@/lib/phone-match";
 import type { RosterCourse, RosterStudent, RosterStudentKind, TeacherRoster } from "@/lib/teacher-roster-types";
 
 type Tab = "all" | "booking" | "course_purchase";
@@ -93,7 +94,9 @@ export function TeacherSubscriptionsSection() {
 
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [studentInput, setStudentInput] = useState("");
+  const [selectedCourseId, setSelectedCourseId] = useState("");
   const [selectedPlanType, setSelectedPlanType] = useState("monthly");
+  const [selectedMonthNumber, setSelectedMonthNumber] = useState(1);
   const [selectedLanguageTrack, setSelectedLanguageTrack] = useState("arabic");
   const [adding, setAdding] = useState(false);
 
@@ -131,15 +134,18 @@ export function TeacherSubscriptionsSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           studentEmailOrPhone: studentInput.trim(),
+          courseId: selectedCourseId || undefined,
           planType: selectedPlanType,
           languageTrack: selectedLanguageTrack,
+          monthNumber: selectedPlanType === "monthly" ? selectedMonthNumber : undefined,
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        toastSuccess("تم إضافة الطالب إلى حجوزات الباقة");
+        toastSuccess(selectedCourseId ? "تم تسجيل الطالب في الكورس بنجاح" : "تم إضافة الطالب بنجاح");
         setAddModalOpen(false);
         setStudentInput("");
+        setSelectedCourseId("");
         void loadRoster();
       } else {
         toastError(data.error || "تعذر إضافة الطالب");
@@ -148,23 +154,6 @@ export function TeacherSubscriptionsSection() {
       toastError("حدث خطأ في الشبكة");
     } finally {
       setAdding(false);
-    }
-  };
-
-  const handleDeleteSubscription = async (student: RosterStudent) => {
-    if (!student.subscriptionId) return;
-    if (!window.confirm(`هل أنت متأكد من إلغاء اشتراك ${student.name}؟`)) return;
-    try {
-      const res = await fetch(`/api/teacher/subscriptions?id=${student.subscriptionId}`, { method: "DELETE" });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        toastSuccess("تم حذف الاشتراك");
-        void loadRoster();
-      } else {
-        toastError(data.error || "تعذر حذف الاشتراك");
-      }
-    } catch {
-      toastError("حدث خطأ في الشبكة أثناء الحذف");
     }
   };
 
@@ -179,7 +168,7 @@ export function TeacherSubscriptionsSection() {
       if (!q) return true;
       return [s.name, s.email, s.phone, s.parentPhone, s.planLabel, ...(s.courses.map((c) => c.title))]
         .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(q));
+        .some((v) => String(v).toLowerCase().includes(q) || phonesMatch(String(v), q));
     });
   }, [roster, search, stageFilter, planFilter, trackFilter, tab]);
 
@@ -367,7 +356,7 @@ export function TeacherSubscriptionsSection() {
                       <th className="p-4">الكورسات</th>
                       <th className="p-4">التواصل</th>
                       <th className="p-4 text-center">التاريخ</th>
-                      <th className="p-4 text-center">إجراء</th>
+                      <th className="p-4 text-center">إجراءات</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
@@ -451,16 +440,41 @@ export function TeacherSubscriptionsSection() {
                             <div className="text-[10px] text-sky-400">{fmtTime(s.createdAt)}</div>
                           </td>
                           <td className="p-4 text-center">
-                            {s.subscriptionId ? (
+                            {s.subscriptionId || s.kind === "booking" ? (
                               <button
                                 type="button"
-                                onClick={() => handleDeleteSubscription(s)}
-                                className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 text-[11px] font-bold cursor-pointer"
+                                onClick={async () => {
+                                  const studentName = s.name || "الطالب";
+                                  if (!confirm(`هل أنت متأكد من حذف حجز الطالب ${studentName}؟ سيتم حذف الحجز فقط وليس الطالب نفسه.`)) return;
+                                  try {
+                                    const targetId = s.subscriptionId || s.id;
+                                    const res = await fetch(`/api/teacher/subscriptions/${targetId}`, { method: 'DELETE' });
+                                    const data = await res.json();
+                                    if (data.success) {
+                                      toastSuccess("تم حذف الحجز بنجاح");
+                                      setRoster((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              students: prev.students.filter((p) => p.id !== s.id && p.subscriptionId !== targetId),
+                                            }
+                                          : prev
+                                      );
+                                      void loadRoster();
+                                    } else {
+                                      toastError(data.error || "فشل حذف الحجز");
+                                    }
+                                  } catch {
+                                    toastError("خطأ في الاتصال بالشبكة أثناء الحذف");
+                                  }
+                                }}
+                                className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-md text-sm ml-2 cursor-pointer transition-colors shadow-sm inline-flex items-center gap-1 font-semibold"
+                                title="حذف الحجز فقط"
                               >
-                                حذف الباقة
+                                حذف الحجز 🗑️
                               </button>
                             ) : (
-                              <span className="text-[10px] text-[var(--ink-muted)]">بدون باقة</span>
+                              <span className="text-[10px] text-[var(--ink-muted)]">بدون حجز</span>
                             )}
                           </td>
                         </tr>
@@ -499,6 +513,24 @@ export function TeacherSubscriptionsSection() {
                 />
               </div>
               <div>
+                <label className="block text-xs font-bold mb-1 text-emerald-400">الكورس المطلوب تسجيل الطالب فيه يدوياً ومباشرة:</label>
+                <select
+                  value={selectedCourseId}
+                  onChange={(e) => setSelectedCourseId(e.target.value)}
+                  className="w-full p-3 rounded-xl border border-emerald-500/40 bg-[var(--bg)] text-xs text-[var(--ink)] focus:outline-none focus:border-emerald-400 font-semibold"
+                >
+                  <option value="">-- اختر الكورس للتسجيل المباشر (موصى به) --</option>
+                  {roster?.courses?.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      📖 {c.title}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-[var(--ink-muted)] mt-1">
+                  التسجيل المباشر يضمن دخول الطالب في هذا الكورس المحدد فقط دون فتح أي كورسات أخرى تلقائياً.
+                </p>
+              </div>
+              <div>
                 <label className="block text-xs font-bold mb-1 text-[var(--ink-muted)]">مسار الدراسة:</label>
                 <select
                   value={selectedLanguageTrack}
@@ -510,7 +542,7 @@ export function TeacherSubscriptionsSection() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-bold mb-1 text-[var(--ink-muted)]">باقة الاشتراك:</label>
+                <label className="block text-xs font-bold mb-1 text-[var(--ink-muted)]">نوع الباقة (لأغراض المتابعة والرسوم):</label>
                 <select
                   value={selectedPlanType}
                   onChange={(e) => setSelectedPlanType(e.target.value)}
@@ -521,6 +553,25 @@ export function TeacherSubscriptionsSection() {
                   <option value="yearly">🎓 اشتراك سنوي</option>
                 </select>
               </div>
+              {selectedPlanType === "monthly" && (
+                <div>
+                  <label className="block text-xs font-bold mb-1 text-[var(--ink-muted)]">رقم الشهر:</label>
+                  <select
+                    value={selectedMonthNumber}
+                    onChange={(e) => setSelectedMonthNumber(Number(e.target.value))}
+                    className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-xs text-[var(--ink)] focus:outline-none focus:border-sky-400"
+                  >
+                    <option value={1}>الشهر الأول (1)</option>
+                    <option value={2}>الشهر الثاني (2)</option>
+                    <option value={3}>الشهر الثالث (3)</option>
+                    <option value={4}>الشهر الرابع (4)</option>
+                    <option value={5}>الشهر الخامس (5)</option>
+                    <option value={6}>الشهر السادس (6)</option>
+                    <option value={7}>الشهر السابع (7)</option>
+                    <option value={8}>الشهر الثامن (8)</option>
+                  </select>
+                </div>
+              )}
               <div className="flex gap-2 pt-2">
                 <button
                   type="submit"

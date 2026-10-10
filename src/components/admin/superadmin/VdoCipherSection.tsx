@@ -1,7 +1,27 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Eye, EyeOff, FlaskConical, Lock, Pencil, Plus, RefreshCw, Trash2, Video } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import {
+  Badge,
+  Button,
+  Chip,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  Notice,
+  PageHeader,
+  Panel,
+  SearchInput,
+  Skeleton,
+  Stat,
+  Switch,
+  fmtNum,
+  readJson,
+} from "@/components/admin/ui/kit";
 
 interface VdoCipherAccount {
   id: string;
@@ -39,172 +59,139 @@ interface KPIStats {
   totalActiveViewers: number;
 }
 
+type StatusFilter = "all" | "active" | "near_limit" | "expired" | "inactive";
+
+const EMPTY_ADD = { name: "", apiKey: "", playerId: "", bandwidthLimitGb: "5", validityDays: "30", notes: "" };
+
 export function VdoCipherSection() {
   const { success: toastSuccess, error: toastError } = useToast();
-  const notify = (type: "success" | "error" | "info", text: string) => {
-    if (type === "success") toastSuccess(text);
-    else toastError(text);
-  };
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [accounts, setAccounts] = useState<VdoCipherAccount[]>([]);
   const [kpis, setKpis] = useState<KPIStats | null>(null);
-
-  // Filters
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "near_limit" | "expired" | "inactive">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
-  // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<VdoCipherAccount | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<VdoCipherAccount | null>(null);
   const [reconciling, setReconciling] = useState(false);
-
-  // Form State for Add
-  const [addForm, setAddForm] = useState({
-    name: "",
-    apiKey: "",
-    playerId: "",
-    bandwidthLimitGb: 5,
-    validityDays: 30,
-    notes: "",
-  });
-  const [testingKey, setTestingKey] = useState(false);
+  const [addForm, setAddForm] = useState(EMPTY_ADD);
+  const [editForm, setEditForm] = useState({ name: "", apiKey: "", playerId: "", bandwidthLimitGb: "5", extendDays: "", isActive: true, notes: "" });
+  const [testingId, setTestingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok?: boolean; message?: string } | null>(null);
-  const [savingAccount, setSavingAccount] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  // Edit Form State
-  const [editForm, setEditForm] = useState({
-    name: "",
-    apiKey: "",
-    playerId: "",
-    bandwidthLimitGb: 5,
-    extendDays: 0,
-    isActive: true,
-    notes: "",
-  });
-
-  // Security passkey state for teachers
   const [securityPassword, setSecurityPassword] = useState("");
+  const [savedSecurityPassword, setSavedSecurityPassword] = useState("");
   const [savingPass, setSavingPass] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
-  const fetchSecurityPassword = async () => {
-    try {
-      const res = await fetch("/api/admin/config", { credentials: "include" });
-      const json = await res.json();
-      if (res.ok && Array.isArray(json.groups)) {
-        for (const group of json.groups) {
-          const item = group.items?.find((i: any) => i.key === "vdocipher_security_password");
-          if (item) {
-            setSecurityPassword(item.value || "");
-            break;
-          }
-        }
-      }
-    } catch {}
-  };
-
-  const handleSaveSecurityPassword = async () => {
-    try {
-      setSavingPass(true);
-      const res = await fetch("/api/admin/config", {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          key: "vdocipher_security_password",
-          value: securityPassword.trim(),
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error || "تعذر حفظ كلمة المرور");
-      }
-      notify("success", "تم تحديث كلمة مرور حماية VdoCipher للمعلمين بنجاح! 🔒");
-    } catch (err: any) {
-      notify("error", err.message || "فشل الحفظ");
-    } finally {
-      setSavingPass(false);
-    }
-  };
-
   const fetchAccounts = async () => {
+    setLoading(true);
+    setLoadError("");
     try {
-      setLoading(true);
-      const res = await fetch("/api/admin/superadmin/vdocipher");
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر جلب بيانات الحسابات");
-      }
+      const res = await fetch("/api/admin/superadmin/vdocipher", { credentials: "include" });
+      const data = await readJson<{ success?: boolean; accounts?: VdoCipherAccount[]; kpis?: KPIStats; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر جلب الحسابات");
       setAccounts(data.accounts || []);
       setKpis(data.kpis || null);
-    } catch (err: any) {
-      notify("error", err.message || "حدث خطأ أثناء تحميل الحسابات");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "تعذر جلب الحسابات");
     } finally {
       setLoading(false);
     }
   };
 
+  const fetchSecurityPassword = async () => {
+    try {
+      const res = await fetch("/api/admin/config", { credentials: "include" });
+      const json = await readJson<{ groups?: Array<{ items?: Array<{ key: string; value: string }> }> }>(res);
+      for (const group of json?.groups ?? []) {
+        const item = group.items?.find((i) => i.key === "vdocipher_security_password");
+        if (item) {
+          setSecurityPassword(item.value || "");
+          setSavedSecurityPassword(item.value || "");
+          break;
+        }
+      }
+    } catch {
+      /* optional */
+    }
+  };
+
   useEffect(() => {
-    fetchAccounts();
-    fetchSecurityPassword();
+    void fetchAccounts();
+    void fetchSecurityPassword();
   }, []);
 
-  // Reconcile reservations
-  const handleReconcile = async () => {
+  const handleSaveSecurityPassword = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setSavingPass(true);
     try {
-      setReconciling(true);
-      const res = await fetch("/api/admin/superadmin/vdocipher/reconcile", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "فشلت المزامنة");
-      }
-      setAccounts(data.accounts || []);
-      notify("success", data.message || "تمت المزامنة وتحديث الحسابات بنجاح");
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message || "حدث خطأ أثناء المزامنة");
+      const res = await fetch("/api/admin/config", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "vdocipher_security_password", value: securityPassword.trim() }),
+      });
+      const json = await readJson<{ error?: string }>(res);
+      if (!res.ok) throw new Error(json?.error || "تعذر حفظ كلمة المرور");
+      setSavedSecurityPassword(securityPassword.trim());
+      toastSuccess("حُدّثت كلمة مرور حماية VdoCipher للمعلمين");
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "فشل الحفظ");
+    } finally {
+      setSavingPass(false);
+    }
+  };
+
+  const handleReconcile = async () => {
+    setReconciling(true);
+    try {
+      const res = await fetch("/api/admin/superadmin/vdocipher/reconcile", { method: "POST", credentials: "include" });
+      const data = await readJson<{ success?: boolean; message?: string; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "فشلت المزامنة");
+      toastSuccess(data.message || "تمت المزامنة");
+      await fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "حدث خطأ أثناء المزامنة");
     } finally {
       setReconciling(false);
     }
   };
 
-  // Test API Key
   const handleTestApiKey = async (apiKey: string, accountId?: string) => {
+    setTestingId(accountId ?? "new");
+    setTestResult(null);
     try {
-      setTestingKey(true);
-      setTestResult(null);
       const res = await fetch("/api/admin/superadmin/vdocipher/test", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey, accountId }),
       });
-      const data = await res.json();
-      setTestResult({ ok: data.ok, message: data.message });
-      if (data.ok) {
-        notify("success", data.message);
-      } else {
-        notify("error", data.error || data.message || "فحص الاتصال غير ناجح");
-      }
-    } catch (err: any) {
-      setTestResult({ ok: false, message: err.message || "فشل الاتصال" });
-      notify("error", err.message || "تعذر إجراء فحص الاتصال");
+      const data = await readJson<{ ok?: boolean; message?: string; error?: string }>(res);
+      setTestResult({ ok: data?.ok, message: data?.message || data?.error });
+      if (data?.ok) toastSuccess(data.message || "الاتصال يعمل");
+      else toastError(data?.error || data?.message || "فحص الاتصال غير ناجح");
+    } catch {
+      setTestResult({ ok: false, message: "فشل الاتصال" });
+      toastError("تعذر إجراء فحص الاتصال");
     } finally {
-      setTestingKey(false);
+      setTestingId(null);
     }
   };
 
-  // Submit Add Account
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addForm.name.trim() || !addForm.apiKey.trim()) {
-      notify("error", "يرجى كتابة اسم الحساب ومفتاح الـ API");
-      return;
-    }
-
+    if (!addForm.name.trim() || !addForm.apiKey.trim()) return toastError("اكتب اسم الحساب ومفتاح الـ API");
+    setSaving(true);
     try {
-      setSavingAccount(true);
       const res = await fetch("/api/admin/superadmin/vdocipher", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: addForm.name.trim(),
@@ -215,40 +202,41 @@ export function VdoCipherSection() {
           notes: addForm.notes.trim() || null,
         }),
       });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر إضافة الحساب");
-      }
-
-      notify("success", data.message || "تم إضافة الحساب بنجاح! 🎉");
+      const data = await readJson<{ success?: boolean; message?: string; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر إضافة الحساب");
+      toastSuccess(data.message || "أُضيف الحساب");
       setShowAddModal(false);
-      setAddForm({
-        name: "",
-        apiKey: "",
-        playerId: "",
-        bandwidthLimitGb: 5,
-        validityDays: 30,
-        notes: "",
-      });
+      setAddForm(EMPTY_ADD);
       setTestResult(null);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message || "حدث خطأ أثناء حفظ الحساب");
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "حدث خطأ أثناء الحفظ");
     } finally {
-      setSavingAccount(false);
+      setSaving(false);
     }
   };
 
-  // Submit Edit Account
+  const openEdit = (account: VdoCipherAccount) => {
+    setEditingAccount(account);
+    setEditForm({
+      name: account.name,
+      apiKey: "",
+      playerId: account.playerId || "",
+      bandwidthLimitGb: String(account.bandwidthLimitGb),
+      extendDays: "",
+      isActive: account.isActive,
+      notes: account.notes || "",
+    });
+  };
+
   const handleUpdateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAccount) return;
-
+    setSaving(true);
     try {
-      setSavingAccount(true);
       const res = await fetch(`/api/admin/superadmin/vdocipher/${editingAccount.id}`, {
         method: "PATCH",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: editForm.name.trim() || undefined,
@@ -260,69 +248,64 @@ export function VdoCipherSection() {
           notes: editForm.notes.trim() || null,
         }),
       });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر تحديث الحساب");
-      }
-
-      notify("success", data.message || "تم تحديث الحساب بنجاح");
+      const data = await readJson<{ success?: boolean; message?: string; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر تحديث الحساب");
+      toastSuccess(data.message || "حُدّث الحساب");
       setEditingAccount(null);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message || "حدث خطأ أثناء التحديث");
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "حدث خطأ أثناء التحديث");
     } finally {
-      setSavingAccount(false);
+      setSaving(false);
     }
   };
 
-  // Toggle Account Active
   const handleToggleActive = async (account: VdoCipherAccount) => {
+    setBusyId(account.id);
     try {
       const res = await fetch(`/api/admin/superadmin/vdocipher/${account.id}`, {
         method: "PATCH",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !account.isActive }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر تعديل حالة الحساب");
-      }
-      notify("success", `تم ${account.isActive ? "تعطيل" : "تفعيل"} الحساب بنجاح`);
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message);
+      const data = await readJson<{ success?: boolean; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر تعديل حالة الحساب");
+      toastSuccess(account.isActive ? "عُطّل الحساب" : "فُعّل الحساب");
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "تعذر تعديل حالة الحساب");
+    } finally {
+      setBusyId(null);
     }
   };
 
-  // Delete Account
-  const handleDeleteAccount = async (account: VdoCipherAccount) => {
-    if (!confirm(`هل أنت متأكد من حذف الحساب "${account.name}"؟`)) return;
+  const handleDeleteAccount = async () => {
+    if (!deleteTarget) return;
+    setSaving(true);
     try {
-      const res = await fetch(`/api/admin/superadmin/vdocipher/${account.id}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر حذف الحساب");
-      }
-      notify("success", data.message || "تم حذف الحساب");
-      fetchAccounts();
-    } catch (err: any) {
-      notify("error", err.message);
+      const res = await fetch(`/api/admin/superadmin/vdocipher/${deleteTarget.id}`, { method: "DELETE", credentials: "include" });
+      const data = await readJson<{ success?: boolean; message?: string; error?: string }>(res);
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر حذف الحساب");
+      toastSuccess(data.message || "حُذف الحساب");
+      setDeleteTarget(null);
+      void fetchAccounts();
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "تعذر حذف الحساب");
+    } finally {
+      setSaving(false);
     }
   };
 
-  // Filtered accounts list
   const filteredAccounts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return accounts.filter((acc) => {
       const matchSearch =
-        acc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (acc.notes && acc.notes.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (acc.playerId && acc.playerId.toLowerCase().includes(searchQuery.toLowerCase()));
-
+        !q ||
+        acc.name.toLowerCase().includes(q) ||
+        (acc.notes || "").toLowerCase().includes(q) ||
+        (acc.playerId || "").toLowerCase().includes(q);
       if (!matchSearch) return false;
-
       if (statusFilter === "active") return acc.isActive && !acc.isExpired;
       if (statusFilter === "near_limit") return acc.bandwidthPercentUsed >= 80;
       if (statusFilter === "expired") return acc.isExpired;
@@ -331,664 +314,290 @@ export function VdoCipherSection() {
     });
   }, [accounts, searchQuery, statusFilter]);
 
+  const counts = useMemo(
+    () => ({
+      active: accounts.filter((a) => a.isActive && !a.isExpired).length,
+      near: accounts.filter((a) => a.bandwidthPercentUsed >= 80).length,
+      expired: accounts.filter((a) => a.isExpired).length,
+      inactive: accounts.filter((a) => !a.isActive).length,
+    }),
+    [accounts]
+  );
+
   return (
-    <div className="space-y-6">
-      {/* Top Banner & Heading */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-3xl bg-gradient-to-r from-sky-950/40 via-[var(--card)] to-slate-900/60 border border-sky-500/20 shadow-xl backdrop-blur-sm">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <span className="text-2xl">🎬</span>
-            <h2 className="text-xl sm:text-2xl font-black text-[var(--ink)] tracking-tight">
-              إدارة حسابات ومجمع باقات VdoCipher (Bandwidth Pool)
-            </h2>
-          </div>
-          <p className="text-xs sm:text-sm text-[var(--ink-muted)] mt-1 max-w-2xl leading-relaxed">
-            إدارة وتوزيع أكثر من 100 حساب VdoCipher تلقائياً، مع نظام المحاسبة السرية للباندويث (Secret Bandwidth Accounting) وتوزيع المشاهدات الذكي لمنع انقطاع الفيديوهات.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <button
-            type="button"
-            onClick={handleReconcile}
-            disabled={reconciling}
-            className="px-4 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 text-[var(--ink)] border border-white/10 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
-          >
-            <span className={reconciling ? "animate-spin" : ""}>🔄</span>
-            <span>{reconciling ? "جاري المزامنة..." : "مزامنة الحجوزات"}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setShowAddModal(true);
-              setTestResult(null);
-            }}
-            className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-black text-xs shadow-lg shadow-sky-500/20 transition-all flex items-center gap-2 cursor-pointer"
-          >
-            <span>➕</span>
-            <span>إضافة حساب VdoCipher جديد</span>
-          </button>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm space-y-1">
-          <span className="text-[11px] font-bold text-[var(--ink-muted)] block">إجمالي الحسابات</span>
-          <div className="text-2xl font-black text-[var(--ink)] font-mono">{kpis?.totalAccounts ?? 0}</div>
-          <span className="text-[10px] text-sky-400 font-bold block">
-            {kpis?.activeAccounts ?? 0} حساب نشط
-          </span>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm space-y-1">
-          <span className="text-[11px] font-bold text-[var(--ink-muted)] block">إجمالي الباندويث المتاح</span>
-          <div className="text-2xl font-black text-sky-400 font-mono">
-            {kpis?.totalBandwidthLimitGb ?? 0} <span className="text-xs text-[var(--ink-muted)]">GB</span>
-          </div>
-          <span className="text-[10px] text-[var(--ink-muted)] block">السعة الكلية للمجمع</span>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm space-y-1">
-          <span className="text-[11px] font-bold text-[var(--ink-muted)] block">الباندويث المستهلك</span>
-          <div className="text-2xl font-black text-amber-400 font-mono">
-            {kpis?.totalBandwidthUsedGb ?? 0} <span className="text-xs text-[var(--ink-muted)]">GB</span>
-          </div>
-          <span className="text-[10px] text-amber-500/80 font-bold block">استهلاك الطلاب الفعلي</span>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm space-y-1">
-          <span className="text-[11px] font-bold text-[var(--ink-muted)] block">السعة الآمنة المتبقية</span>
-          <div className="text-2xl font-black text-emerald-400 font-mono">
-            {kpis?.totalSafeRemainingGb ?? 0} <span className="text-xs text-[var(--ink-muted)]">GB</span>
-          </div>
-          <span className="text-[10px] text-emerald-400 font-bold block">متاح للحجز والمشاهدة</span>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm space-y-1">
-          <span className="text-[11px] font-bold text-[var(--ink-muted)] block">المشاهدون النشطون الآن</span>
-          <div className="text-2xl font-black text-indigo-400 font-mono flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping inline-block" />
-            <span>{kpis?.totalActiveViewers ?? 0}</span>
-          </div>
-          <span className="text-[10px] text-indigo-300 font-bold block">جلسات مشاهدة جارية</span>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-sm space-y-1">
-          <span className="text-[11px] font-bold text-[var(--ink-muted)] block">الحسابات المنتهية</span>
-          <div className="text-2xl font-black text-rose-400 font-mono">{kpis?.expiredAccounts ?? 0}</div>
-          <span className="text-[10px] text-rose-400/80 font-bold block">تتطلب تجديد الصلاحية</span>
-        </div>
-      </div>
-
-      {/* 🔐 Teacher Security Passkey Configuration */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-sky-950/20 via-[var(--card)] to-slate-900/30 border border-sky-500/20 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">🔐</span>
-            <h3 className="text-xs sm:text-sm font-bold text-[var(--ink)]">
-              كلمة مرور حماية VdoCipher للمعلمين (Security Passkey)
-            </h3>
-          </div>
-          <p className="text-[11px] text-[var(--ink-muted)] m-0 max-w-xl leading-relaxed">
-            كلمة المرور المطلوبة التي يجب على المعلم إدخالها قبل الدخول إلى رفع فيديوهات VdoCipher لضمان عدم استهلاك الباندويث المحدود إلا بإذن مسبق.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <div className="relative flex-1 sm:w-64">
-            <input
-              type={showPass ? "text" : "password"}
-              dir="ltr"
-              placeholder="مثال: codeup2026"
-              value={securityPassword}
-              onChange={(e) => setSecurityPassword(e.target.value)}
-              className="w-full px-3 py-2 pe-8 rounded-xl bg-black/30 border border-white/10 text-xs font-mono text-[var(--ink)] focus:outline-none focus:border-sky-500"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPass(!showPass)}
-              className="absolute end-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--ink-muted)] hover:text-white"
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="حسابات VdoCipher"
+        description="مجمع حسابات الفيديو المحمي. الباندويث يُوزّع تلقائياً على الحسابات المتاحة، ويُحجز مسبقاً لكل مشاهدة حتى لا ينقطع الفيديو."
+        actions={
+          <>
+            <Button onClick={() => void handleReconcile()} loading={reconciling} icon={<RefreshCw size={15} />}>مزامنة الحجوزات</Button>
+            <Button
+              variant="primary"
+              icon={<Plus size={15} />}
+              onClick={() => {
+                setAddForm(EMPTY_ADD);
+                setTestResult(null);
+                setShowAddModal(true);
+              }}
             >
-              {showPass ? "👁️" : "🔒"}
-            </button>
-          </div>
+              إضافة حساب
+            </Button>
+          </>
+        }
+      />
 
-          <button
-            type="button"
-            onClick={handleSaveSecurityPassword}
-            disabled={savingPass}
-            className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-bold text-xs shadow-sm transition-all disabled:opacity-50 cursor-pointer shrink-0"
-          >
-            {savingPass ? "جاري الحفظ..." : "حفظ كلمة المرور"}
-          </button>
+      {loadError && <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchAccounts()}>إعادة المحاولة</Button>} />}
+
+      {loading && !kpis ? (
+        <div className="adm-stats">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} h={96} r={12} />)}</div>
+      ) : (
+        <div className="adm-stats">
+          <Stat label="الحسابات" value={fmtNum(kpis?.totalAccounts ?? 0)} sub={`${fmtNum(kpis?.activeAccounts ?? 0)} نشط`} />
+          <Stat label="السعة الكلية" value={`${fmtNum(kpis?.totalBandwidthLimitGb ?? 0)} GB`} tone="info" />
+          <Stat label="المستهلك" value={`${fmtNum(kpis?.totalBandwidthUsedGb ?? 0)} GB`} tone="warn" />
+          <Stat label="المتبقي الآمن" value={`${fmtNum(kpis?.totalSafeRemainingGb ?? 0)} GB`} tone="ok" sub="متاح للحجز والمشاهدة" />
+          <Stat label="يشاهدون الآن" value={fmtNum(kpis?.totalActiveViewers ?? 0)} tone="brand" sub="جلسات مشاهدة جارية" />
+          <Stat label="منتهية" value={fmtNum(kpis?.expiredAccounts ?? 0)} tone={(kpis?.expiredAccounts ?? 0) > 0 ? "bad" : "neutral"} sub="تحتاج تجديد" />
         </div>
+      )}
+
+      <Panel
+        title="كلمة مرور رفع الفيديو للمعلمين"
+        icon={<Lock size={16} />}
+        description="يطلبها النظام من المعلم قبل رفع فيديو على VdoCipher، حتى لا يُستهلك الباندويث المحدود إلا بإذن."
+      >
+        <form onSubmit={handleSaveSecurityPassword} className="flex flex-wrap items-end gap-2 max-w-xl">
+          <Field label="كلمة المرور" htmlFor="vdo-pass" className="flex-1 min-w-[200px]">
+            <div className="relative">
+              <Input
+                id="vdo-pass"
+                type={showPass ? "text" : "password"}
+                mono
+                value={securityPassword}
+                onChange={(e) => setSecurityPassword(e.target.value)}
+                autoComplete="off"
+                style={{ paddingLeft: 44 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPass((v) => !v)}
+                className="adm-btn is-ghost is-icon is-sm absolute top-1/2 -translate-y-1/2"
+                style={{ left: 4 }}
+                aria-label={showPass ? "إخفاء" : "إظهار"}
+              >
+                {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </Field>
+          <Button type="submit" variant="primary" loading={savingPass} disabled={securityPassword.trim() === savedSecurityPassword}>حفظ</Button>
+        </form>
+      </Panel>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="حالة الحساب">
+          <Chip pressed={statusFilter === "all"} onClick={() => setStatusFilter("all")} count={accounts.length}>الكل</Chip>
+          <Chip pressed={statusFilter === "active"} onClick={() => setStatusFilter("active")} count={counts.active}>نشطة</Chip>
+          <Chip pressed={statusFilter === "near_limit"} onClick={() => setStatusFilter("near_limit")} count={counts.near}>قاربت الامتلاء</Chip>
+          <Chip pressed={statusFilter === "expired"} onClick={() => setStatusFilter("expired")} count={counts.expired}>منتهية</Chip>
+          <Chip pressed={statusFilter === "inactive"} onClick={() => setStatusFilter("inactive")} count={counts.inactive}>معطلة</Chip>
+        </div>
+        <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="الاسم أو Player ID أو الملاحظات" inputSize="sm" className="w-72 max-w-full" />
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="p-3.5 rounded-2xl bg-[var(--card)] border border-[var(--border)] flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm">
-        <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-          {(
-            [
-              { id: "all", label: "الكل" },
-              { id: "active", label: "النشطة" },
-              { id: "near_limit", label: "شارفت على الانتهاء (≥80%)" },
-              { id: "expired", label: "منتهية الصلاحية" },
-              { id: "inactive", label: "معطلة" },
-            ] as const
-          ).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setStatusFilter(t.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                statusFilter === t.id
-                  ? "bg-sky-500 text-white shadow-sm"
-                  : "bg-white/5 text-[var(--ink-muted)] hover:text-[var(--ink)]"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="w-full sm:w-72">
-          <input
-            type="text"
-            placeholder="بحث بالاسم، Player ID أو الملاحظات..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-3.5 py-2 rounded-xl bg-black/20 border border-white/10 text-xs text-[var(--ink)] placeholder-[var(--ink-muted)] focus:outline-none focus:border-sky-500"
-          />
-        </div>
-      </div>
-
-      {/* Accounts List Table / Cards */}
-      {loading ? (
-        <div className="p-12 text-center text-xs text-[var(--ink-muted)]">
-          <span className="inline-block w-5 h-5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin mb-2" />
-          <p>جاري تحميل حسابات VdoCipher والمحاسبة السرية...</p>
+      {loading && accounts.length === 0 ? (
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} h={220} r={16} />)}
         </div>
       ) : filteredAccounts.length === 0 ? (
-        <div className="p-12 rounded-2xl bg-[var(--card)] border border-[var(--border)] text-center space-y-3">
-          <span className="text-4xl block">🔍</span>
-          <p className="text-sm font-bold text-[var(--ink)]">لا توجد حسابات مطابقة للفلاتر المحددة</p>
-          <p className="text-xs text-[var(--ink-muted)]">يمكنك إضافة حساب جديد أو تغيير خيارات البحث.</p>
-        </div>
+        <Panel>
+          <EmptyState
+            icon={<Video size={22} />}
+            title={accounts.length === 0 ? "لا توجد حسابات VdoCipher" : "لا حسابات مطابقة"}
+            text={accounts.length === 0 ? "أضف أول حساب ليبدأ رفع وتشغيل الفيديوهات المحمية." : "غيّر الفلتر أو كلمات البحث."}
+          />
+        </Panel>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))" }}>
           {filteredAccounts.map((account) => {
-            const isFull = account.bandwidthPercentUsed >= 95;
-            const isNearFull = account.bandwidthPercentUsed >= 80 && !isFull;
-
+            const pct = Math.max(0, Math.min(100, account.bandwidthPercentUsed));
+            const isFull = pct >= 95;
+            const isNear = pct >= 80 && !isFull;
+            const barColor = isFull ? "var(--danger)" : isNear ? "var(--warn)" : "var(--brand)";
             return (
-              <div
-                key={account.id}
-                className={`p-4 rounded-2xl border transition-all space-y-3 relative overflow-hidden bg-[var(--card)] ${
-                  !account.isActive
-                    ? "border-white/5 opacity-60"
-                    : account.isExpired
-                    ? "border-rose-500/30 bg-rose-500/5"
-                    : isFull
-                    ? "border-rose-500/40"
-                    : isNearFull
-                    ? "border-amber-500/40"
-                    : "border-sky-500/20 hover:border-sky-500/40"
-                }`}
-              >
-                {/* Header: Name + Badges */}
-                <div className="flex items-start justify-between gap-2">
+              <article key={account.id} className="adm-panel p-4 flex flex-col gap-3" style={{ opacity: account.isActive ? 1 : 0.7 }}>
+                <header className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h3 className="adm-h3 truncate">{account.name}</h3>
+                    <p className="text-xs adm-muted mt-0.5">
+                      <span className="adm-mono">{account.apiKeyMasked}</span>
+                      {account.playerId && <> · Player <span className="adm-mono">{account.playerId}</span></>}
+                    </p>
+                  </div>
+                  {account.isExpired ? (
+                    <Badge tone="bad">منتهي</Badge>
+                  ) : !account.isActive ? (
+                    <Badge>معطل</Badge>
+                  ) : isFull ? (
+                    <Badge tone="bad">ممتلئ</Badge>
+                  ) : isNear ? (
+                    <Badge tone="warn">قارب الامتلاء</Badge>
+                  ) : (
+                    <Badge tone="ok" dot>متاح</Badge>
+                  )}
+                </header>
+
+                <div>
+                  <div className="flex items-center justify-between text-xs mb-1.5">
+                    <span className="adm-muted">الباندويث</span>
+                    <span className="adm-num font-bold">
+                      {fmtNum(account.bandwidthUsedGb)} / {fmtNum(account.bandwidthLimitGb)} GB · {fmtNum(account.bandwidthPercentUsed)}٪
+                    </span>
+                  </div>
+                  <div className="adm-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`استهلاك ${account.name}`}>
+                    <span style={{ width: `${pct}%`, background: barColor }} />
+                  </div>
+                  <div className="flex items-center justify-between text-xs adm-muted mt-1.5">
+                    <span>متبقٍ آمن <b style={{ color: "var(--ok)" }}>{fmtNum(account.bandwidthSafeRemainingGb)} GB</b></span>
+                    <span>محجوز <b className="adm-num">{fmtNum(Math.round(account.bandwidthReservedBytes / (1024 * 1024)))} MB</b></span>
+                  </div>
+                </div>
+
+                <dl className="adm-well grid grid-cols-2 gap-2 p-2.5 text-xs">
                   <div>
-                    <h3 className="text-sm font-black text-[var(--ink)] flex items-center gap-1.5">
-                      <span>🎬</span>
-                      <span>{account.name}</span>
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[11px] font-mono text-[var(--ink-muted)] select-all">
-                        {account.apiKeyMasked}
-                      </span>
-                      {account.playerId && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-300 font-mono">
-                          Player: {account.playerId}
-                        </span>
-                      )}
-                    </div>
+                    <dt className="adm-muted">الصلاحية</dt>
+                    <dd className="font-bold" style={{ color: account.isExpired ? "var(--danger)" : undefined }}>
+                      {account.isExpired ? "منتهية" : `${fmtNum(account.daysRemaining)} يوم`}
+                    </dd>
                   </div>
-
-                  <div className="flex items-center gap-1.5">
-                    {account.isExpired ? (
-                      <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-400 font-bold text-[10px]">
-                        منتهي
-                      </span>
-                    ) : !account.isActive ? (
-                      <span className="px-2 py-0.5 rounded-md bg-gray-500/20 text-gray-400 font-bold text-[10px]">
-                        معطل
-                      </span>
-                    ) : isFull ? (
-                      <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-400 font-bold text-[10px]">
-                        ممتلئ (100%)
-                      </span>
-                    ) : isNearFull ? (
-                      <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 font-bold text-[10px]">
-                        شارف على الامتلاء
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
-                        نشط ومتاح
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Bandwidth Progress Bar */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-[var(--ink-muted)]">استهلاك الباندويث:</span>
-                    <span className="font-mono font-bold text-[var(--ink)]">
-                      {account.bandwidthUsedGb} GB / {account.bandwidthLimitGb} GB
-                      <span className="text-[10px] text-sky-400 ms-1">({account.bandwidthPercentUsed}%)</span>
-                    </span>
-                  </div>
-
-                  <div className="w-full h-2 rounded-full bg-black/40 overflow-hidden border border-white/5">
-                    <div
-                      className={`h-full transition-all duration-300 ${
-                        isFull
-                          ? "bg-rose-500"
-                          : isNearFull
-                          ? "bg-amber-500"
-                          : "bg-gradient-to-r from-sky-500 to-emerald-400"
-                      }`}
-                      style={{ width: `${account.bandwidthPercentUsed}%` }}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-[10px] text-[var(--ink-muted)]">
-                    <span>
-                      السعة الآمنة المتبقية:{" "}
-                      <strong className="text-emerald-400 font-mono font-bold">
-                        {account.bandwidthSafeRemainingGb} GB
-                      </strong>
-                    </span>
-                    <span>
-                      محجوز حالياً:{" "}
-                      <strong className="text-indigo-300 font-mono">
-                        {(account.bandwidthReservedBytes / (1024 * 1024)).toFixed(0)} MB
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-
-                {/* Info grid */}
-                <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-black/20 border border-white/5 text-[11px]">
                   <div>
-                    <span className="text-[var(--ink-muted)] block text-[10px]">الصلاحية:</span>
-                    <span className={`font-bold ${account.isExpired ? "text-rose-400" : "text-[var(--ink)]"}`}>
-                      {account.isExpired ? "منتهية" : `متبقي ${account.daysRemaining} يوم`}
-                    </span>
+                    <dt className="adm-muted">يشاهدون الآن</dt>
+                    <dd className="font-bold flex items-center gap-1.5">
+                      {account.activeViewersCount > 0 && <span className="adm-dot is-live" style={{ color: "var(--ok)" }} aria-hidden />}
+                      {fmtNum(account.activeViewersCount)}
+                    </dd>
                   </div>
+                </dl>
 
-                  <div>
-                    <span className="text-[var(--ink-muted)] block text-[10px]">المشاهدون الآن:</span>
-                    <span className="font-bold text-indigo-400 flex items-center gap-1">
-                      {account.activeViewersCount > 0 && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping inline-block" />
-                      )}
-                      <span>{account.activeViewersCount} طالب</span>
-                    </span>
+                {account.notes && <p className="text-xs adm-muted">{account.notes}</p>}
+
+                <footer className="flex items-center justify-between gap-1 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+                  <div className="flex items-center gap-1">
+                    <Button size="sm" variant="ghost" icon={<FlaskConical size={14} />} loading={testingId === account.id} disabled={testingId !== null && testingId !== account.id} onClick={() => void handleTestApiKey("", account.id)}>
+                      فحص
+                    </Button>
+                    <IconButton label="تعديل" size="sm" onClick={() => openEdit(account)}>
+                      <Pencil size={15} />
+                    </IconButton>
                   </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-white/5">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleTestApiKey("", account.id)}
-                      disabled={testingKey}
-                      className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white/5 hover:bg-white/10 text-sky-400 border border-white/5 transition-all flex items-center gap-1 cursor-pointer"
-                      title="فحص صلاحية مفتاح الـ API"
-                    >
-                      <span>🧪</span>
-                      <span>فحص الاتصال</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingAccount(account);
-                        setEditForm({
-                          name: account.name,
-                          apiKey: "",
-                          playerId: account.playerId || "",
-                          bandwidthLimitGb: account.bandwidthLimitGb,
-                          extendDays: 0,
-                          isActive: account.isActive,
-                          notes: account.notes || "",
-                        });
-                      }}
-                      className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white/5 hover:bg-white/10 text-[var(--ink)] border border-white/5 transition-all flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>✏️</span>
-                      <span>تعديل</span>
-                    </button>
+                  <div className="flex items-center gap-2">
+                    <Switch checked={account.isActive} onChange={() => void handleToggleActive(account)} disabled={busyId === account.id} label={`تفعيل ${account.name}`} />
+                    <IconButton label="حذف" size="sm" onClick={() => setDeleteTarget(account)} style={{ color: "var(--danger)" }}>
+                      <Trash2 size={15} />
+                    </IconButton>
                   </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleActive(account)}
-                      className={`px-2 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
-                        account.isActive
-                          ? "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
-                          : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-                      }`}
-                    >
-                      {account.isActive ? "تعطيل" : "تفعيل"}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteAccount(account)}
-                      className="p-1.5 text-xs text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all cursor-pointer"
-                      title="حذف الحساب"
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-              </div>
+                </footer>
+              </article>
             );
           })}
         </div>
       )}
 
-      {/* Add Account Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="w-full max-w-lg p-6 rounded-3xl bg-[var(--card)] border border-white/10 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-black text-[var(--ink)] flex items-center gap-2">
-                <span>➕</span>
-                <span>إضافة حساب VdoCipher جديد</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowAddModal(false)}
-                className="text-[var(--ink-muted)] hover:text-white text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
+      {/* Add */}
+      <Modal
+        open={showAddModal}
+        onClose={() => !saving && setShowAddModal(false)}
+        title="إضافة حساب VdoCipher"
+        size="md"
+        footer={
+          <>
+            <Button icon={<FlaskConical size={15} />} loading={testingId === "new"} disabled={!addForm.apiKey.trim()} onClick={() => void handleTestApiKey(addForm.apiKey)}>
+              فحص المفتاح
+            </Button>
+            <span className="flex-1" />
+            <Button onClick={() => setShowAddModal(false)} disabled={saving}>إلغاء</Button>
+            <Button type="submit" form="vdo-add" variant="primary" loading={saving}>حفظ الحساب</Button>
+          </>
+        }
+      >
+        <form id="vdo-add" onSubmit={handleAddAccount} className="grid gap-4 sm:grid-cols-2">
+          <Field label="اسم الحساب" htmlFor="va-name" className="sm:col-span-2">
+            <Input id="va-name" data-autofocus required value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="VdoCipher Account #01" />
+          </Field>
+          <Field label="API Secret Key" hint="يُخزّن مشفّراً (AES-256-GCM) ولا يُرسل للمتصفح أبداً" htmlFor="va-key" className="sm:col-span-2">
+            <Input id="va-key" type="password" required mono autoComplete="off" value={addForm.apiKey} onChange={(e) => setAddForm({ ...addForm, apiKey: e.target.value })} />
+          </Field>
+          <Field label="حصة الباندويث (GB)" htmlFor="va-bw">
+            <Input id="va-bw" type="number" min="1" step="0.5" required mono value={addForm.bandwidthLimitGb} onChange={(e) => setAddForm({ ...addForm, bandwidthLimitGb: e.target.value })} />
+          </Field>
+          <Field label="الصلاحية (أيام)" htmlFor="va-days">
+            <Input id="va-days" type="number" min="1" required mono value={addForm.validityDays} onChange={(e) => setAddForm({ ...addForm, validityDays: e.target.value })} />
+          </Field>
+          <Field label="Player ID" hint="اختياري" htmlFor="va-player">
+            <Input id="va-player" mono value={addForm.playerId} onChange={(e) => setAddForm({ ...addForm, playerId: e.target.value })} />
+          </Field>
+          <Field label="ملاحظات" hint="اختياري" htmlFor="va-notes">
+            <Input id="va-notes" value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })} />
+          </Field>
+          {testResult && (
+            <Notice tone={testResult.ok ? "ok" : "bad"} title={testResult.message || (testResult.ok ? "المفتاح يعمل" : "فشل الفحص")} className="sm:col-span-2" />
+          )}
+        </form>
+      </Modal>
 
-            <form onSubmit={handleAddAccount} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">اسم / معرّف الحساب *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="مثال: VdoCipher Account #01"
-                  value={addForm.name}
-                  onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-              </div>
+      {/* Edit */}
+      <Modal
+        open={!!editingAccount}
+        onClose={() => !saving && setEditingAccount(null)}
+        title="تعديل حساب VdoCipher"
+        description={editingAccount?.name}
+        size="md"
+        footer={
+          <>
+            <Button onClick={() => setEditingAccount(null)} disabled={saving}>إلغاء</Button>
+            <Button type="submit" form="vdo-edit" variant="primary" loading={saving}>حفظ</Button>
+          </>
+        }
+      >
+        <form id="vdo-edit" onSubmit={handleUpdateAccount} className="grid gap-4 sm:grid-cols-2">
+          <Field label="اسم الحساب" htmlFor="ve-name" className="sm:col-span-2">
+            <Input id="ve-name" data-autofocus required value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+          </Field>
+          <Field label="مفتاح API جديد" hint="اتركه فارغاً للإبقاء على المفتاح الحالي" htmlFor="ve-key" className="sm:col-span-2">
+            <Input id="ve-key" type="password" mono autoComplete="off" value={editForm.apiKey} onChange={(e) => setEditForm({ ...editForm, apiKey: e.target.value })} />
+          </Field>
+          <Field label="حصة الباندويث (GB)" htmlFor="ve-bw">
+            <Input id="ve-bw" type="number" min="1" step="0.5" mono value={editForm.bandwidthLimitGb} onChange={(e) => setEditForm({ ...editForm, bandwidthLimitGb: e.target.value })} />
+          </Field>
+          <Field label="تمديد الصلاحية (+ أيام)" htmlFor="ve-ext">
+            <Input id="ve-ext" type="number" min="0" mono value={editForm.extendDays} onChange={(e) => setEditForm({ ...editForm, extendDays: e.target.value })} placeholder="30" />
+          </Field>
+          <Field label="Player ID" htmlFor="ve-player">
+            <Input id="ve-player" mono value={editForm.playerId} onChange={(e) => setEditForm({ ...editForm, playerId: e.target.value })} />
+          </Field>
+          <Field label="ملاحظات" htmlFor="ve-notes">
+            <Input id="ve-notes" value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
+          </Field>
+          <label className="sm:col-span-2 adm-well flex items-center justify-between gap-3 px-3 py-2.5">
+            <span className="text-sm font-semibold">الحساب نشط ومتاح لرفع وتعيين الفيديوهات الجديدة</span>
+            <Switch checked={editForm.isActive} onChange={(v) => setEditForm({ ...editForm, isActive: v })} label="الحساب نشط" />
+          </label>
+        </form>
+      </Modal>
 
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">
-                  مفتاح VdoCipher API Secret Key *
-                </label>
-                <input
-                  type="password"
-                  required
-                  dir="ltr"
-                  placeholder="مثال: dWdltZ29BtysEGazrN00UDyIXfpg..."
-                  value={addForm.apiKey}
-                  onChange={(e) => setAddForm({ ...addForm, apiKey: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-xs text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-                <span className="text-[10px] text-[var(--ink-muted)] mt-0.5 block">
-                  🔒 يتم تشفير المفتاح تلقائياً بنظام AES-256-GCM ولا يتم إرساله للمتصفح أبداً.
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[var(--ink)] font-bold mb-1">حصة الباندويث (GB) *</label>
-                  <input
-                    type="number"
-                    min="1"
-                    step="0.5"
-                    required
-                    value={addForm.bandwidthLimitGb}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, bandwidthLimitGb: parseFloat(e.target.value) || 5 })
-                    }
-                    className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                  />
-                  <span className="text-[10px] text-[var(--ink-muted)] mt-0.5 block">افتراضي: 5 GB</span>
-                </div>
-
-                <div>
-                  <label className="block text-[var(--ink)] font-bold mb-1">فترة الصلاحية (بالأيام) *</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={addForm.validityDays}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, validityDays: parseInt(e.target.value) || 30 })
-                    }
-                    className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                  />
-                  <span className="text-[10px] text-[var(--ink-muted)] mt-0.5 block">افتراضي: 30 يوم</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">
-                  معرّف الثيم / Player ID (اختياري)
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  placeholder="مثال: customPlayerThemeId"
-                  value={addForm.playerId}
-                  onChange={(e) => setAddForm({ ...addForm, playerId: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">ملاحظات داخلية (اختياري)</label>
-                <input
-                  type="text"
-                  placeholder="مثال: حساب مخصص لكورسات الثانوية العامة"
-                  value={addForm.notes}
-                  onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              {testResult && (
-                <div
-                  className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
-                    testResult.ok
-                      ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-300"
-                      : "bg-rose-500/10 border border-rose-500/30 text-rose-300"
-                  }`}
-                >
-                  <span>{testResult.ok ? "✅" : "⚠️"}</span>
-                  <span>{testResult.message}</span>
-                </div>
-              )}
-
-              <div className="flex items-center justify-between gap-3 pt-3 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={() => handleTestApiKey(addForm.apiKey)}
-                  disabled={testingKey || !addForm.apiKey.trim()}
-                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-sky-400 font-bold border border-white/10 transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <span>🧪</span>
-                  <span>{testingKey ? "جاري الفحص..." : "فحص المفتاح أولاً"}</span>
-                </button>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddModal(false)}
-                    className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-[var(--ink-muted)] font-bold transition-all cursor-pointer"
-                  >
-                    إلغاء
-                  </button>
-
-                  <button
-                    type="submit"
-                    disabled={savingAccount}
-                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-black shadow-md transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {savingAccount ? "جاري الحفظ..." : "حفظ الحساب"}
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Account Modal */}
-      {editingAccount && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="w-full max-w-lg p-6 rounded-3xl bg-[var(--card)] border border-white/10 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-black text-[var(--ink)] flex items-center gap-2">
-                <span>✏️</span>
-                <span>تعديل حساب: {editingAccount.name}</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setEditingAccount(null)}
-                className="text-[var(--ink-muted)] hover:text-white text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleUpdateAccount} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">اسم الحساب *</label>
-                <input
-                  type="text"
-                  required
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">
-                  تحديث مفتاح API Secret (اتركه فارغاً للإبقاء على المفتاح الحالي)
-                </label>
-                <input
-                  type="password"
-                  dir="ltr"
-                  placeholder="أدخل مفتاحاً جديداً فقط إذا كنت تريد تغييره..."
-                  value={editForm.apiKey}
-                  onChange={(e) => setEditForm({ ...editForm, apiKey: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-xs text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[var(--ink)] font-bold mb-1">حصة الباندويث (GB)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    step="0.5"
-                    value={editForm.bandwidthLimitGb}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, bandwidthLimitGb: parseFloat(e.target.value) || 5 })
-                    }
-                    className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[var(--ink)] font-bold mb-1">تمديد الصلاحية (+ أيام)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    placeholder="مثال: 30"
-                    value={editForm.extendDays || ""}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, extendDays: parseInt(e.target.value) || 0 })
-                    }
-                    className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">
-                  معرّف الثيم / Player ID (اختياري)
-                </label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={editForm.playerId}
-                  onChange={(e) => setEditForm({ ...editForm, playerId: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 font-mono text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[var(--ink)] font-bold mb-1">ملاحظات داخلية</label>
-                <input
-                  type="text"
-                  value={editForm.notes}
-                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl bg-black/30 border border-white/10 text-[var(--ink)] focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 p-2.5 rounded-xl bg-black/20 border border-white/5">
-                <input
-                  type="checkbox"
-                  id="accountActiveCheckbox"
-                  checked={editForm.isActive}
-                  onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
-                  className="rounded border-white/20 text-sky-500 focus:ring-sky-500"
-                />
-                <label htmlFor="accountActiveCheckbox" className="text-xs font-bold text-[var(--ink)] cursor-pointer">
-                  الحساب نشط ومتاح لرفع وتعيين الفيديوهات الجديدة
-                </label>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setEditingAccount(null)}
-                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-[var(--ink-muted)] font-bold transition-all cursor-pointer"
-                >
-                  إلغاء
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={savingAccount}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-black shadow-md transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {savingAccount ? "جاري التحديث..." : "حفظ التعديلات"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => !saving && setDeleteTarget(null)}
+        size="sm"
+        title="حذف الحساب؟"
+        description={deleteTarget ? `سيُحذف "${deleteTarget.name}" من المجمع. الفيديوهات المرفوعة عليه قد تتوقف عن التشغيل إن لم تُنقل.` : undefined}
+        footer={
+          <>
+            <Button onClick={() => setDeleteTarget(null)} disabled={saving}>إلغاء</Button>
+            <Button variant="danger-solid" loading={saving} onClick={() => void handleDeleteAccount()}>حذف</Button>
+          </>
+        }
+      />
     </div>
   );
 }

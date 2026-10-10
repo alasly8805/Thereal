@@ -25,11 +25,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   let allowed = false;
   if (isTeacherLike(session.role)) {
-    const enrolled = await prisma.accessCode.findFirst({
-      where: { studentId, course: { teacherId: actingTeacherId(session) } },
-      select: { id: true },
-    });
-    allowed = !!enrolled;
+    const { TeacherVisibilityService } = await import("@/services/teacher/TeacherVisibilityService");
+    const visible = await TeacherVisibilityService.findStudentById(actingTeacherId(session), studentId);
+    allowed = !!visible;
   } else if (session.role === "superadmin") {
     allowed = true;
   } else if (isAdminRole(session.role)) {

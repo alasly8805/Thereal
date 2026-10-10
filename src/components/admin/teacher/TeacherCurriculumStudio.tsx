@@ -12,6 +12,7 @@ import {
 } from "./TeacherCurriculumModals";
 import { EditQuizModal } from "./EditQuizModal";
 import { EditHomeworkModal } from "./EditHomeworkModal";
+import { TeacherVideoQuestionsManager } from "./TeacherVideoQuestionsManager";
 import {
   Folder,
   Plus,
@@ -1098,236 +1099,20 @@ export function TeacherCurriculumStudio({
 
                                     {/* In-Video Timed Questions Subpanel */}
                                     {isQuestionsOpen && (
-                                      <div className="p-4 bg-slate-50/80 dark:bg-slate-950/60 border-t border-slate-200 dark:border-slate-800 space-y-4">
-                                        <div className="flex items-center justify-between border-b border-slate-200/80 dark:border-slate-800/80 pb-2">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-bold text-xs text-slate-900 dark:text-white">
-                                              الأسئلة التفاعلية المجدولة داخل هذا الدرس
-                                            </span>
-                                            {loadingQuestions[video.id] && (
-                                              <span className="w-3.5 h-3.5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
-                                            )}
-                                          </div>
-                                          <span className="text-[10px] text-slate-500">
-                                            تظهر للطالب عند توقيت محدد أثناء المشاهدة
-                                          </span>
-                                        </div>
-
-                                        {/* Questions List */}
-                                        {questionsList.length === 0 ? (
-                                          <p className="text-xs text-slate-500 dark:text-slate-400 py-1">
-                                            لا توجد أسئلة تفاعلية مضافة لهذا الفيديو بعد. أضف سؤالاً من النموذج أدناه.
-                                          </p>
-                                        ) : (
-                                          <div className="space-y-2.5">
-                                            {questionsList.map((q: any) => {
-                                              const timeFormatted = `${Math.floor(q.triggerSecond / 60)}:${String(
-                                                q.triggerSecond % 60
-                                              ).padStart(2, "0")}`;
-                                              const isEssayQ = q.questionType === "essay";
-
-                                              return (
-                                                <div
-                                                  key={q.id}
-                                                  className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2"
-                                                >
-                                                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                      <span className="bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg border border-sky-200 dark:border-sky-800" dir="ltr">
-                                                        ⏱ {timeFormatted}
-                                                      </span>
-                                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                                                        {isEssayQ ? "📝 مقالي" : "اختيار من متعدد"}
-                                                      </span>
-                                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${
-                                                        q.mode === "pause"
-                                                          ? "bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
-                                                          : "bg-teal-50 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300"
-                                                      }`}>
-                                                        {q.mode === "pause" ? "إيقاف الفيديو" : "عرض بدون إيقاف"}
-                                                      </span>
-                                                    </div>
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => handleDeleteTimedQuestion(video.id, q.id)}
-                                                      className="text-rose-500 hover:underline text-xs cursor-pointer font-bold"
-                                                    >
-                                                      حذف
-                                                    </button>
-                                                  </div>
-
-                                                  <p className="text-xs font-bold text-slate-900 dark:text-white">
-                                                    {q.questionText}
-                                                  </p>
-
-                                                  {!isEssayQ && (
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] text-slate-600 dark:text-slate-400">
-                                                      <div className={q.correctOption === "A" ? "text-emerald-600 font-bold" : ""}>أ) {q.optionA}</div>
-                                                      <div className={q.correctOption === "B" ? "text-emerald-600 font-bold" : ""}>ب) {q.optionB}</div>
-                                                      <div className={q.correctOption === "C" ? "text-emerald-600 font-bold" : ""}>ج) {q.optionC}</div>
-                                                      <div className={q.correctOption === "D" ? "text-emerald-600 font-bold" : ""}>د) {q.optionD}</div>
-                                                    </div>
-                                                  )}
-
-                                                  {q.explanation && (
-                                                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                                                      الشرح: {q.explanation}
-                                                    </p>
-                                                  )}
-
-                                                  {q.analytics && q.analytics.totalResponses > 0 && (
-                                                    <div className="border-t border-slate-100 dark:border-slate-800 pt-1.5 flex items-center gap-3 text-[10px] text-slate-500">
-                                                      <span>الإجابات: <strong>{q.analytics.totalResponses}</strong></span>
-                                                      {!isEssayQ && (
-                                                        <span>نسبة النجاح: <strong className="text-emerald-600">{q.analytics.correctPercent}%</strong></span>
-                                                      )}
-                                                      <span>متوسط الزمن: <strong>+{q.analytics.avgResponseDelay}ث</strong></span>
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        )}
-
-                                        {/* Add Timed Question Form */}
-                                        <form
-                                          onSubmit={(e) => handleAddTimedQuestion(e, video.id)}
-                                          className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3"
-                                        >
-                                          <h5 className="text-xs font-bold text-slate-900 dark:text-white">
-                                            + إضافة سؤال تفاعلي جديد في هذا التوقيت
-                                          </h5>
-
-                                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                                            <div>
-                                              <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                                                نوع السؤال
-                                              </label>
-                                              <select
-                                                value={getAddQuestionState(video.id).questionType || "mcq"}
-                                                onChange={(e) => updateAddQuestionState(video.id, { questionType: e.target.value })}
-                                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                              >
-                                                <option value="mcq">اختيار من متعدد (MCQ)</option>
-                                                <option value="essay">سؤال مقالي</option>
-                                              </select>
-                                            </div>
-
-                                            <div>
-                                              <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                                                التوقيت (ثواني أو MM:SS) *
-                                              </label>
-                                              <input
-                                                type="text"
-                                                required
-                                                placeholder="مثال: 01:30 أو 90"
-                                                dir="ltr"
-                                                value={getAddQuestionState(video.id).triggerTimestamp}
-                                                onChange={(e) => updateAddQuestionState(video.id, { triggerTimestamp: e.target.value })}
-                                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs font-mono"
-                                              />
-                                            </div>
-
-                                            <div>
-                                              <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                                                طريقة العرض
-                                              </label>
-                                              <select
-                                                value={getAddQuestionState(video.id).mode}
-                                                onChange={(e) => updateAddQuestionState(video.id, { mode: e.target.value })}
-                                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                              >
-                                                <option value="pause">إيقاف الفيديو حتى الإجابة</option>
-                                                <option value="overlay">عرض كارت زاوية بدون إيقاف</option>
-                                              </select>
-                                            </div>
-                                          </div>
-
-                                          <div>
-                                            <input
-                                              type="text"
-                                              required
-                                              placeholder="اكتب السؤال بوضوح للطالب..."
-                                              value={getAddQuestionState(video.id).questionText}
-                                              onChange={(e) => updateAddQuestionState(video.id, { questionText: e.target.value })}
-                                              className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                            />
-                                          </div>
-
-                                          {getAddQuestionState(video.id).questionType !== "essay" && (
-                                            <>
-                                              <div className="grid grid-cols-2 gap-2">
-                                                <input
-                                                  type="text"
-                                                  required
-                                                  placeholder="أ) الخيار الأول"
-                                                  value={getAddQuestionState(video.id).optionA}
-                                                  onChange={(e) => updateAddQuestionState(video.id, { optionA: e.target.value })}
-                                                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                                />
-                                                <input
-                                                  type="text"
-                                                  required
-                                                  placeholder="ب) الخيار الثاني"
-                                                  value={getAddQuestionState(video.id).optionB}
-                                                  onChange={(e) => updateAddQuestionState(video.id, { optionB: e.target.value })}
-                                                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                                />
-                                                <input
-                                                  type="text"
-                                                  required
-                                                  placeholder="ج) الخيار الثالث"
-                                                  value={getAddQuestionState(video.id).optionC}
-                                                  onChange={(e) => updateAddQuestionState(video.id, { optionC: e.target.value })}
-                                                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                                />
-                                                <input
-                                                  type="text"
-                                                  required
-                                                  placeholder="د) الخيار الرابع"
-                                                  value={getAddQuestionState(video.id).optionD}
-                                                  onChange={(e) => updateAddQuestionState(video.id, { optionD: e.target.value })}
-                                                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                                />
-                                              </div>
-
-                                              <div className="flex items-center gap-3">
-                                                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                                                  الإجابة الصحيحة:
-                                                </label>
-                                                <select
-                                                  value={getAddQuestionState(video.id).correctOption}
-                                                  onChange={(e) => updateAddQuestionState(video.id, { correctOption: e.target.value })}
-                                                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs font-bold"
-                                                >
-                                                  <option value="A">الخيار أ</option>
-                                                  <option value="B">الخيار ب</option>
-                                                  <option value="C">الخيار ج</option>
-                                                  <option value="D">الخيار د</option>
-                                                </select>
-                                              </div>
-                                            </>
-                                          )}
-
-                                          <div>
-                                            <input
-                                              type="text"
-                                              placeholder="الشرح أو التفسير بعد الإجابة (اختياري)..."
-                                              value={getAddQuestionState(video.id).explanation}
-                                              onChange={(e) => updateAddQuestionState(video.id, { explanation: e.target.value })}
-                                              className="w-full px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-xs"
-                                            />
-                                          </div>
-
-                                          <button
-                                            type="submit"
-                                            disabled={submittingQuestion[video.id]}
-                                            className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
-                                          >
-                                            {submittingQuestion[video.id] ? "جارٍ الحفظ..." : "حفظ السؤال التفاعلي"}
-                                          </button>
-                                        </form>
+                                      <div className="p-4 bg-slate-50/80 dark:bg-slate-950/60 border-t border-slate-200 dark:border-slate-800">
+                                        <TeacherVideoQuestionsManager
+                                          videoId={video.id}
+                                          videoTitle={video.title}
+                                          videoDurationMinutes={video.durationMinutes}
+                                          videoProvider={video.videoProvider}
+                                          providerVideoId={video.providerVideoId}
+                                          onCountChange={(count) => {
+                                            setVideoQuestions((prev) => ({
+                                              ...prev,
+                                              [video.id]: new Array(count).fill(null),
+                                            }));
+                                          }}
+                                        />
                                       </div>
                                     )}
                                   </div>

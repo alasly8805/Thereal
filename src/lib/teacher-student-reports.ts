@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { bookingGrantsCourseAccess } from "@/lib/course-track";
 import { TeacherVisibilityService } from "@/services/teacher/TeacherVisibilityService";
 import { maskPhone } from "@/lib/teacher-scope";
 
@@ -9,13 +10,14 @@ const REAL_STUDENT = {
   accountMode: { not: "TESTER" as const },
 };
 
-/** TeacherSubscription has no isPaid column — paid = active + amount > 0. */
-function paidActiveSubscriptionWhere(teacherId: string) {
+/** Paid booking that has not expired. This is what opens the monthly course. */
+function openPaidBookingWhere(teacherId: string) {
   return {
     some: {
       teacherId,
-      status: "active",
+      status: "active" as const,
       amount: { gt: 0 },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
     },
   };
 }
@@ -23,6 +25,8 @@ function paidActiveSubscriptionWhere(teacherId: string) {
 export type TeacherStudentRow = {
   id: string;
   name: string;
+  code?: string | null;
+  referralCode?: string | null;
   email: string | null;
   phone: string | null;
   parentPhone: string | null;
@@ -31,6 +35,42 @@ export type TeacherStudentRow = {
   lastLoginAt: string | null;
   courses: Array<{ id: string; title: string }>;
 };
+
+/** Courses a booking opens, for students who may have no enrollment row. */
+async function coveredCoursesForBookings(
+  teacherId: string,
+  students: Array<{ id: string; bookings: Array<{ track: string | null; planType: string | null }> }>
+): Promise<Map<string, Array<{ id: string; title: string }>>> {
+  const result = new Map<string, Array<{ id: string; title: string }>>();
+  if (!students.length) return result;
+
+  const [courses, overrides] = await Promise.all([
+    prisma.course.findMany({
+      where: { teacherId, isPaid: true, price: { gt: 0 } },
+      select: { id: true, title: true, subject: true, description: true, deliveryMode: true },
+    }),
+    prisma.appSetting.findMany({
+      where: { key: { startsWith: "course_track_" } },
+      select: { key: true, value: true },
+    }),
+  ]);
+  const trackOverride = new Map(
+    overrides.map((row) => [row.key.slice("course_track_".length), row.value])
+  );
+
+  for (const student of students) {
+    if (!student.bookings.length) continue;
+    const coursesForStudent: Array<{ id: string; title: string }> = [];
+    for (const course of courses) {
+      const opened = student.bookings.some((booking) =>
+        bookingGrantsCourseAccess(course, booking.track, trackOverride.get(course.id), booking.planType)
+      );
+      if (opened) coursesForStudent.push({ id: course.id, title: course.title });
+    }
+    if (coursesForStudent.length) result.set(student.id, coursesForStudent);
+  }
+  return result;
+}
 
 export async function listTeacherStudents(
   teacherId: string,
@@ -42,8 +82,8 @@ export async function listTeacherStudents(
       OR: [
         { accessCodes: { some: { isActive: true, course: { teacherId } } } },
         { courseEnrollments: { some: { course: { teacherId } } } },
+        { studentSubscriptions: openPaidBookingWhere(teacherId) },
       ],
-      studentSubscriptions: paidActiveSubscriptionWhere(teacherId),
     },
     orderBy: { name: "asc" },
     select: {
@@ -52,6 +92,7 @@ export async function listTeacherStudents(
       email: true,
       phone: true,
       parentPhone: true,
+      referralCode: true,
       educationalStage: true,
       isActive: true,
       lastLoginAt: true,
@@ -63,17 +104,39 @@ export async function listTeacherStudents(
         where: { isActive: true, course: { teacherId, isPaid: true, price: { gt: 0 } } },
         select: { course: { select: { id: true, title: true } } },
       },
+      studentSubscriptions: {
+        where: {
+          teacherId,
+          status: "active",
+          amount: { gt: 0 },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        select: { languageTrack: true, planType: true },
+      },
     },
   });
+
+  const coveredByStudent = await coveredCoursesForBookings(
+    teacherId,
+    students.map((s) => ({
+      id: s.id,
+      bookings: s.studentSubscriptions.map((sub) => ({ track: sub.languageTrack, planType: sub.planType })),
+    }))
+  );
 
   return students.map((s) => {
     const courses = new Map<string, { id: string; title: string }>();
     for (const row of [...s.courseEnrollments, ...s.accessCodes]) {
       if (row.course) courses.set(row.course.id, row.course);
     }
+    for (const course of coveredByStudent.get(s.id) || []) {
+      courses.set(course.id, course);
+    }
     return {
       id: s.id,
       name: s.name,
+      code: s.referralCode || s.id,
+      referralCode: s.referralCode,
       email: s.email,
       phone: canSeePhones ? s.phone : maskPhone(s.phone),
       parentPhone: canSeePhones ? s.parentPhone : maskPhone(s.parentPhone),
@@ -118,6 +181,38 @@ async function getActiveCoursesByStudent(
   for (const row of enrollments) add(row.studentId, row.course);
   for (const row of codes) {
     if (row.studentId) add(row.studentId, row.course);
+  }
+
+  const subs = await prisma.teacherSubscription.findMany({
+    where: {
+      teacherId,
+      studentId: { in: studentIds },
+      status: "active",
+      amount: { gt: 0 },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    select: { studentId: true, languageTrack: true, planType: true },
+  });
+  const bookingsByStudent = new Map<string, Array<{ track: string | null; planType: string | null }>>();
+  for (const sub of subs) {
+    const bookings = bookingsByStudent.get(sub.studentId) || [];
+    bookings.push({ track: sub.languageTrack, planType: sub.planType });
+    bookingsByStudent.set(sub.studentId, bookings);
+  }
+  const covered = await coveredCoursesForBookings(
+    teacherId,
+    [...bookingsByStudent.entries()].map(([id, bookings]) => ({ id, bookings }))
+  );
+  const exclusions = await prisma.appSetting.findMany({
+    where: { key: { startsWith: "course_excluded_" }, value: "true" },
+    select: { key: true },
+  });
+  const excluded = new Set(exclusions.map((row) => row.key.slice("course_excluded_".length)));
+  for (const [studentId, courses] of covered) {
+    for (const course of courses) {
+      if (excluded.has(`${course.id}_${studentId}`)) continue;
+      add(studentId, course);
+    }
   }
 
   return new Map([...map.entries()].map(([id, courses]) => [id, [...courses.values()]]));
@@ -291,6 +386,7 @@ export async function getTeacherStudentReport(
       email: true,
       phone: true,
       parentPhone: true,
+      referralCode: true,
       educationalStage: true,
       isActive: true,
       lastLoginAt: true,
@@ -309,6 +405,8 @@ export async function getTeacherStudentReport(
     student: {
       id: student.id,
       name: student.name,
+      code: student.referralCode || student.id,
+      referralCode: student.referralCode,
       email: student.email,
       phone: canSeePhones ? student.phone : maskPhone(student.phone),
       parentPhone: canSeePhones ? student.parentPhone : maskPhone(student.parentPhone),
@@ -478,6 +576,8 @@ export async function getTeacherStudentReport(
     student: {
       id: student.id,
       name: student.name,
+      code: student.referralCode || student.id,
+      referralCode: student.referralCode,
       email: student.email,
       phone: canSeePhones ? student.phone : maskPhone(student.phone),
       parentPhone: canSeePhones ? student.parentPhone : maskPhone(student.parentPhone),

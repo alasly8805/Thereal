@@ -7,114 +7,137 @@ import { prisma } from "@/lib/prisma";
 /**
  * Teacher CRUD for in-video timed questions.
  *
- * POST — Create a question at a specific timestamp.
- * GET  — List all questions for a video (with analytics).
+ * POST  — Create a question at a specific timestamp (supports 2, 3, or 4 options).
+ * GET   — List all questions for a video (with analytics).
+ * PATCH — Update question details (e.g. dragging timestamp on timeline).
+ * DELETE— Delete a question.
  */
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
 
-    if (session && session.role === "superadmin") {
-      try {
-        await logAdminAction({
-          adminId: session.id,
-          adminName: session.name,
-          action: "SUPERADMIN_ACTION",
-          targetType: "API_ROUTE",
-          targetId: req.nextUrl ? req.nextUrl.pathname : req.url,
-          targetName: req.method,
-        });
-      } catch (e) {}
-    }
+  if (session && session.role === "superadmin") {
+    try {
+      await logAdminAction({
+        adminId: session.id,
+        adminName: session.name,
+        action: "SUPERADMIN_ACTION",
+        targetType: "API_ROUTE",
+        targetId: req.nextUrl ? req.nextUrl.pathname : req.url,
+        targetName: req.method,
+      });
+    } catch {}
+  }
+
   if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
   const { id: videoId } = await params;
 
-  const body = await req.json().catch(() => ({})) as {
+  const body = (await req.json().catch(() => ({}))) as {
+    timestamp?: number;
     triggerSecond?: number;
+    question?: string;
+    questionText?: string;
+    options?: string[];
+    correctIndex?: number;
+    isRequired?: boolean;
+    explanation?: string;
+    // Legacy support:
     mode?: string;
     questionType?: string;
-    questionText?: string;
     optionA?: string;
     optionB?: string;
     optionC?: string;
     optionD?: string;
     correctOption?: string;
-    explanation?: string;
     refireOnRewatch?: boolean;
   };
 
-  const questionType = body.questionType === "essay" ? "essay" : "mcq";
+  const rawSeconds = body.timestamp ?? body.triggerSecond;
+  if (typeof rawSeconds !== "number" || isNaN(rawSeconds) || rawSeconds < 0) {
+    return NextResponse.json({ error: "توقيت عرض السؤال بالثواني مطلوب" }, { status: 400 });
+  }
+  const timestamp = Math.floor(rawSeconds);
 
-  // Validate required fields
-  if (typeof body.triggerSecond !== "number" || !body.questionText?.trim()) {
+  const questionText = (body.question || body.questionText || "").trim();
+  if (!questionText) {
+    return NextResponse.json({ error: "نص السؤال مطلوب" }, { status: 400 });
+  }
+
+  // Parse options: either provided as array `options` or as `optionA/B/C/D`
+  let optionsArray: string[] = [];
+  if (Array.isArray(body.options) && body.options.length >= 2) {
+    optionsArray = body.options.map((o) => String(o).trim()).filter(Boolean);
+  } else {
+    optionsArray = [body.optionA, body.optionB, body.optionC, body.optionD]
+      .filter((opt): opt is string => typeof opt === "string" && opt.trim().length > 0)
+      .map((opt) => opt.trim());
+  }
+
+  if (optionsArray.length < 2 || optionsArray.length > 4) {
     return NextResponse.json(
-      { error: "نص السؤال وتوقيت العرض مطلوبان" },
+      { error: "يجب توفير بين 2 إلى 4 اختيارات للسؤال" },
       { status: 400 }
     );
   }
 
-  if (questionType === "mcq") {
-    if (
-      !body.optionA?.trim() ||
-      !body.optionB?.trim() ||
-      !body.optionC?.trim() ||
-      !body.optionD?.trim() ||
-      !["A", "B", "C", "D"].includes(body.correctOption ?? "")
-    ) {
-      return NextResponse.json(
-        { error: "الخيارات الأربعة والإجابة الصحيحة مطلوبة لأسئلة الاختيار من متعدد" },
-        { status: 400 }
-      );
-    }
+  // Determine correctIndex
+  let correctIndex = 0;
+  if (typeof body.correctIndex === "number" && Number.isInteger(body.correctIndex)) {
+    correctIndex = body.correctIndex;
+  } else if (body.correctOption) {
+    const map: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
+    correctIndex = map[body.correctOption] ?? 0;
   }
 
-  // Validate mode
-  const mode = body.mode === "overlay" ? "overlay" : "pause";
+  if (correctIndex < 0 || correctIndex >= optionsArray.length) {
+    return NextResponse.json(
+      { error: "يرجى تحديد الإجابة الصحيحة من بين الخيارات المتاحة" },
+      { status: 400 }
+    );
+  }
 
-  // Verify the video exists and belongs to the teacher's course
+  const isRequired = body.isRequired !== false;
+  const explanation = body.explanation?.trim() || null;
+
+  // Verify the video exists and belongs to the teacher
   const videoWhere = session.role === "superadmin"
     ? { id: videoId }
     : { id: videoId, folder: { course: { teacherId: actingTeacherId(session) } } };
+
   const video = await prisma.video.findFirst({
     where: videoWhere,
-    select: { id: true, durationMinutes: true, videoProvider: true },
+    select: { id: true, durationMinutes: true },
   });
   if (!video) {
     return NextResponse.json({ error: "الفيديو غير موجود" }, { status: 404 });
   }
 
-  if (video.videoProvider !== "youtube") {
-    return NextResponse.json(
-      { error: "الأسئلة التفاعلية متاحة حالياً فقط لفيديوهات يوتيوب" },
-      { status: 400 }
-    );
-  }
-
-  // Validate triggerSecond doesn't exceed video duration
-  const triggerSecond = Math.max(0, Math.floor(body.triggerSecond));
-  if (video.durationMinutes > 0 && triggerSecond > video.durationMinutes * 60) {
-    return NextResponse.json(
-      { error: `التوقيت (${triggerSecond}ث) يتجاوز مدة الفيديو (${video.durationMinutes} دقيقة)` },
-      { status: 400 }
-    );
-  }
+  // Map to legacy letters
+  const letters = ["A", "B", "C", "D"];
+  const correctOption = letters[correctIndex] || "A";
 
   const question = await prisma.videoQuestion.create({
     data: {
       videoId,
-      triggerSecond,
-      mode,
-      questionType,
-      questionText: body.questionText.trim(),
-      optionA: questionType === "mcq" ? body.optionA!.trim() : null,
-      optionB: questionType === "mcq" ? body.optionB!.trim() : null,
-      optionC: questionType === "mcq" ? body.optionC!.trim() : null,
-      optionD: questionType === "mcq" ? body.optionD!.trim() : null,
-      correctOption: questionType === "mcq" ? body.correctOption! : null,
-      explanation: body.explanation?.trim() || null,
+      timestamp,
+      question: questionText,
+      options: optionsArray,
+      correctIndex,
+      explanation,
+      isRequired,
+      // Legacy fields:
+      triggerSecond: timestamp,
+      mode: body.mode || "pause",
+      questionType: "mcq",
+      questionText,
+      optionA: optionsArray[0] || null,
+      optionB: optionsArray[1] || null,
+      optionC: optionsArray[2] || null,
+      optionD: optionsArray[3] || null,
+      correctOption,
       refireOnRewatch: body.refireOnRewatch ?? false,
     },
   });
@@ -130,7 +153,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id: videoId } = await params;
 
-  // Verify the video belongs to the teacher
   const videoWhere = session.role === "superadmin"
     ? { id: videoId }
     : { id: videoId, folder: { course: { teacherId: actingTeacherId(session) } } };
@@ -144,40 +166,49 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const questions = await prisma.videoQuestion.findMany({
     where: { videoId },
-    orderBy: { triggerSecond: "asc" },
+    orderBy: [{ timestamp: "asc" }, { triggerSecond: "asc" }],
     include: {
+      progress: {
+        select: { isCorrect: true, attempts: true },
+      },
       responses: {
         select: { isCorrect: true, answeredAtSecond: true },
       },
     },
   });
 
-  // Compute per-question analytics
   const questionsWithAnalytics = questions.map((q) => {
-    const total = q.responses.length;
-    const correct = q.responses.filter((r) => r.isCorrect).length;
-    const avgDelay = total > 0
-      ? q.responses.reduce((sum, r) => sum + Math.abs(r.answeredAtSecond - q.triggerSecond), 0) / total
-      : 0;
+    let parsedOptions: string[] = [];
+    if (Array.isArray(q.options) && q.options.length > 0) {
+      parsedOptions = q.options.map(String);
+    } else {
+      parsedOptions = [q.optionA, q.optionB, q.optionC, q.optionD]
+        .filter((opt): opt is string => typeof opt === "string" && opt.trim().length > 0);
+    }
+
+    const effectiveTime = typeof q.timestamp === "number" && q.timestamp > 0
+      ? q.timestamp
+      : (q.triggerSecond || 0);
+
+    const totalStudents = q.progress.length || q.responses.length;
+    const correctCount = q.progress.filter((p) => p.isCorrect).length || q.responses.filter((r) => r.isCorrect).length;
 
     return {
       id: q.id,
-      triggerSecond: q.triggerSecond,
-      mode: q.mode,
-      questionType: q.questionType || "mcq",
-      questionText: q.questionText,
-      optionA: q.optionA,
-      optionB: q.optionB,
-      optionC: q.optionC,
-      optionD: q.optionD,
+      timestamp: effectiveTime,
+      triggerSecond: effectiveTime,
+      question: q.question || q.questionText || "",
+      questionText: q.question || q.questionText || "",
+      options: parsedOptions,
+      correctIndex: q.correctIndex,
       correctOption: q.correctOption,
       explanation: q.explanation,
-      refireOnRewatch: q.refireOnRewatch,
+      isRequired: q.isRequired ?? true,
+      mode: q.mode || "pause",
       createdAt: q.createdAt,
       analytics: {
-        totalResponses: total,
-        correctPercent: total > 0 ? Math.round((correct / total) * 100) : 0,
-        avgResponseDelay: Math.round(avgDelay),
+        totalResponses: totalStudents,
+        correctPercent: totalStudents > 0 ? Math.round((correctCount / totalStudents) * 100) : 0,
       },
     };
   });
@@ -185,27 +216,122 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json({ questions: questionsWithAnalytics });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
 
-    if (session && session.role === "superadmin") {
-      try {
-        await logAdminAction({
-          adminId: session.id,
-          adminName: session.name,
-          action: "SUPERADMIN_ACTION",
-          targetType: "API_ROUTE",
-          targetId: req.nextUrl ? req.nextUrl.pathname : req.url,
-          targetName: req.method,
-        });
-      } catch (e) {}
-    }
+  if (session && session.role === "superadmin") {
+    try {
+      await logAdminAction({
+        adminId: session.id,
+        adminName: session.name,
+        action: "SUPERADMIN_ACTION",
+        targetType: "API_ROUTE",
+        targetId: req.nextUrl ? req.nextUrl.pathname : req.url,
+        targetName: req.method,
+      });
+    } catch {}
+  }
+
   if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
   const { id: videoId } = await params;
-  const body = await req.json().catch(() => ({})) as { questionId?: string };
+  const body = (await req.json().catch(() => ({}))) as {
+    questionId: string;
+    timestamp?: number;
+    question?: string;
+    options?: string[];
+    correctIndex?: number;
+    isRequired?: boolean;
+    explanation?: string;
+  };
+
+  if (!body.questionId) {
+    return NextResponse.json({ error: "معرف السؤال مطلوب" }, { status: 400 });
+  }
+
+  // Verify ownership
+  const existing = await prisma.videoQuestion.findFirst({
+    where: {
+      id: body.questionId,
+      videoId,
+      ...(session.role !== "superadmin" ? { video: { folder: { course: { teacherId: actingTeacherId(session) } } } } : {}),
+    },
+  });
+
+  if (!existing) {
+    return NextResponse.json({ error: "السؤال غير موجود أو ليس لديك صلاحية لتعديله" }, { status: 404 });
+  }
+
+  const updateData: Record<string, any> = {};
+
+  if (typeof body.timestamp === "number" && !isNaN(body.timestamp) && body.timestamp >= 0) {
+    const t = Math.floor(body.timestamp);
+    updateData.timestamp = t;
+    updateData.triggerSecond = t;
+  }
+
+  if (typeof body.question === "string" && body.question.trim().length > 0) {
+    updateData.question = body.question.trim();
+    updateData.questionText = body.question.trim();
+  }
+
+  if (Array.isArray(body.options) && body.options.length >= 2 && body.options.length <= 4) {
+    const opts = body.options.map((o) => String(o).trim()).filter(Boolean);
+    if (opts.length >= 2) {
+      updateData.options = opts;
+      updateData.optionA = opts[0] || null;
+      updateData.optionB = opts[1] || null;
+      updateData.optionC = opts[2] || null;
+      updateData.optionD = opts[3] || null;
+    }
+  }
+
+  if (typeof body.correctIndex === "number" && Number.isInteger(body.correctIndex)) {
+    updateData.correctIndex = body.correctIndex;
+    const letters = ["A", "B", "C", "D"];
+    updateData.correctOption = letters[body.correctIndex] || "A";
+  }
+
+  if (typeof body.isRequired === "boolean") {
+    updateData.isRequired = body.isRequired;
+  }
+
+  if (body.explanation !== undefined) {
+    updateData.explanation = body.explanation?.trim() || null;
+  }
+
+  const updated = await prisma.videoQuestion.update({
+    where: { id: body.questionId },
+    data: updateData,
+  });
+
+  return NextResponse.json({ question: updated, ok: true });
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getSession();
+
+  if (session && session.role === "superadmin") {
+    try {
+      await logAdminAction({
+        adminId: session.id,
+        adminName: session.name,
+        action: "SUPERADMIN_ACTION",
+        targetType: "API_ROUTE",
+        targetId: req.nextUrl ? req.nextUrl.pathname : req.url,
+        targetName: req.method,
+      });
+    } catch {}
+  }
+
+  if (!session || (!isTeacherLike(session.role) && session.role !== "superadmin")) {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+
+  const { id: videoId } = await params;
+  const body = (await req.json().catch(() => ({}))) as { questionId?: string };
 
   if (!body.questionId) {
     return NextResponse.json({ error: "questionId مطلوب" }, { status: 400 });

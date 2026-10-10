@@ -110,19 +110,58 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           if (!isTester) {
             const targetCourseRow = await prisma.course.findUnique({
               where: { id },
-              select: { teacherId: true },
+              select: { teacherId: true, bookingKind: true, bookingTerm: true },
             });
             const canBypass = await canBypassPayment(role, targetCourseRow?.teacherId, session.accountMode);
             if (!canBypass) {
+              let isRenewalRequired = false;
+              let renewalMonth: number | null = null;
+
+              if (targetCourseRow?.teacherId) {
+                const subs = await prisma.teacherSubscription.findMany({
+                  where: { studentId: session.id, teacherId: targetCourseRow.teacherId },
+                  select: { planType: true, termNumbers: true },
+                });
+                if (subs.length > 0) {
+                  const { parseCoursePlacements } = await import("@/lib/teacher-terms");
+                  const placements = parseCoursePlacements(targetCourseRow);
+                  const monthPlacements = placements.filter((p) => p.kind === "month");
+                  if (monthPlacements.length > 0) {
+                    const ownedMonths = Array.from(
+                      new Set(subs.flatMap((s) => (s.termNumbers || []).filter((n) => typeof n === "number" && n > 0)))
+                    );
+                    if (ownedMonths.length === 0 && subs.some((s) => s.planType === "monthly")) {
+                      ownedMonths.push(1);
+                    }
+                    const targetPlacement = monthPlacements.find((p) => !ownedMonths.includes(p.term)) || monthPlacements[0];
+                    if (targetPlacement) {
+                      isRenewalRequired = true;
+                      renewalMonth = targetPlacement.term || 2;
+                    }
+                  }
+                }
+              }
+
               console.log("[center-video-access]", JSON.stringify({
                 event: "course_learn_denied",
                 phone: session.phone,
                 studentId: session.id,
                 courseId: id,
                 code: "NOT_ENROLLED",
+                isRenewalRequired,
+                renewalMonth,
               }));
+
               return NextResponse.json(
-                { error: "لا يوجد صلاحية للوصول. فعّل كود الكورس أو تواصل مع المعلم.", code: "NOT_ENROLLED" },
+                {
+                  error: isRenewalRequired
+                    ? `هذا الكورس متاح لمشتركي باقة الشهر ${renewalMonth || 2}. يرجى تجديد الاشتراك للوصول إلى محتواه.`
+                    : "لا يوجد صلاحية للوصول. فعّل كود الكورس أو تواصل مع المعلم.",
+                  code: "NOT_ENROLLED",
+                  isRenewalRequired,
+                  renewalMonth,
+                  teacherId: targetCourseRow?.teacherId,
+                },
                 { status: 403 }
               );
             }
@@ -166,6 +205,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 closeAt: true,
                 enableAutoClose: true,
                 questions: { orderBy: { order: "asc" } },
+                results: {
+                  where: { studentId: session.id, completedAt: { not: null } },
+                  select: { score: true, totalQ: true, completedAt: true, allowRetake: true },
+                  take: 1,
+                },
               } as any),
             },
             homeworks: {
@@ -193,6 +237,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                     totalQ: true,
                     completedAt: true,
                     allowRetake: true,
+                    review: { select: { verdict: true, reviewedAt: true } },
                   },
                   take: 1,
                 },
@@ -255,11 +300,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (role === "student" && !centerGrant) {
       try {
         const allSourceIds: string[] = [];
-        for (const folder of grantedFolders as typeof course.folders) {
-          folder.videos.forEach((v) => allSourceIds.push(v.id));
-          folder.quizzes.forEach((q) => allSourceIds.push(q.id));
-          folder.homeworks.forEach((h) => allSourceIds.push(h.id));
-          folder.materials.forEach((m) => allSourceIds.push(m.id));
+        for (const folder of grantedFolders as any[]) {
+          folder.videos?.forEach((v: any) => allSourceIds.push(v.id));
+          folder.quizzes?.forEach((q: any) => allSourceIds.push(q.id));
+          folder.homeworks?.forEach((h: any) => allSourceIds.push(h.id));
+          folder.materials?.forEach((m: any) => allSourceIds.push(m.id));
         }
         const result = await getCourseContentLocks(session.id, allSourceIds);
         chainActive = result.active;
@@ -314,6 +359,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
             chainLocked: chainActive ? chainLocks.has(q.id) : false,
             chainLockedBy: chainActive ? (chainLocks.get(q.id)?.title ?? null) : null,
             timedClosed: timedClosed.has(q.id),
+            myResult: (quiz as { results?: Array<{ score: number; totalQ: number; completedAt: Date | null; allowRetake?: boolean }> }).results?.[0] ?? null,
           };
         });
         const homeworks = (folder.homeworks || []).map((hw: any) => ({

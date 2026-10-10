@@ -1,6 +1,7 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
+import { CreditCard, FlaskConical, KeyRound, PenLine, Ticket, Wallet } from "lucide-react";
 
 /* ─── Formatters ─────────────────────────────────────────────────────────── */
 
@@ -35,17 +36,17 @@ export function toDatetimeLocalValue(iso?: string) {
 export const discounted = (price: number, discountPercent?: number | null) =>
   discountPercent && discountPercent > 0 ? Math.round(price * (1 - discountPercent / 100)) : null;
 
-/* ─── Palette (semantic, works in both themes) ───────────────────────────── */
+/* ─── Palette (semantic tokens from admin.css — adapt to both themes) ───── */
 
 export const tone = {
   brand: "var(--brand)",
-  gold: "var(--gold-2)",
-  green: "#22c55e",
-  sky: "#38bdf8",
-  amber: "#f59e0b",
-  orange: "#f97316",
-  red: "#ef4444",
-  violet: "#8b5cf6",
+  gold: "var(--gold)",
+  green: "var(--ok)",
+  sky: "var(--info)",
+  amber: "var(--warn)",
+  orange: "var(--orange)",
+  red: "var(--danger)",
+  violet: "var(--violet)",
   slate: "var(--ink-3)",
 } as const;
 
@@ -62,14 +63,7 @@ export function Card({
   className?: string;
   padded?: boolean;
 }) {
-  return (
-    <div
-      className={`rounded-2xl overflow-hidden ${padded ? "p-4" : ""} ${className}`}
-      style={{ background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "var(--shadow-sm)" }}
-    >
-      {children}
-    </div>
-  );
+  return <div className={`adm-panel adm-panel-clip ${padded ? "adm-panel-body" : ""} ${className}`}>{children}</div>;
 }
 
 export function CardHeader({
@@ -84,43 +78,38 @@ export function CardHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="p-4 flex flex-wrap items-start justify-between gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
-      <div className="flex items-start gap-2.5 min-w-0">
+    <div className="adm-panel-head">
+      <div className="flex items-start gap-3 min-w-0">
         {icon && (
           <span
-            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+            className="w-8 h-8 rounded-[10px] grid place-items-center shrink-0"
             style={{ background: "var(--brand-soft)", color: "var(--brand)" }}
+            aria-hidden
           >
             {icon}
           </span>
         )}
         <div className="min-w-0">
-          <h2 className="font-black text-sm leading-tight" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
-            {title}
-          </h2>
-          {subtitle && (
-            <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--ink-3)" }}>
-              {subtitle}
-            </p>
-          )}
+          <h2 className="adm-h2">{title}</h2>
+          {subtitle && <p className="adm-sub">{subtitle}</p>}
         </div>
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="adm-actions">{actions}</div>}
     </div>
   );
 }
 
 export function EmptyState({ icon, text }: { icon: ReactNode; text: string }) {
   return (
-    <div className="p-10 text-center text-xs flex flex-col items-center gap-2" style={{ color: "var(--ink-3)" }}>
-      <span className="opacity-60">{icon}</span>
-      <p>{text}</p>
+    <div className="adm-empty">
+      <span className="adm-empty-icon" aria-hidden>{icon}</span>
+      <p className="adm-empty-text">{text}</p>
     </div>
   );
 }
 
 export function SkeletonBlock({ h = 80 }: { h?: number }) {
-  return <div className="rounded-xl animate-pulse" style={{ height: h, background: "var(--surface-2)" }} />;
+  return <div className="adm-skel" style={{ height: h, borderRadius: 16 }} aria-hidden />;
 }
 
 /* ─── Small atoms ────────────────────────────────────────────────────────── */
@@ -136,13 +125,8 @@ export function Pill({
   title?: string;
   className?: string;
 }) {
-  const c = tone[color];
   return (
-    <span
-      title={title}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold whitespace-nowrap ${className}`}
-      style={{ background: `color-mix(in srgb, ${c} 14%, transparent)`, color: c, border: `1px solid color-mix(in srgb, ${c} 30%, transparent)` }}
-    >
+    <span title={title} className={`adm-badge ${className}`} style={{ ["--t" as string]: tone[color] }}>
       {children}
     </span>
   );
@@ -168,27 +152,20 @@ export function Stat({
   delta?: number | null;
 }) {
   return (
-    <div
-      className={`rounded-xl flex flex-col justify-between ${compact ? "p-3" : "p-3.5"}`}
-      style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
-      title={lore}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-semibold truncate" style={{ color: "var(--ink-2)" }}>{label}</span>
-        <span className="flex items-center gap-1 shrink-0">
+    <div className={`adm-stat ${compact ? "is-well" : ""}`} title={lore}>
+      <div className="adm-stat-label">
+        <span className="truncate">{label}</span>
+        <span className="flex items-center gap-1.5 shrink-0">
           {delta != null && delta !== 0 && <Delta n={delta} />}
-          {icon && <span style={{ color: tone[color] }} className="opacity-90">{icon}</span>}
+          {icon && <span style={{ color: tone[color] }} aria-hidden>{icon}</span>}
         </span>
       </div>
-      <div
-        className={`${compact ? "text-lg" : "text-xl"} font-black leading-none mt-2 tabular-nums`}
-        style={{ color: tone[color], fontFamily: "var(--font-head)" }}
-      >
+      <div className="adm-stat-value" style={{ color: color === "brand" ? "var(--ink)" : tone[color], fontSize: compact ? 19 : undefined }}>
         {value}
       </div>
-      {sub && <div className="text-[10px] mt-1.5 font-medium leading-snug" style={{ color: "var(--ink-3)" }}>{sub}</div>}
+      {sub && <div className="adm-stat-sub">{sub}</div>}
       {lore && (
-        <p className="text-[10px] mt-1.5 leading-relaxed" style={{ color: "var(--ink-3)" }}>
+        <p className="adm-stat-sub" style={{ borderTop: "1px dashed var(--border)", paddingTop: 6 }}>
           {lore}
         </p>
       )}
@@ -199,16 +176,10 @@ export function Stat({
 export function Delta({ n, money = false }: { n: number; money?: boolean }) {
   if (!n) return null;
   const up = n > 0;
-  const label = money
-    ? `${up ? "+" : ""}${egp(n)}`
-    : `${up ? "+" : ""}${ar(n)}`;
+  const label = money ? `${up ? "+" : ""}${egp(n)}` : `${up ? "+" : ""}${ar(n)}`;
   return (
     <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-black tabular-nums"
-      style={{
-        background: up ? "color-mix(in srgb, #22c55e 16%, transparent)" : "color-mix(in srgb, #ef4444 16%, transparent)",
-        color: up ? tone.green : tone.red,
-      }}
+      className={`adm-badge ${up ? "is-ok" : "is-bad"} adm-num`}
       title={up ? "زاد منذ تلك اللحظة حتى الآن" : "نقص منذ تلك اللحظة حتى الآن"}
     >
       {label}
@@ -230,15 +201,10 @@ export function XpBar({
   const pctFill = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
     <div className="w-full">
-      <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: "color-mix(in srgb, var(--ink) 10%, transparent)" }}>
-        <div
-          className="h-full rounded-full transition-all duration-700"
-          style={{ width: `${pctFill}%`, background: color, boxShadow: `0 0 12px ${color}` }}
-        />
+      <div className="adm-bar" style={{ height: 6 }}>
+        <span style={{ width: `${pctFill}%`, background: color }} />
       </div>
-      {label && (
-        <div className="text-[10px] mt-1 font-semibold" style={{ color: "var(--ink-3)" }}>{label}</div>
-      )}
+      {label && <div className="adm-stat-sub">{label}</div>}
     </div>
   );
 }
@@ -259,25 +225,20 @@ export function StackedBar({
   const total = segments.reduce((s, x) => s + Math.max(0, x.value), 0);
   return (
     <div className="w-full">
-      <div className="w-full rounded-full overflow-hidden flex" style={{ height, background: "var(--surface-2)" }}>
+      <div className="adm-bar" style={{ height }} role="img" aria-label={segments.map((s) => `${s.label} ${ar(s.value)}`).join("، ")}>
         {total > 0 &&
           segments
             .filter((s) => s.value > 0)
             .map((s) => (
-              <div
-                key={s.label}
-                title={`${s.label}: ${ar(s.value)}`}
-                style={{ width: `${(s.value / total) * 100}%`, background: s.color }}
-                className="h-full transition-all"
-              />
+              <span key={s.label} title={`${s.label}: ${ar(s.value)}`} style={{ width: `${(s.value / total) * 100}%`, background: s.color }} />
             ))}
       </div>
       {legend && (
-        <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
           {segments.map((s) => (
-            <span key={s.label} className="inline-flex items-center gap-1 text-[10px] font-semibold" style={{ color: "var(--ink-2)" }}>
-              <span className="w-2 h-2 rounded-sm" style={{ background: s.color }} />
-              {s.label} <span className="tabular-nums" style={{ color: "var(--ink)" }}>{ar(s.value)}</span>
+            <span key={s.label} className="inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: "var(--ink-2)" }}>
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.color }} aria-hidden />
+              {s.label} <span className="adm-num" style={{ color: "var(--ink)" }}>{ar(s.value)}</span>
             </span>
           ))}
         </div>
@@ -290,19 +251,47 @@ export function PaymentSourcePill({ source, registeredBy }: { source?: string; r
   switch (source) {
     case "PAYMENT_GATEWAY":
     case "PURCHASE":
-      return <Pill color="green" title="دفع إلكتروني أو شراء مباشر">💳 {source === "PURCHASE" ? "شراء مباشر" : "بوابة دفع"}</Pill>;
+      return (
+        <Pill color="green" title="دفع إلكتروني أو شراء مباشر">
+          <CreditCard size={12} aria-hidden /> {source === "PURCHASE" ? "شراء مباشر" : "بوابة دفع"}
+        </Pill>
+      );
     case "WALLET":
-      return <Pill color="amber" title="خصم من رصيد المحفظة">👛 محفظة</Pill>;
+      return (
+        <Pill color="amber" title="خصم من رصيد المحفظة">
+          <Wallet size={12} aria-hidden /> محفظة
+        </Pill>
+      );
     case "COVERED_BY_PACKAGE":
-      return <Pill color="sky" title="المقعد مغطى باشتراك الباقة — لا يُضاف لإيراد الكورس">🎟️ مغطى بالباقة</Pill>;
+      return (
+        <Pill color="sky" title="المقعد مغطى باشتراك الباقة — لا يُضاف لإيراد الكورس">
+          <Ticket size={12} aria-hidden /> مغطى بالباقة
+        </Pill>
+      );
     case "ACCESS_CODE":
-      return <Pill color="gold" title="تفعيل بكود وصول">🔑 كود تفعيل</Pill>;
+      return (
+        <Pill color="gold" title="تفعيل بكود وصول">
+          <KeyRound size={12} aria-hidden /> كود تفعيل
+        </Pill>
+      );
     case "ADMIN":
-      return <Pill color="violet" title={`تسجيل من اللوحة بواسطة ${registeredBy || "مشرف"}`}>✍️ لوحة{registeredBy ? ` · ${registeredBy}` : ""}</Pill>;
+      return (
+        <Pill color="violet" title={`تسجيل من اللوحة بواسطة ${registeredBy || "مشرف"}`}>
+          <PenLine size={12} aria-hidden /> لوحة{registeredBy ? ` · ${registeredBy}` : ""}
+        </Pill>
+      );
     case "TESTER_BYPASS":
-      return <Pill color="slate" title="حساب فحص / تجريبي">🧪 تجريبي</Pill>;
+      return (
+        <Pill color="slate" title="حساب فحص / تجريبي">
+          <FlaskConical size={12} aria-hidden /> تجريبي
+        </Pill>
+      );
     default:
-      return <Pill color="violet" title={`تسجيل يدوي بواسطة ${registeredBy || "المعلم"}`}>✍️ يدوي{registeredBy ? ` · ${registeredBy}` : ""}</Pill>;
+      return (
+        <Pill color="violet" title={`تسجيل يدوي بواسطة ${registeredBy || "المعلم"}`}>
+          <PenLine size={12} aria-hidden /> يدوي{registeredBy ? ` · ${registeredBy}` : ""}
+        </Pill>
+      );
   }
 }
 
@@ -321,21 +310,10 @@ export function ActionButton({
   title?: string;
   type?: "button" | "submit";
 }) {
-  const styles: Record<string, CSSProperties> = {
-    primary: { background: "var(--brand)", color: "#fff", border: "1px solid transparent" },
-    gold: { background: "var(--gold)", color: "#fff", border: "1px solid transparent" },
-    ghost: { background: "var(--surface-2)", color: "var(--ink)", border: "1px solid var(--border)" },
-    danger: { background: "var(--danger-soft)", color: "var(--danger)", border: "1px solid transparent" },
-  };
+  // "ghost" here historically meant a bordered neutral button.
+  const cls = variant === "ghost" ? "" : `is-${variant}`;
   return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all hover:opacity-90 disabled:opacity-50 cursor-pointer whitespace-nowrap"
-      style={styles[variant]}
-    >
+    <button type={type} onClick={onClick} disabled={disabled} title={title} className={`adm-btn is-sm ${cls}`}>
       {children}
     </button>
   );

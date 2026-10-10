@@ -11,6 +11,7 @@ import {
 import { parseDegree } from "@/lib/quiz-grading";
 import { FolderContentType } from "@/generated/prisma";
 import { appendFolderContent, removeFolderContent } from "@/lib/folder-content-order";
+import { parseIntegritySettings } from "@/lib/homework-integrity";
 
 /** GET — teacher's own homeworks with submission counts & review queue size */
 export async function GET() {
@@ -66,10 +67,38 @@ export async function GET() {
     : [];
   const failedByHw = new Map(failedGroups.map((g) => [g.homeworkId, g._count._all]));
 
+  // Average score and how many exam sheets carry integrity flags, per homework.
+  const scoreGroups = homeworks.length
+    ? await prisma.homeworkSubmission.groupBy({
+        by: ["homeworkId"],
+        where: {
+          homeworkId: { in: homeworks.map((h) => h.id) },
+          score: { not: null },
+          student: { accountMode: { not: "TESTER" } },
+        },
+        _avg: { score: true },
+      })
+    : [];
+  const avgByHw = new Map(scoreGroups.map((g) => [g.homeworkId, g._avg.score]));
+  const flaggedGroups = homeworks.length
+    ? await prisma.homeworkSubmission.groupBy({
+        by: ["homeworkId"],
+        where: {
+          homeworkId: { in: homeworks.map((h) => h.id) },
+          focusLosses: { gte: 3 },
+          student: { accountMode: { not: "TESTER" } },
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const flaggedByHw = new Map(flaggedGroups.map((g) => [g.homeworkId, g._count._all]));
+
   const result = homeworks.map((hw) => ({
     ...hw,
     reviewQueueCount: hw.submissions.length,
     failedCount: failedByHw.get(hw.id) ?? 0,
+    avgScore: avgByHw.get(hw.id) ?? null,
+    focusFlagCount: flaggedByHw.get(hw.id) ?? 0,
     submissions: undefined, // don't leak submission list here
   }));
 
@@ -116,6 +145,11 @@ export async function POST(req: NextRequest) {
     codeLanguage?: string;
     // Upload fields
     allowedFileTypes?: string;
+    // Exam anti-cheating
+    shuffleQuestions?: boolean;
+    shuffleChoices?: boolean;
+    questionsPerStudent?: number | null;
+    revealAnswers?: boolean;
     // MCQ questions
     questions?: {
       question: string;
@@ -165,6 +199,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const integrity = parseIntegritySettings(body, body.type === "exam" ? body.questions?.length ?? 0 : null);
+  if (integrity.error) return NextResponse.json({ error: integrity.error }, { status: 400 });
+
+  // Course and folder must be this teacher's: appendFolderContent below puts
+  // the homework into that folder's learning chain.
+  const teacherId = actingTeacherId(session);
+  if (body.courseId) {
+    const course = await prisma.course.findUnique({ where: { id: body.courseId }, select: { teacherId: true } });
+    if (!course || course.teacherId !== teacherId)
+      return NextResponse.json({ error: "الكورس غير موجود أو لا ينتمي إليك" }, { status: 403 });
+  }
+  if (body.folderId) {
+    const folder = await prisma.folder.findUnique({
+      where: { id: body.folderId },
+      select: { courseId: true, course: { select: { teacherId: true } } },
+    });
+    if (!folder || folder.course.teacherId !== teacherId)
+      return NextResponse.json({ error: "المحاضرة غير موجودة أو لا تنتمي إليك" }, { status: 403 });
+  }
+
   // If videoId provided, ensure it belongs to teacher's course
   let video: any = null;
   if (body.videoId) {
@@ -197,6 +251,7 @@ export async function POST(req: NextRequest) {
       codeLanguage:     body.codeLanguage ?? "python",
       // Upload
       allowedFileTypes: body.allowedFileTypes?.trim() ?? null,
+      ...integrity.settings,
       questions: body.type === "exam" && body.questions ? {
         create: body.questions.map((q, i) => {
           const optA = q.optionA?.trim() || "";
@@ -272,21 +327,39 @@ export async function PATCH(req: NextRequest) {
   if (!hasAssistantPermission(session, "manageHomework"))
     return NextResponse.json({ error: "المدرّس لم يمنحك صلاحية إدارة الواجبات" }, { status: 403 });
 
-  const { homeworkId, isPublished, closeAt, enableAutoClose } = await req.json() as {
+  const body = await req.json() as {
     homeworkId: string;
     isPublished?: boolean;
     closeAt?: string | null;
     enableAutoClose?: boolean;
+    shuffleQuestions?: boolean;
+    shuffleChoices?: boolean;
+    questionsPerStudent?: number | null;
+    revealAnswers?: boolean;
   };
+  const { homeworkId, isPublished, closeAt, enableAutoClose } = body;
 
   const hw = await prisma.homework.findUnique({
     where: { id: homeworkId },
-    select: { teacherId: true, title: true },
+    select: { teacherId: true, title: true, _count: { select: { questions: true } } },
   });
   if (!hw || hw.teacherId !== actingTeacherId(session))
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
 
-  const data: { isPublished?: boolean; closeAt?: Date | null; enableAutoClose?: boolean } = {};
+  // Changing these affects the next attempt each student opens. Attempts
+  // already on screen keep their saved order, so no answer is reinterpreted.
+  const integrity = parseIntegritySettings(body, hw._count.questions);
+  if (integrity.error) return NextResponse.json({ error: integrity.error }, { status: 400 });
+
+  const data: {
+    isPublished?: boolean;
+    closeAt?: Date | null;
+    enableAutoClose?: boolean;
+    shuffleQuestions?: boolean;
+    shuffleChoices?: boolean;
+    questionsPerStudent?: number | null;
+    revealAnswers?: boolean;
+  } = { ...integrity.settings };
   if (typeof isPublished === "boolean") data.isPublished = isPublished;
   if (enableAutoClose !== undefined || closeAt !== undefined) {
     const closeSchedule = parseCloseSchedule({ closeAt, enableAutoClose });

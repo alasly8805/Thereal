@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Clock, RotateCcw, Save, Zap } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { Badge, Button, Field, Input, Modal, Notice, PageHeader, Panel, Select, Skeleton, Switch, Textarea, fmtDateTime, readJson } from "@/components/admin/ui/kit";
 
 interface PrizeItem {
   rank: number;
@@ -19,334 +21,226 @@ interface ApiResponse {
   prizesUpdatedAt: string | null;
   studentCount: number;
   topStudentsCount: number;
+  error?: string;
+  message?: string;
 }
 
 const AVAILABLE_ICONS = ["🥇", "🥈", "🥉", "🏆", "🎁", "⭐", "🎖️", "🏷️", "💫", "🌟", "👑", "💎", "🎒", "🎧", "💻", "🔥"];
 
+const PODIUM: Record<number, string> = { 1: "var(--gold)", 2: "#8a97a8", 3: "#b8733a" };
+
 export function LeaderboardPrizesSection() {
   const { success, error: toastError } = useToast();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [prizes, setPrizes] = useState<PrizeItem[]>([]);
-  const [meta, setMeta] = useState<Omit<ApiResponse, "prizes" | "defaults"> | null>(null);
+  const [savedJson, setSavedJson] = useState("[]");
+  const [meta, setMeta] = useState<Pick<ApiResponse, "lastCalculatedAt" | "prizesUpdatedAt" | "studentCount" | "topStudentsCount"> | null>(null);
+  const [confirm, setConfirm] = useState<"recalc" | "reset" | null>(null);
 
   const fetchPrizes = useCallback(async () => {
-    setLoading(true);
+    setLoadError("");
     try {
       const res = await fetch("/api/admin/superadmin/leaderboard-prizes", { credentials: "include" });
-      const data: ApiResponse = await res.json();
-      if (res.ok) {
-        setPrizes(data.prizes || []);
-        setMeta({
-          lastCalculatedAt: data.lastCalculatedAt,
-          prizesUpdatedAt: data.prizesUpdatedAt,
-          studentCount: data.studentCount,
-          topStudentsCount: data.topStudentsCount,
-        });
-      } else {
-        toastError("تعذر تحميل إعدادات الجوائز");
+      const data = await readJson<ApiResponse>(res);
+      if (!res.ok || !data) {
+        setLoadError(data?.error || "تعذر تحميل إعدادات الجوائز");
+        return;
       }
+      const list = Array.isArray(data.prizes) ? data.prizes : [];
+      setPrizes(list);
+      setSavedJson(JSON.stringify(list));
+      setMeta({
+        lastCalculatedAt: data.lastCalculatedAt,
+        prizesUpdatedAt: data.prizesUpdatedAt,
+        studentCount: data.studentCount,
+        topStudentsCount: data.topStudentsCount,
+      });
     } catch {
-      toastError("خطأ في الاتصال بالخادم");
+      setLoadError("تعذر الاتصال بالخادم");
     } finally {
       setLoading(false);
     }
-  }, [toastError]);
+  }, []);
 
   useEffect(() => {
     void fetchPrizes();
   }, [fetchPrizes]);
 
-  const updatePrize = (index: number, field: keyof PrizeItem, val: any) => {
-    setPrizes((prev) => {
-      const next = [...prev];
-      next[index] = { ...next[index], [field]: val };
-      return next;
+  const dirty = useMemo(() => JSON.stringify(prizes) !== savedJson, [prizes, savedJson]);
+
+  const updatePrize = <K extends keyof PrizeItem>(index: number, field: K, val: PrizeItem[K]) => {
+    setPrizes((prev) => prev.map((p, i) => (i === index ? { ...p, [field]: val } : p)));
+  };
+
+  const post = async (body: Record<string, unknown>) => {
+    const res = await fetch("/api/admin/superadmin/leaderboard-prizes", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
+    const data = await readJson<ApiResponse>(res);
+    if (!res.ok) throw new Error(data?.error || "تعذر تنفيذ الإجراء");
+    return data;
   };
 
   const handleSavePrizes = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/admin/superadmin/leaderboard-prizes", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "save_prizes",
-          prizes,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        success(data.message || "تم حفظ جوائز المراكز العشرة وتحديث الكاش بنجاح ✅");
-        void fetchPrizes();
-      } else {
-        toastError(data.error || "تعذر حفظ الجوائز");
-      }
-    } catch {
-      toastError("فشل حفظ التعديلات");
+      const data = await post({ action: "save_prizes", prizes });
+      success(data?.message || "حُفظت جوائز المراكز العشرة");
+      void fetchPrizes();
+    } catch (e) {
+      toastError(e instanceof Error ? e.message : "تعذر حفظ الجوائز");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleForceRecalculate = async () => {
-    if (!confirm("هل تريد بالتأكيد إعادة احتساب وتحديث لوحة الشرف وجميع نقاط وسلاسل الطلاب فوراً بقوة؟")) return;
-    setRecalculating(true);
-    try {
-      const res = await fetch("/api/admin/superadmin/leaderboard-prizes", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "force_recalculate" }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        success(data.message || "تمت إعادة احتساب لوحة الشرف وتحديث الكاش بنجاح ✅");
+  const runConfirm = async () => {
+    const kind = confirm;
+    setConfirm(null);
+    if (kind === "recalc") {
+      setRecalculating(true);
+      try {
+        const data = await post({ action: "force_recalculate" });
+        success(data?.message || "أُعيد احتساب لوحة الشرف");
         void fetchPrizes();
-      } else {
-        toastError(data.error || "فشل إعادة احتساب لوحة الشرف");
+      } catch (e) {
+        toastError(e instanceof Error ? e.message : "فشل إعادة الاحتساب");
+      } finally {
+        setRecalculating(false);
       }
-    } catch {
-      toastError("فشل الاتصال بالسيرفر");
-    } finally {
-      setRecalculating(false);
+    } else if (kind === "reset") {
+      setSaving(true);
+      try {
+        const data = await post({ action: "reset_defaults" });
+        success(data?.message || "استُعيدت الجوائز الافتراضية");
+        void fetchPrizes();
+      } catch (e) {
+        toastError(e instanceof Error ? e.message : "تعذر استعادة الجوائز");
+      } finally {
+        setSaving(false);
+      }
     }
   };
-
-  const handleResetDefaults = async () => {
-    if (!confirm("هل تريد استعادة الجوائز الافتراضية للمراكز العشرة؟")) return;
-    setSaving(true);
-    try {
-      const res = await fetch("/api/admin/superadmin/leaderboard-prizes", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset_defaults" }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        success(data.message || "تمت استعادة الجوائز الافتراضية بنجاح ✅");
-        setPrizes(data.prizes);
-        void fetchPrizes();
-      } else {
-        toastError(data.error || "تعذر استعادة الجوائز");
-      }
-    } catch {
-      toastError("فشل تنفيذ الإجراء");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const rankBadgeBg = (rank: number) => {
-    if (rank === 1) return "linear-gradient(135deg, #F59E0B, #D97706)";
-    if (rank === 2) return "linear-gradient(135deg, #94A3B8, #64748B)";
-    if (rank === 3) return "linear-gradient(135deg, #D97706, #B45309)";
-    return "var(--surface-2)";
-  };
-
-  if (loading) {
-    return (
-      <div className="p-12 text-center text-sm text-[var(--ink-muted)]">
-        <span className="inline-block w-6 h-6 border-2 border-amber-500/30 border-t-amber-500 rounded-full animate-spin me-2 align-middle" />
-        جارٍ تحميل نظام جوائز لوحة الشرف والكاش...
-      </div>
-    );
-  }
 
   return (
-    <div className="space-y-6" dir="rtl">
-      {/* ── HEADER BANNER ── */}
-      <div className="bg-[var(--surface)] p-6 rounded-2xl border border-[var(--border)] shadow-xs space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-black text-[var(--ink)] flex items-center gap-2">
-              <span>🏆</span> جوائز لوحة الشرف اليومية (24 ساعة — المراكز العشرة)
-            </h2>
-            <p className="text-xs text-[var(--ink-muted)] mt-1 leading-relaxed">
-              تحديد الجوائز والمكافآت الخاصة بالمراكز من 1 إلى 10 في لوحة الشرف اليومية. 
-              يتم حفظ البيانات في كاش فائق السرعة بدون أي استهلاك للمعالج عند دخول الطلاب، ويُعاد تدويرها تلقائياً الساعة <strong>3:00 فجراً بتوقيت القاهرة</strong>.
-            </p>
-          </div>
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="جوائز لوحة الشرف"
+        description="الجوائز التي يراها الطلاب بجوار المراكز من ١ إلى ١٠ في لوحة الشرف اليومية. تُحفظ في كاش سريع وتُحدّث تلقائياً الساعة ٣ فجراً بتوقيت القاهرة."
+        actions={
+          <>
+            <Button onClick={() => setConfirm("recalc")} loading={recalculating} disabled={saving} icon={<Zap size={15} />}>إعادة الاحتساب الآن</Button>
+            <Button variant="ghost" onClick={() => setConfirm("reset")} disabled={saving || recalculating} icon={<RotateCcw size={15} />}>الجوائز الافتراضية</Button>
+          </>
+        }
+        meta={
+          meta && (
+            <>
+              <Badge tone="ok" dot><Clock size={12} aria-hidden /> آخر احتساب {meta.lastCalculatedAt ? fmtDateTime(meta.lastCalculatedAt) : "غير متوفر"}</Badge>
+              <Badge>التحديث التلقائي ٣:٠٠ ص يومياً</Badge>
+            </>
+          )
+        }
+      />
 
-          <div className="flex items-center gap-2 flex-wrap shrink-0">
-            <button
-              type="button"
-              onClick={handleForceRecalculate}
-              disabled={recalculating || saving}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-            >
-              <span>{recalculating ? "⏳ جارٍ التحديث بقوة..." : "⚡ تحديث واحتساب الكاش فوراً بقوة"}</span>
-            </button>
+      {loadError && <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchPrizes()}>إعادة المحاولة</Button>} />}
 
-            <button
-              type="button"
-              onClick={handleSavePrizes}
-              disabled={saving || recalculating}
-              className="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-            >
-              <span>{saving ? "جارٍ الحفظ..." : "💾 حفظ جوائز المراكز الـ 10"}</span>
-            </button>
-          </div>
-        </div>
+      {loading ? (
+        <div className="grid gap-4 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} h={240} r={16} />)}</div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {prizes.map((p, idx) => {
+            const podium = PODIUM[p.rank];
+            return (
+              <Panel key={p.rank} padded clip={false}>
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className="w-9 h-9 rounded-[10px] grid place-items-center font-extrabold text-sm"
+                        style={{ background: podium ?? "var(--surface-2)", color: podium ? "#fff" : "var(--ink)" }}
+                        aria-hidden
+                      >
+                        {p.rank}
+                      </span>
+                      <div>
+                        <h3 className="adm-h3">{p.rankLabel || `المركز ${p.rank}`}</h3>
+                        {podium && <p className="text-xs adm-muted">منصة التتويج</p>}
+                      </div>
+                    </div>
+                    <Select inputSize="sm" value={p.icon || "🎁"} onChange={(e) => updatePrize(idx, "icon", e.target.value)} aria-label={`أيقونة المركز ${p.rank}`} className="w-20 text-lg">
+                      {AVAILABLE_ICONS.map((ic) => (
+                        <option key={ic} value={ic}>{ic}</option>
+                      ))}
+                    </Select>
+                  </div>
 
-        {/* Status Metrics Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-[var(--border)] text-xs">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[var(--ink-muted)]">آخر احتساب للكاش:</span>
-            <strong className="text-[var(--ink)]">
-              {meta?.lastCalculatedAt
-                ? new Date(meta.lastCalculatedAt).toLocaleString("ar-EG", { timeZone: "Africa/Cairo", dateStyle: "short", timeStyle: "medium" })
-                : "غير متوفر"}
-            </strong>
-          </div>
+                  <Field label="اللقب" htmlFor={`pz-title-${p.rank}`}>
+                    <Input id={`pz-title-${p.rank}`} inputSize="sm" value={p.title} onChange={(e) => updatePrize(idx, "title", e.target.value)} placeholder={p.rankLabel} />
+                  </Field>
+                  <Field label="الجائزة" htmlFor={`pz-prize-${p.rank}`}>
+                    <Textarea id={`pz-prize-${p.rank}`} rows={2} value={p.prize} onChange={(e) => updatePrize(idx, "prize", e.target.value)} placeholder="مثال: تيشيرت + كود اشتراك + ٥٠٠ نقطة" />
+                  </Field>
+                  <label className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-semibold">إبراز بلون ذهبي</span>
+                    <Switch checked={!!p.highlight} onChange={(v) => updatePrize(idx, "highlight", v)} label={`إبراز جائزة المركز ${p.rank}`} />
+                  </label>
 
-          <div className="flex items-center gap-2">
-            <span className="text-amber-500 font-bold">⏰</span>
-            <span className="text-[var(--ink-muted)]">الموعد التلقائي اليومي:</span>
-            <strong className="text-amber-500">3:00 ص بتوقيت القاهرة (يومياً)</strong>
-          </div>
-
-          <div className="flex items-center gap-2 justify-start sm:justify-end">
-            <button
-              type="button"
-              onClick={handleResetDefaults}
-              disabled={saving || recalculating}
-              className="text-[11px] text-[var(--ink-muted)] hover:text-red-500 hover:underline transition-colors"
-            >
-              ↺ استعادة الجوائز الافتراضية
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ── PRIZES EDIT GRID (10 RANKS) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {prizes.map((p, idx) => {
-          const isTop3 = p.rank <= 3;
-          return (
-            <div
-              key={p.rank}
-              className={`bg-[var(--surface)] border rounded-2xl p-5 space-y-3 transition-all ${
-                isTop3 ? "border-amber-500/40 shadow-xs" : "border-[var(--border)]"
-              }`}
-            >
-              {/* Card Header */}
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
                   <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm text-white shadow-xs"
-                    style={{ background: rankBadgeBg(p.rank) }}
+                    className="rounded-[10px] px-3 py-2.5 flex items-center gap-2.5 text-[13px]"
+                    style={{
+                      background: p.highlight ? "var(--gold-soft)" : "var(--surface-2)",
+                      border: `1px solid ${p.highlight ? "color-mix(in srgb, var(--gold) 40%, transparent)" : "var(--border)"}`,
+                    }}
+                    aria-label="معاينة كما يراها الطالب"
                   >
-                    {p.rank}
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm text-[var(--ink)] flex items-center gap-1.5">
-                      <span>{p.rankLabel || `المركز ${p.rank}`}</span>
-                      {isTop3 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 font-black">منصة التتويج</span>}
-                    </h3>
+                    <span className="text-base" aria-hidden>{p.icon || "🎁"}</span>
+                    <p className="min-w-0">
+                      <b style={{ color: p.highlight ? "var(--gold)" : "var(--ink)" }}>{p.title || p.rankLabel}:</b>{" "}
+                      <span style={{ color: "var(--ink-2)" }}>{p.prize || "لم تُحدد جائزة"}</span>
+                    </p>
                   </div>
                 </div>
+              </Panel>
+            );
+          })}
+        </div>
+      )}
 
-                {/* Icon Selector */}
-                <div className="flex items-center gap-1 bg-[var(--bg)] px-2 py-1 rounded-xl border border-[var(--border)]">
-                  <span className="text-xs text-[var(--ink-muted)] ml-1">الأيقونة:</span>
-                  <select
-                    value={p.icon || "🎁"}
-                    onChange={(e) => updatePrize(idx, "icon", e.target.value)}
-                    className="bg-transparent border-none text-base cursor-pointer focus:outline-none"
-                  >
-                    {AVAILABLE_ICONS.map((ic) => (
-                      <option key={ic} value={ic}>{ic}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+      {!loading && prizes.length > 0 && (
+        <div className="adm-panel sticky flex flex-wrap items-center justify-between gap-3 p-4" style={{ bottom: 12, zIndex: 5, boxShadow: dirty ? "var(--shadow)" : undefined }}>
+          <p className="text-sm" style={{ color: dirty ? "var(--warn)" : "var(--ink-3)" }}>
+            {dirty ? "لديك تعديلات غير محفوظة" : "كل التعديلات محفوظة"}
+          </p>
+          <Button variant="primary" onClick={() => void handleSavePrizes()} loading={saving} disabled={!dirty || recalculating} icon={<Save size={15} />}>
+            حفظ الجوائز
+          </Button>
+        </div>
+      )}
 
-              {/* Title & Rank Label Inputs */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-[11px] font-semibold text-[var(--ink-muted)] mb-1">
-                    المسمى التكريمي للمركز
-                  </label>
-                  <input
-                    type="text"
-                    value={p.title}
-                    onChange={(e) => updatePrize(idx, "title", e.target.value)}
-                    placeholder={`مثال: ${p.rankLabel}`}
-                    className="w-full bg-[var(--bg)] border border-[var(--border)] text-[var(--ink)] px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-sky-500 transition-all font-semibold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-[var(--ink-muted)] mb-1">
-                    تمييز الجائزة
-                  </label>
-                  <label className="flex items-center gap-2 h-[34px] bg-[var(--bg)] px-3 rounded-xl border border-[var(--border)] cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={!!p.highlight}
-                      onChange={(e) => updatePrize(idx, "highlight", e.target.checked)}
-                      className="w-4 h-4 text-amber-500 rounded focus:ring-amber-500"
-                    />
-                    <span className="text-xs text-[var(--ink)] font-medium">إبراز بلون ذهبي فاقع</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Prize Description */}
-              <div>
-                <label className="block text-[11px] font-semibold text-[var(--ink-muted)] mb-1">
-                  تفاصيل ووصف الجائزة *
-                </label>
-                <textarea
-                  rows={2}
-                  value={p.prize}
-                  onChange={(e) => updatePrize(idx, "prize", e.target.value)}
-                  placeholder="اكتب الجائزة (مثل: تيشيرت + كود اشتراك + 500 نقطة)..."
-                  className="w-full bg-[var(--bg)] border border-[var(--border)] text-[var(--ink)] px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-sky-500 transition-all resize-none font-medium"
-                />
-              </div>
-
-              {/* Live Preview Snippet */}
-              <div className="pt-1">
-                <div
-                  className={`p-2.5 rounded-xl border flex items-center gap-2.5 text-xs ${
-                    p.highlight
-                      ? "bg-amber-500/10 border-amber-500/30 text-amber-500"
-                      : "bg-[var(--bg)] border-[var(--border)] text-[var(--ink)]"
-                  }`}
-                >
-                  <span className="text-base">{p.icon || "🎁"}</span>
-                  <div className="flex-1 min-w-0">
-                    <span className="font-bold text-[var(--ink)]">{p.title || p.rankLabel}: </span>
-                    <span className="text-[var(--ink-2)] text-[11px]">{p.prize || "لم يتم تحديد جائزة"}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Save Button Floating Bottom Footer */}
-      <div className="sticky bottom-4 z-20 bg-[var(--surface)]/90 backdrop-blur-md p-4 rounded-2xl border border-[var(--border)] shadow-xl flex items-center justify-between gap-4">
-        <p className="text-xs text-[var(--ink-muted)]">
-          💾 اضغط "حفظ التعديلات" لتطبيق التغييرات على لوحة الشرف فوراً.
-        </p>
-        <button
-          type="button"
-          onClick={handleSavePrizes}
-          disabled={saving || recalculating}
-          className="px-6 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold transition-all shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-        >
-          <span>{saving ? "جارٍ الحفظ..." : "💾 حفظ وتطبيق جوائز المراكز العشرة"}</span>
-        </button>
-      </div>
+      <Modal
+        open={!!confirm}
+        onClose={() => setConfirm(null)}
+        size="sm"
+        title={confirm === "recalc" ? "إعادة احتساب لوحة الشرف الآن؟" : "استعادة الجوائز الافتراضية؟"}
+        description={
+          confirm === "recalc"
+            ? "سيُعاد حساب النقاط والسلاسل وترتيب الطلاب فوراً بدل انتظار تحديث ٣ فجراً."
+            : "ستُستبدل الجوائز الحالية للمراكز العشرة بالقيم الافتراضية."
+        }
+        footer={
+          <>
+            <Button onClick={() => setConfirm(null)}>إلغاء</Button>
+            <Button variant="primary" onClick={() => void runConfirm()}>{confirm === "recalc" ? "إعادة الاحتساب" : "استعادة"}</Button>
+          </>
+        }
+      />
     </div>
   );
 }

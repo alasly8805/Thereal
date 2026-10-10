@@ -16,6 +16,12 @@ import {
   syncHomeworkContentProgress,
 } from "@/lib/content-access-engine";
 import { scoreHomeworkExam } from "@/lib/homework-regrade";
+import { answersToOriginal, questionsInAttempt } from "@/lib/attempt-presentation";
+import {
+  ensureHomeworkExamView,
+  homeworkExamOpenedAt,
+  homeworkPresentationOptions,
+} from "@/lib/homework-exam-view";
 
 /** Normalize output: collapse whitespace, trim lines, lowercase */
 function normalizeOutput(s: string): string {
@@ -78,9 +84,9 @@ export async function POST(
     where: { homeworkId_studentId: { homeworkId, studentId: session.id } },
     include: { review: { select: { id: true, verdict: true } } },
   });
-  // Rejected PDF: student may replace the file. Keep the previous review row
-  // so the teacher UI can show that the file changed; unlock still follows
-  // the new قيد المراجعة status (review_requested → COMPLETED).
+  // A rejected file can be replaced only after the teacher or assistant
+  // opened another attempt. Keep the previous review row so the rejection
+  // stays visible; the new قيد المراجعة upload opens the next item again.
   const afterRejection =
     existing?.status === "failed" || existing?.review?.verdict === "failed";
   // Upload may already have written a قيد المراجعة row (file persist). Allow
@@ -105,12 +111,17 @@ export async function POST(
     submittedOutput?: string; // terminal
     fileUrl?: string;         // upload
     fileName?: string;        // upload
-    answers?: Record<string, string>; // MCQ: { questionId: "A"|"B"|"C"|"D" }
+    answers?: Record<string, string>; // MCQ: letter the student saw, A/B/C/D
+    focusLosses?: number;     // exam: times the page lost focus while solving
   };
 
   let status = "pending";
   let score: number | null = null;
   let totalQ: number | null = null;
+  let storedAnswers = body.answers ? JSON.stringify(body.answers) : null;
+  let presentationJson: string | null = null;
+  let focusLosses: number | null = null;
+  let startedAt: Date | null = null;
 
   // ── Terminal ──────────────────────────────────────────────────────────────
   if (hw.type === "terminal") {
@@ -167,10 +178,35 @@ export async function POST(
     if (!body.answers || Object.keys(body.answers).length === 0)
       return NextResponse.json({ error: "يجب الإجابة على الأسئلة" }, { status: 400 });
 
-    const graded = scoreHomeworkExam(hw.questions, body.answers);
+    // Grade against the order this student was shown. Creating it here only
+    // happens when the page never saved one; the same helper is what GET uses,
+    // and it will not replace an order already on screen.
+    const presentation = await ensureHomeworkExamView(
+      session.id,
+      homeworkId,
+      hw.questions,
+      !!existing?.allowRetake,
+      homeworkPresentationOptions(hw)
+    );
+    // A bank draw grades only the questions this student was given; answers
+    // sent for any other id are dropped rather than trusted.
+    const attemptQuestions = questionsInAttempt(hw.questions, presentation);
+    const allowedIds = new Set(attemptQuestions.map((q) => q.id));
+    const originalAnswers = Object.fromEntries(
+      Object.entries(answersToOriginal(body.answers, presentation)).filter(([id]) => allowedIds.has(id))
+    );
+    presentationJson = JSON.stringify(presentation);
+    storedAnswers = JSON.stringify(originalAnswers);
+    const graded = scoreHomeworkExam(attemptQuestions, originalAnswers);
     totalQ = graded.totalQ;
     score = graded.score;
     status = graded.status;
+    // Integrity signals for the teacher. The count comes from the student's
+    // browser, so it is a hint, never a grade input; clamp it to sane values.
+    if (typeof body.focusLosses === "number" && Number.isFinite(body.focusLosses)) {
+      focusLosses = Math.max(0, Math.min(10_000, Math.floor(body.focusLosses)));
+    }
+    startedAt = await homeworkExamOpenedAt(session.id, homeworkId);
   }
 
   // ── Link (no submission needed) ───────────────────────────────────────────
@@ -189,7 +225,8 @@ export async function POST(
         savedSubmission = await tx.homeworkSubmission.update({
           where: { id: existing.id },
           data: {
-            answers:         body.answers ? JSON.stringify(body.answers) : null,
+            answers:         storedAnswers,
+            presentation:    presentationJson,
             score,
             totalQ,
             submittedOutput: body.submittedOutput ?? null,
@@ -197,6 +234,8 @@ export async function POST(
             fileName:        body.fileName ?? null,
             status,
             allowRetake:     false,
+            focusLosses,
+            startedAt,
             completedAt:     new Date(),
           },
         });
@@ -205,7 +244,8 @@ export async function POST(
           data: {
             homeworkId,
             studentId:       session.id,
-            answers:         body.answers ? JSON.stringify(body.answers) : null,
+            answers:         storedAnswers,
+            presentation:    presentationJson,
             score,
             totalQ,
             submittedOutput: body.submittedOutput ?? null,
@@ -213,6 +253,8 @@ export async function POST(
             fileName:        body.fileName ?? null,
             status,
             allowRetake:     false,
+            focusLosses,
+            startedAt,
           },
         });
       }

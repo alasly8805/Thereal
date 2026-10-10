@@ -1,5 +1,23 @@
 const MAX_DRAFT_CHARS = 50_000;
 
+/** Active time only. A pause freezes the clock; it never adds time. */
+export function quizActiveElapsedMs(input: {
+  startedAt?: Date | null;
+  pausedAt?: Date | null;
+  elapsedMs?: number | null;
+  now?: Date;
+}): number {
+  const bank = Math.max(0, input.elapsedMs ?? 0);
+  if (!input.startedAt || input.pausedAt) return bank;
+  const now = input.now ?? new Date();
+  return bank + Math.max(0, now.getTime() - input.startedAt.getTime());
+}
+
+export function quizRemainingMs(limitMinutes: number, activeElapsedMs: number): number {
+  const limitMs = Math.max(1, limitMinutes || 30) * 60 * 1000;
+  return Math.max(0, limitMs - Math.max(0, activeElapsedMs));
+}
+
 export function retakeCooldownRemainingMs(completedAt: Date, cooldownHours: number): number {
   if (!cooldownHours || cooldownHours <= 0) return 0;
   const elapsed = Date.now() - completedAt.getTime();

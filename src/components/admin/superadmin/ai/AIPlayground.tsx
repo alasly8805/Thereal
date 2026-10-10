@@ -69,7 +69,7 @@ export default function AIPlayground() {
           <button
             onClick={handleTest}
             disabled={loading}
-            className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-[var(--brand)] hover:opacity-90 transition-opacity"
+            className="w-full py-2.5 rounded-xl text-sm font-bold text-[var(--on-brand)] bg-[var(--brand)] hover:opacity-90 transition-opacity"
           >
             {loading ? "جارٍ التجربة..." : "🚀 تشغيل التجربة"}
           </button>

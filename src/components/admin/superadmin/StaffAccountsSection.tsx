@@ -1,6 +1,26 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { KeyRound, Lock, Pause, Play, Plus, Trash2, UserCog } from "lucide-react";
 import { hasPermission } from "@/lib/rbac";
+import { useToast } from "@/components/ui/Toast";
+import { ConfirmActionModal } from "./ConfirmActionModal";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  Notice,
+  PageHeader,
+  Panel,
+  Select,
+  SkeletonRows,
+  fmtDate,
+  fmtNum,
+  readJson,
+} from "@/components/admin/ui/kit";
 
 interface StaffAccount {
   id: string;
@@ -11,357 +31,310 @@ interface StaffAccount {
   createdAt: string;
 }
 
-async function readJson<T>(res: Response): Promise<T | null> {
-  const text = await res.text();
-  if (!text) return null;
-  try { return JSON.parse(text) as T; } catch { return null; }
+const ROLE_LABELS: Record<string, string> = { admin: "مشرف", staff: "موظف" };
+const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", actionPassword: "" };
+
+function storedActionPassword() {
+  try {
+    return sessionStorage.getItem("admin_action_password") || "";
+  } catch {
+    return "";
+  }
 }
 
-type Modal =
-  | { type: "create" }
-  | { type: "delete"; account: StaffAccount }
-  | { type: "reset_password"; account: StaffAccount }
-  | null;
-
-const ROLE_LABELS: Record<string, string> = { admin: "مشرف", staff: "موظف" };
-const ROLE_COLORS: Record<string, string> = {
-  admin: "bg-purple-500/20 text-purple-300 border-purple-500/30",
-  staff: "bg-blue-500/20 text-blue-300 border-blue-500/30",
-};
-
 export function StaffAccountsSection({ userRole = "superadmin" }: { userRole?: string }) {
+  const { success: toastSuccess } = useToast();
   const canManage = hasPermission(userRole, "manage_staff_accounts");
+  const canView = hasPermission(userRole, "view_staff_accounts");
   const [accounts, setAccounts] = useState<StaffAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState<Modal>(null);
-  const [actionError, setActionError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
-  // Create form state
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "staff", actionPassword: "" });
-  // Reset password form
+  const [createOpen, setCreateOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [resetTarget, setResetTarget] = useState<StaffAccount | null>(null);
   const [resetForm, setResetForm] = useState({ newPassword: "", actionPassword: "" });
-  // Delete form
-  const [deletePassword, setDeletePassword] = useState("");
+  const [suspendTarget, setSuspendTarget] = useState<StaffAccount | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StaffAccount | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
 
-  const fetchAccounts = async () => {
+  const fetchAccounts = useCallback(async () => {
     setLoading(true);
-    const res = await fetch("/api/admin/superadmin/staff-accounts", { credentials: "include" });
-    const data = await readJson<{ accounts?: StaffAccount[]; error?: string }>(res);
-    setAccounts(data?.accounts ?? []);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    const load = async () => { await fetchAccounts(); };
-    load();
+    setLoadError("");
+    try {
+      const res = await fetch("/api/admin/superadmin/staff-accounts", { credentials: "include" });
+      const data = await readJson<{ accounts?: StaffAccount[]; error?: string }>(res);
+      if (!res.ok) {
+        setLoadError(data?.error ?? "تعذر تحميل الحسابات");
+        return;
+      }
+      setAccounts(data?.accounts ?? []);
+    } catch {
+      setLoadError("تعذر الاتصال بالخادم");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const openModal = (m: Modal) => { setActionError(""); setModal(m); };
-  const closeModal = () => { setModal(null); setActionError(""); setDeletePassword(""); setResetForm({ newPassword: "", actionPassword: "" }); setForm({ name: "", email: "", password: "", role: "staff", actionPassword: "" }); };
+  useEffect(() => {
+    if (canView) void fetchAccounts();
+    else setLoading(false);
+  }, [canView, fetchAccounts]);
 
-  // ── Create ────────────────────────────────────────────────────────────────
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true); setActionError("");
-    const res = await fetch("/api/admin/superadmin/staff-accounts", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    const data = await readJson<{ error?: string }>(res);
-    setBusy(false);
-    if (!res.ok) { setActionError(data?.error ?? "تعذر إنشاء الحساب"); return; }
-    closeModal();
-    fetchAccounts();
+  const openCreate = () => {
+    setForm({ ...EMPTY_FORM, actionPassword: storedActionPassword() });
+    setFormError("");
+    setCreateOpen(true);
   };
 
-  // ── Toggle active ─────────────────────────────────────────────────────────
-  const handleToggleActive = async (account: StaffAccount, actionPassword: string) => {
+  const openReset = (acc: StaffAccount) => {
+    setResetForm({ newPassword: "", actionPassword: storedActionPassword() });
+    setFormError("");
+    setResetTarget(acc);
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
     setBusy(true);
-    const res = await fetch(`/api/admin/superadmin/staff-accounts/${account.id}`, {
+    setFormError("");
+    try {
+      const res = await fetch("/api/admin/superadmin/staff-accounts", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const data = await readJson<{ error?: string }>(res);
+      if (!res.ok) {
+        setFormError(data?.error ?? "تعذر إنشاء الحساب");
+        return;
+      }
+      toastSuccess(`أُنشئ حساب ${form.name}`);
+      setCreateOpen(false);
+      void fetchAccounts();
+    } catch {
+      setFormError("تعذر الاتصال بالخادم");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetTarget) return;
+    setBusy(true);
+    setFormError("");
+    try {
+      const res = await fetch(`/api/admin/superadmin/staff-accounts/${resetTarget.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_password", ...resetForm }),
+      });
+      const data = await readJson<{ error?: string }>(res);
+      if (!res.ok) {
+        setFormError(data?.error ?? "تعذر تغيير كلمة المرور");
+        return;
+      }
+      toastSuccess(`تم تغيير كلمة مرور ${resetTarget.name}`);
+      setResetTarget(null);
+    } catch {
+      setFormError("تعذر الاتصال بالخادم");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ConfirmActionModal shows thrown errors inline and stays open.
+  const handleToggleActive = async (actionPassword: string) => {
+    if (!suspendTarget) return;
+    const res = await fetch(`/api/admin/superadmin/staff-accounts/${suspendTarget.id}`, {
       method: "PATCH",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "toggle_active", actionPassword }),
     });
-    setBusy(false);
-    if (res.ok) fetchAccounts();
-  };
-
-  // ── Reset password ────────────────────────────────────────────────────────
-  const handleResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (modal?.type !== "reset_password") return;
-    setBusy(true); setActionError("");
-    const res = await fetch(`/api/admin/superadmin/staff-accounts/${modal.account.id}`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "reset_password", ...resetForm }),
-    });
     const data = await readJson<{ error?: string }>(res);
-    setBusy(false);
-    if (!res.ok) { setActionError(data?.error ?? "تعذر إعادة تعيين كلمة المرور"); return; }
-    closeModal();
+    if (!res.ok) throw new Error(data?.error ?? "تعذر تغيير حالة الحساب");
+    toastSuccess(suspendTarget.isActive ? `أُوقف حساب ${suspendTarget.name}` : `أُعيد تفعيل حساب ${suspendTarget.name}`);
+    setSuspendTarget(null);
+    void fetchAccounts();
   };
 
-  // ── Delete ────────────────────────────────────────────────────────────────
-  const handleDelete = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (modal?.type !== "delete") return;
-    setBusy(true); setActionError("");
-    const res = await fetch(`/api/admin/superadmin/staff-accounts/${modal.account.id}`, {
+  const handleDelete = async (actionPassword: string) => {
+    if (!deleteTarget) return;
+    const res = await fetch(`/api/admin/superadmin/staff-accounts/${deleteTarget.id}`, {
       method: "DELETE",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actionPassword: deletePassword }),
+      body: JSON.stringify({ actionPassword }),
     });
     const data = await readJson<{ error?: string }>(res);
-    setBusy(false);
-    if (!res.ok) { setActionError(data?.error ?? "تعذر حذف الحساب"); return; }
-    closeModal();
-    fetchAccounts();
+    if (!res.ok) throw new Error(data?.error ?? "تعذر حذف الحساب");
+    toastSuccess(`حُذف حساب ${deleteTarget.name}`);
+    setDeleteTarget(null);
+    void fetchAccounts();
   };
 
-  // ── Inline suspend toggle (asks for action password via small prompt) ─────
-  const [suspendTarget, setSuspendTarget] = useState<{ account: StaffAccount; pw: string } | null>(null);
-
-  const submitSuspend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!suspendTarget) return;
-    await handleToggleActive(suspendTarget.account, suspendTarget.pw);
-    setSuspendTarget(null);
-  };
+  if (!canView) {
+    return (
+      <div dir="rtl" className="flex flex-col gap-5">
+        <PageHeader title="المشرفون والموظفون" />
+        <Panel>
+          <EmptyState icon={<Lock size={22} />} title="غير متاح لحسابك" text="عرض حسابات المشرفين متاح للمشرف العام والمشرفين فقط." />
+        </Panel>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-xl font-bold text-white">حسابات المشرفين والموظفين</h2>
-          <p className="text-sm text-gray-400 mt-1">إدارة حسابات الدخول للوحة الإدارة</p>
-        </div>
-        {canManage && (
-        <button
-          onClick={() => openModal({ type: "create" })}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-colors"
-        >
-          ＋ إضافة حساب
-        </button>
-        )}
-      </div>
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="المشرفون والموظفون"
+        description="حسابات الدخول للوحة الإدارة. المشرف يدير المتعلمين والمعلمين، والموظف يطّلع فقط."
+        actions={
+          canManage && (
+            <Button variant="primary" onClick={openCreate} icon={<Plus size={15} />}>
+              إضافة حساب
+            </Button>
+          )
+        }
+      />
 
-      {/* Accounts table */}
-      <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-        {loading ? (
-          <div className="p-12 text-center text-gray-500">جارٍ التحميل...</div>
+      <Panel padded={false} title={loading && accounts.length === 0 ? "جارٍ التحميل" : `${fmtNum(accounts.length)} حساب`}>
+        {loadError ? (
+          <div className="p-4">
+            <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchAccounts()}>إعادة المحاولة</Button>} />
+          </div>
+        ) : loading && accounts.length === 0 ? (
+          <SkeletonRows rows={3} h={52} />
         ) : accounts.length === 0 ? (
-          <div className="p-12 text-center">
-            <div className="text-5xl mb-3">👥</div>
-            <p className="text-gray-400">لا توجد حسابات مشرفين أو موظفين بعد</p>
-            {canManage && (
-            <button
-              onClick={() => openModal({ type: "create" })}
-              className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-xl transition-colors"
-            >
-              إضافة أول حساب
-            </button>
-            )}
-          </div>
+          <EmptyState
+            icon={<UserCog size={22} />}
+            title="لا توجد حسابات بعد"
+            text="أضف مشرفاً أو موظفاً ليساعدك في إدارة المنصة."
+            action={canManage ? <Button variant="primary" onClick={openCreate}>إضافة أول حساب</Button> : undefined}
+          />
         ) : (
-          <div className="divide-y divide-slate-200 dark:divide-gray-700">
+          <ul className="adm-list">
             {accounts.map((acc) => (
-              <div key={acc.id} className="p-4 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white flex-shrink-0 ${acc.role === "admin" ? "bg-purple-600" : "bg-blue-600"}`}>
-                    {acc.name[0]}
-                  </div>
+              <li key={acc.id} className="adm-row">
+                <div className="flex items-center gap-3 min-w-0 flex-1 basis-60">
+                  <span className="adm-avatar" aria-hidden>{acc.name?.[0] ?? "؟"}</span>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-medium text-white truncate">{acc.name}</p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full border ${ROLE_COLORS[acc.role]}`}>
-                        {ROLE_LABELS[acc.role]}
-                      </span>
-                      {!acc.isActive && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">موقوف</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-400 truncate">{acc.email}</p>
+                    <p className="text-sm font-bold flex flex-wrap items-center gap-2">
+                      <span className="truncate">{acc.name}</span>
+                      <Badge tone={acc.role === "admin" ? "brand" : "neutral"}>{ROLE_LABELS[acc.role] ?? acc.role}</Badge>
+                      {!acc.isActive && <Badge tone="bad">موقوف</Badge>}
+                    </p>
+                    <p className="text-xs adm-muted truncate">
+                      <span className="adm-mono">{acc.email}</span> · أُنشئ {fmtDate(acc.createdAt)}
+                    </p>
                   </div>
                 </div>
-
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs text-gray-500 hidden sm:block">
-                    {new Date(acc.createdAt).toLocaleDateString("ar-EG")}
-                  </span>
-                  {canManage && (<>
-                  <button
-                    title="إعادة تعيين كلمة المرور"
-                    onClick={() => openModal({ type: "reset_password", account: acc })}
-                    className="p-2 text-yellow-400 hover:bg-yellow-900/20 rounded-lg transition-colors text-sm"
-                  >
-                    🔑
-                  </button>
-                  <button
-                    title={acc.isActive ? "إيقاف الحساب" : "تفعيل الحساب"}
-                    onClick={() => setSuspendTarget({ account: acc, pw: "" })}
-                    className={`p-2 rounded-lg transition-colors text-sm ${acc.isActive ? "text-orange-400 hover:bg-orange-900/20" : "text-green-400 hover:bg-green-900/20"}`}
-                  >
-                    {acc.isActive ? "⏸" : "▶"}
-                  </button>
-                  <button
-                    title="حذف الحساب"
-                    onClick={() => openModal({ type: "delete", account: acc })}
-                    className="p-2 text-red-400 hover:bg-red-900/20 rounded-lg transition-colors text-sm"
-                  >
-                    🗑️
-                  </button>
-                  </>)}
-                </div>
-              </div>
+                {canManage && (
+                  <div className="flex items-center gap-1">
+                    <IconButton label="تغيير كلمة المرور" size="sm" onClick={() => openReset(acc)}>
+                      <KeyRound size={15} />
+                    </IconButton>
+                    <IconButton label={acc.isActive ? "إيقاف الحساب" : "تفعيل الحساب"} size="sm" onClick={() => setSuspendTarget(acc)}>
+                      {acc.isActive ? <Pause size={15} /> : <Play size={15} />}
+                    </IconButton>
+                    <IconButton label="حذف الحساب" size="sm" onClick={() => setDeleteTarget(acc)} style={{ color: "var(--danger)" }}>
+                      <Trash2 size={15} />
+                    </IconButton>
+                  </div>
+                )}
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </div>
+      </Panel>
 
-      {/* ── Suspend/Unsuspend inline modal ── */}
+      <Modal
+        open={createOpen}
+        onClose={() => !busy && setCreateOpen(false)}
+        title="إضافة حساب"
+        size="md"
+        footer={
+          <>
+            <Button onClick={() => setCreateOpen(false)} disabled={busy}>إلغاء</Button>
+            <Button type="submit" form="staff-create" variant="primary" loading={busy}>إنشاء الحساب</Button>
+          </>
+        }
+      >
+        <form id="staff-create" onSubmit={handleCreate} className="grid gap-4 sm:grid-cols-2">
+          {formError && <Notice tone="bad" title={formError} className="sm:col-span-2" />}
+          <Field label="الاسم الكامل" htmlFor="sf-name" className="sm:col-span-2">
+            <Input id="sf-name" data-autofocus required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="أحمد محمد" />
+          </Field>
+          <Field label="البريد الإلكتروني" htmlFor="sf-email" className="sm:col-span-2">
+            <Input id="sf-email" required type="email" mono value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="ahmed@example.com" />
+          </Field>
+          <Field label="كلمة المرور" hint="٦ أحرف على الأقل" htmlFor="sf-pass">
+            <Input id="sf-pass" required type="password" minLength={6} autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          </Field>
+          <Field label="الدور" htmlFor="sf-role">
+            <Select id="sf-role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+              <option value="staff">موظف — اطلاع فقط</option>
+              <option value="admin">مشرف — إدارة</option>
+            </Select>
+          </Field>
+          <Field label="كلمة مرور الإجراء" htmlFor="sf-action" className="sm:col-span-2">
+            <Input id="sf-action" required type="password" autoComplete="current-password" value={form.actionPassword} onChange={(e) => setForm({ ...form, actionPassword: e.target.value })} />
+          </Field>
+        </form>
+      </Modal>
+
+      <Modal
+        open={!!resetTarget}
+        onClose={() => !busy && setResetTarget(null)}
+        title="تغيير كلمة المرور"
+        description={resetTarget?.name}
+        size="sm"
+        footer={
+          <>
+            <Button onClick={() => setResetTarget(null)} disabled={busy}>إلغاء</Button>
+            <Button type="submit" form="staff-reset" variant="primary" loading={busy}>حفظ</Button>
+          </>
+        }
+      >
+        <form id="staff-reset" onSubmit={handleResetPassword} className="flex flex-col gap-4">
+          {formError && <Notice tone="bad" title={formError} />}
+          <Field label="كلمة المرور الجديدة" hint="٦ أحرف على الأقل" htmlFor="sr-new">
+            <Input id="sr-new" data-autofocus required type="password" minLength={6} autoComplete="new-password" value={resetForm.newPassword} onChange={(e) => setResetForm({ ...resetForm, newPassword: e.target.value })} />
+          </Field>
+          <Field label="كلمة مرور الإجراء" htmlFor="sr-action">
+            <Input id="sr-action" required type="password" autoComplete="current-password" value={resetForm.actionPassword} onChange={(e) => setResetForm({ ...resetForm, actionPassword: e.target.value })} />
+          </Field>
+        </form>
+      </Modal>
+
       {suspendTarget && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <form onSubmit={submitSuspend} className="bg-gray-800 border border-gray-700 rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <h3 className="text-lg font-bold text-white">
-              {suspendTarget.account.isActive ? "إيقاف الحساب" : "تفعيل الحساب"}
-            </h3>
-            <p className="text-gray-400 text-sm">
-              {suspendTarget.account.isActive
-                ? `سيتم إيقاف حساب "${suspendTarget.account.name}" ومنعه من تسجيل الدخول.`
-                : `سيتم إعادة تفعيل حساب "${suspendTarget.account.name}".`}
-            </p>
-            <input
-              type="password"
-              required
-              placeholder="كلمة مرور الإجراء"
-              value={suspendTarget.pw}
-              onChange={(e) => setSuspendTarget({ ...suspendTarget, pw: e.target.value })}
-              className="w-full px-4 py-3 rounded-xl border border-gray-600 bg-gray-900 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <div className="flex gap-3">
-              <button type="button" onClick={() => setSuspendTarget(null)} className="flex-1 py-2 border border-gray-600 text-gray-300 rounded-xl hover:bg-gray-700 transition-colors text-sm">إلغاء</button>
-              <button type="submit" disabled={busy} className={`flex-1 py-2 text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-60 ${suspendTarget.account.isActive ? "bg-orange-600 hover:bg-orange-700" : "bg-green-600 hover:bg-green-700"}`}>
-                {busy ? "..." : suspendTarget.account.isActive ? "إيقاف" : "تفعيل"}
-              </button>
-            </div>
-          </form>
-        </div>
+        <ConfirmActionModal
+          title={suspendTarget.isActive ? "إيقاف الحساب" : "تفعيل الحساب"}
+          description={
+            suspendTarget.isActive
+              ? `سيُمنع "${suspendTarget.name}" من تسجيل الدخول للوحة حتى تعيد تفعيله.`
+              : `سيستطيع "${suspendTarget.name}" تسجيل الدخول مجدداً.`
+          }
+          actionLabel={suspendTarget.isActive ? "إيقاف" : "تفعيل"}
+          variant="warning"
+          onConfirm={handleToggleActive}
+          onClose={() => setSuspendTarget(null)}
+        />
       )}
 
-      {/* ── Create modal ── */}
-      {modal?.type === "create" && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <form onSubmit={handleCreate} className="bg-gray-800 border border-gray-700 rounded-2xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-lg font-bold text-white">إضافة حساب جديد</h3>
-            {actionError && <p className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg p-3">{actionError}</p>}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-400 mb-1">الاسم الكامل</label>
-                <input required type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="أحمد محمد" />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-400 mb-1">البريد الإلكتروني</label>
-                <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="ahmed@school.com" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">كلمة المرور</label>
-                <input required type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="••••••••" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">الدور</label>
-                <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="staff">موظف (staff)</option>
-                  <option value="admin">مشرف (admin)</option>
-                </select>
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-400 mb-1">كلمة مرور الإجراء</label>
-                <input required type="password" value={form.actionPassword} onChange={(e) => setForm({ ...form, actionPassword: e.target.value })}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="كلمة المرور التأكيدية" />
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-1">
-              <button type="button" onClick={closeModal} className="flex-1 py-2.5 border border-gray-600 text-gray-300 rounded-xl hover:bg-gray-700 transition-colors text-sm">إلغاء</button>
-              <button type="submit" disabled={busy} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-60">
-                {busy ? "جارٍ الإنشاء..." : "إنشاء الحساب"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ── Reset password modal ── */}
-      {modal?.type === "reset_password" && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <form onSubmit={handleResetPassword} className="bg-gray-800 border border-gray-700 rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <h3 className="text-lg font-bold text-white">إعادة تعيين كلمة المرور</h3>
-            <p className="text-gray-400 text-sm">الحساب: <span className="text-white font-medium">{modal.account.name}</span></p>
-            {actionError && <p className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg p-3">{actionError}</p>}
-            <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">كلمة المرور الجديدة</label>
-              <input required type="password" minLength={6} value={resetForm.newPassword}
-                onChange={(e) => setResetForm({ ...resetForm, newPassword: e.target.value })}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="••••••••" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">كلمة مرور الإجراء</label>
-              <input required type="password" value={resetForm.actionPassword}
-                onChange={(e) => setResetForm({ ...resetForm, actionPassword: e.target.value })}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="كلمة المرور التأكيدية" />
-            </div>
-            <div className="flex gap-3">
-              <button type="button" onClick={closeModal} className="flex-1 py-2.5 border border-gray-600 text-gray-300 rounded-xl hover:bg-gray-700 transition-colors text-sm">إلغاء</button>
-              <button type="submit" disabled={busy} className="flex-1 py-2.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-60">
-                {busy ? "..." : "تحديث كلمة المرور"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ── Delete modal ── */}
-      {modal?.type === "delete" && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <form onSubmit={handleDelete} className="bg-gray-800 border border-gray-700 rounded-2xl p-6 w-full max-w-sm space-y-4">
-            <h3 className="text-lg font-bold text-red-400">حذف الحساب</h3>
-            <p className="text-gray-400 text-sm">
-              سيتم حذف حساب <span className="text-white font-medium">{modal.account.name}</span> ({modal.account.email}) بشكل نهائي.
-            </p>
-            {actionError && <p className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg p-3">{actionError}</p>}
-            <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">كلمة مرور الإجراء للتأكيد</label>
-              <input required type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-600 bg-gray-900 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                placeholder="كلمة المرور التأكيدية" />
-            </div>
-            <div className="flex gap-3">
-              <button type="button" onClick={closeModal} className="flex-1 py-2.5 border border-gray-600 text-gray-300 rounded-xl hover:bg-gray-700 transition-colors text-sm">إلغاء</button>
-              <button type="submit" disabled={busy} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-60">
-                {busy ? "..." : "حذف نهائياً"}
-              </button>
-            </div>
-          </form>
-        </div>
+      {deleteTarget && (
+        <ConfirmActionModal
+          title="حذف الحساب"
+          description={`سيُحذف حساب "${deleteTarget.name}" (${deleteTarget.email}) ولن يستطيع الدخول للوحة.`}
+          actionLabel="حذف الحساب"
+          variant="danger"
+          onConfirm={handleDelete}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   );

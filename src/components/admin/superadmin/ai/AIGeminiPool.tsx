@@ -71,7 +71,7 @@ export default function AIGeminiPool() {
             <div key={k.displayName} className="rounded-2xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-sm" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>{k.displayName}</h3>
-                <span className="text-[10px] font-bold px-2.5 py-1 rounded-full" style={{ background: st.bg, color: st.color }}>{st.label}</span>
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: st.bg, color: st.color }}>{st.label}</span>
               </div>
               <div className="space-y-2.5">
                 {[

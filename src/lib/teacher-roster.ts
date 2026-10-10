@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { bookingGrantsCourseAccess } from "@/lib/course-track";
 import { getPlanMonths } from "@/lib/subscription-terms";
 import type { RosterCourse, RosterStudent, TeacherRoster } from "@/lib/teacher-roster-types";
 
@@ -72,6 +73,7 @@ export async function buildTeacherRoster(teacherId: string): Promise<TeacherRost
           paymentSource: true,
           paymentRef: true,
           status: true,
+          expiresAt: true,
           createdAt: true,
           student: {
             select: {
@@ -89,6 +91,9 @@ export async function buildTeacherRoster(teacherId: string): Promise<TeacherRost
         select: {
           id: true,
           title: true,
+          subject: true,
+          description: true,
+          deliveryMode: true,
           isPaid: true,
           price: true,
           enrollments: {
@@ -142,10 +147,19 @@ export async function buildTeacherRoster(teacherId: string): Promise<TeacherRost
 
   if (!teacher) return null;
 
-  const exclusions = await prisma.appSetting.findMany({
-    where: { key: { startsWith: "course_excluded_" } },
-    select: { key: true, value: true },
-  });
+  const [exclusions, trackRows] = await Promise.all([
+    prisma.appSetting.findMany({
+      where: { key: { startsWith: "course_excluded_" } },
+      select: { key: true, value: true },
+    }),
+    prisma.appSetting.findMany({
+      where: { key: { startsWith: "course_track_" } },
+      select: { key: true, value: true },
+    }),
+  ]);
+  const trackOverride = new Map(
+    trackRows.map((row) => [row.key.slice("course_track_".length), row.value])
+  );
   const excludedSet = new Set(
     exclusions.filter((e) => e.value === "true").map((e) => e.key.replace("course_excluded_", ""))
   );
@@ -336,6 +350,27 @@ export async function buildTeacherRoster(teacherId: string): Promise<TeacherRost
           });
         }
         students.set(studentId, row);
+      }
+
+      const now = new Date();
+      for (const sub of paidSubs) {
+        if (sub.expiresAt && sub.expiresAt <= now) continue;
+        if (!bookingGrantsCourseAccess(course, sub.languageTrack, trackOverride.get(course.id), sub.planType)) continue;
+        const studentId = sub.student?.id;
+        if (!studentId || studentId === teacherId || enrolledIds.has(studentId)) continue;
+        if (excludedSet.has(`${course.id}_${studentId}`)) continue;
+        enrolledIds.add(studentId);
+        coveredCount += 1;
+        paidCount += 1;
+        const row = students.get(studentId);
+        if (!row || row.courses.some((c) => c.id === course.id)) continue;
+        row.courses.push({
+          id: course.id,
+          title: course.title,
+          amount: 0,
+          covered: true,
+          source: "COVERED_BY_PACKAGE",
+        });
       }
     } else {
       for (const studentId of enrolledIds) {

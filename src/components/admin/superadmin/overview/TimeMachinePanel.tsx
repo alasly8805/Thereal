@@ -125,15 +125,8 @@ export function TimeMachinePanel({
   };
 
   return (
-    <Card padded className="relative overflow-hidden">
-      <div
-        className="absolute inset-0 opacity-40 pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(1200px 180px at 80% -20%, color-mix(in srgb, var(--gold) 22%, transparent), transparent)",
-        }}
-      />
-      <div className="relative space-y-3">
+    <Card padded>
+      <div className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-2.5">
             <span
@@ -146,7 +139,7 @@ export function TimeMachinePanel({
               <h2 className="font-black text-sm" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
                 آلة الزمن
               </h2>
-              <p className="text-[11px] mt-0.5 leading-relaxed max-w-2xl" style={{ color: "var(--ink-3)" }}>
+              <p className="text-xs mt-0.5 leading-relaxed max-w-2xl" style={{ color: "var(--ink-3)" }}>
                 كل مرة تفتح هذه الصفحة تُحفظ قراءة حقيقية للأرقام. اختر لحظة من الشريط، أو حدد تاريخاً — إن وُجدت قراءة محفوظة خلال ١٠ دقائق نعرضها كما كانت، وإلا نُعيد بناء الأرقام من السجلات.
               </p>
             </div>
@@ -164,15 +157,14 @@ export function TimeMachinePanel({
         </div>
 
         <div className="flex flex-wrap items-end gap-2">
-          <label className="text-[11px] font-bold" style={{ color: "var(--ink-2)" }}>
+          <label className="text-xs font-bold" style={{ color: "var(--ink-2)" }}>
             سافر إلى
             <input
               type="datetime-local"
               value={picking}
               max={toDatetimeLocalValue()}
               onChange={(e) => setPicking(e.target.value)}
-              className="block mt-1 rounded-lg px-3 py-2 text-xs"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--ink)" }}
+              className="adm-input is-sm block mt-1"
             />
           </label>
           <ActionButton variant="primary" onClick={() => void travel()} disabled={travelBusy}>
@@ -180,26 +172,24 @@ export function TimeMachinePanel({
             {travelBusy ? "جارٍ السفر..." : closestSnap ? "افتح القراءة المحفوظة" : "أظهر أرقام ذلك الوقت"}
           </ActionButton>
           {closestSnap && (
-            <span className="text-[10px] font-semibold" style={{ color: tone.gold }}>
+            <span className="text-xs font-semibold" style={{ color: tone.gold }}>
               توجد قراءة محفوظة عند فتح اللوحة: {fmtDateTime(closestSnap.capturedAt)}
             </span>
           )}
         </div>
 
         {error && (
-          <div className="rounded-lg px-3 py-2 text-xs font-bold" style={{ background: "color-mix(in srgb, #ef4444 12%, transparent)", color: tone.red }}>
-            {error}
-          </div>
+          <div className="adm-notice is-bad" role="alert">{error}</div>
         )}
 
         <div>
-          <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-black" style={{ color: "var(--ink-2)" }}>
+          <div className="flex items-center gap-1.5 mb-1.5 text-xs font-black" style={{ color: "var(--ink-2)" }}>
             <Clock size={12} /> لحظات فُتحت فيها هذه الصفحة
           </div>
           {loadingList ? (
             <SkeletonBlock h={44} />
           ) : snapshots.length === 0 ? (
-            <p className="text-[11px]" style={{ color: "var(--ink-3)" }}>
+            <p className="text-xs" style={{ color: "var(--ink-3)" }}>
               لم تُحفظ قراءات بعد. هذه الزيارة ستُحفظ تلقائياً — حدّث الصفحة بعد ثوانٍ لتظهر هنا.
             </p>
           ) : (
@@ -219,10 +209,10 @@ export function TimeMachinePanel({
                     }}
                     title={`حجوزات نشطة ${ar(s.kpis.bookingsActiveNow)} · صافي ${ar(Math.round(s.kpis.net))}`}
                   >
-                    <div className="text-[10px] font-black leading-tight" style={{ fontFamily: "var(--font-head)" }}>
+                    <div className="text-xs font-black leading-tight" style={{ fontFamily: "var(--font-head)" }}>
                       {fmtDateTime(s.capturedAt)}
                     </div>
-                    <div className="text-[10px] mt-0.5 flex items-center gap-1" style={{ color: "var(--ink-3)" }}>
+                    <div className="text-xs mt-0.5 flex items-center gap-1" style={{ color: "var(--ink-3)" }}>
                       {s.source === "pin" ? "مثبّت يدوياً" : "فُتحت اللوحة"}
                       <span className="tabular-nums" style={{ color: tone.green }}>
                         {ar(s.kpis.bookingsActiveNow)} حجز
@@ -269,7 +259,7 @@ function TravelBanner({
   const color = kind === "gold" ? "var(--gold)" : tone.sky;
   return (
     <div
-      className="rounded-xl px-3 py-2.5 text-[11px] leading-relaxed"
+      className="rounded-xl px-3 py-2.5 text-xs leading-relaxed"
       style={{
         background: `color-mix(in srgb, ${color} 12%, var(--surface-2))`,
         border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,

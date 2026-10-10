@@ -65,6 +65,19 @@ export function connectionLooksSlow(): boolean {
   return typeof conn.downlink === "number" && conn.downlink > 0 && conn.downlink < 1.5;
 }
 
+/**
+ * The tier to actually play for a wanted height: that tier when it is built,
+ * otherwise the closest built one (smaller first), otherwise the wanted height or Auto.
+ */
+export function nearestReadyQuality(list: VideoQualityOption[], height: number | null): number | null {
+  if (height === null) return null;
+  const tiers = list.filter((o) => o.height !== null && o.ready !== false).map((o) => o.height as number);
+  if (tiers.length === 0) return height;
+  const smaller = tiers.filter((h) => h <= height).sort((a, b) => b - a);
+  const larger = tiers.filter((h) => h > height).sort((a, b) => a - b);
+  return smaller[0] ?? larger[0] ?? height;
+}
+
 function formatSize(bytes?: number): string | null {
   if (!bytes || bytes <= 0) return null;
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} جيجا`;
@@ -74,7 +87,8 @@ function formatSize(bytes?: number): string | null {
 /**
  * Quality picker for the Native (alasly / Drive) player.
  *
- * Always offers Auto / 360p / 480p / 720p. Sits in the custom control bar
+ * Always offers Auto / 360p / 480p / 720p; tiers still being transcoded are
+ * shown but disabled. Sits in the custom control bar
  * (inline) so it lines up with speed and fullscreen; the overlay variant is
  * kept for any surface that still uses native <video> chrome.
  */
@@ -159,6 +173,8 @@ export function VideoQualityMenu({
           {list.map((opt) => {
             const selected = opt.height === value;
             const size = formatSize(opt.bytes);
+            const pending = opt.ready === false;
+            const note = pending ? "قيد التجهيز" : opt.note;
             return (
               <button
                 key={opt.height ?? "auto"}
@@ -179,9 +195,9 @@ export function VideoQualityMenu({
                   <span className="block text-[12px] font-bold text-white leading-tight" dir="ltr">
                     {opt.label}
                   </span>
-                  {(opt.note || size) && (
+                  {(note || size) && (
                     <span className="block text-[10px] text-slate-400 leading-tight mt-0.5">
-                      {[opt.note, size].filter(Boolean).join(" · ")}
+                      {[note, pending ? null : size].filter(Boolean).join(" · ")}
                     </span>
                   )}
                 </span>

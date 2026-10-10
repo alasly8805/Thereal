@@ -856,7 +856,7 @@ function PreviewDashboardContent() {
                   <span className="text-purple-400">Low-Opacity Dynamic Watermark</span>
                 </div>
                 <p className="text-xs text-slate-300 font-mono">
-                  Drifting 14% opacity badge
+                  Drifting 22% opacity badge
                 </p>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
                   تتحرك بسلاسة عبر مساحة الفيديو بشفافية منخفضة وغير مشتتة لانتباه الطالب، مع توثيق هوية المشاهد في كل تسجيل.

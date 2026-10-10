@@ -60,8 +60,10 @@ export async function checkAndUpdateStreak(userId: string): Promise<void> {
     // Award a freeze token when hitting a milestone (only once per milestone)
     const earnedFreeze = STREAK_FREEZE_AWARD_AT.includes(newStreak) ? 1 : 0;
 
-    await prisma.user.update({
-      where: { id: userId },
+    // Conditional on the lastLoginDate we read, so concurrent requests (several
+    // /api/auth/me calls on one page load, or login + /me) award the day once.
+    const { count } = await prisma.user.updateMany({
+      where: { id: userId, lastLoginDate: user.lastLoginDate },
       data: {
         points:        { increment: pointsToAward },
         loginStreak:   newStreak,
@@ -73,13 +75,13 @@ export async function checkAndUpdateStreak(userId: string): Promise<void> {
     });
 
     // Fire milestone notifications (fire-and-forget)
-    if (STREAK_MILESTONES.includes(newStreak)) {
+    if (count > 0 && STREAK_MILESTONES.includes(newStreak)) {
       void notifyStreakMilestone(userId, newStreak);
     }
   } else {
     // First ever login
-    await prisma.user.update({
-      where: { id: userId },
+    await prisma.user.updateMany({
+      where: { id: userId, lastLoginDate: null },
       data: {
         points:          { increment: DAILY_LOGIN_STREAK_POINTS },
         loginStreak:     1,

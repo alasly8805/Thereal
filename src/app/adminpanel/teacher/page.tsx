@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react/no-unescaped-entities */
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { phonesMatch } from "@/lib/phone-match";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { ClassicAdminShell } from "@/components/admin/ClassicAdminShell";
@@ -106,6 +107,18 @@ interface AccessCode {
   student?: { id: string; name: string; email?: string; phone?: string | null } | null;
 }
 
+interface RosterLearner {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  parentPhone: string | null;
+  kind: string;
+  planLabel: string | null;
+  status: string;
+  courses: { id: string; title: string }[];
+}
+
 // ─── Shared style vocabulary ──────────────────────────────────────────────────
 const input =
   "w-full px-3.5 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--ink)] text-sm placeholder:text-[var(--ink-muted)] focus:outline-none focus:border-sky-400/60 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15)] transition-all";
@@ -118,16 +131,21 @@ const card = "bg-[var(--surface)] rounded-2xl border border-[var(--border)]";
 const cardPad = `${card} p-5 sm:p-6`;
 
 import { ReferredStudentsSection } from "@/components/admin/teacher/ReferredStudentsSection";
+import { StudentFilesSection } from "@/components/admin/teacher/StudentFilesSection";
 import { TeacherSubscriptionsSection } from "@/components/admin/teacher/TeacherSubscriptionsSection";
+import { TeacherTermsBookingsSection } from "@/components/admin/teacher/TeacherTermsBookingsSection";
 import { InVideoResponsesSection } from "@/components/admin/InVideoResponsesSection";
 import { TeacherAssistantsSection } from "@/components/admin/teacher/TeacherAssistantsSection";
 import { StudentPhoneActions } from "@/components/admin/StudentPhoneActions";
 import { StudentDossierButton } from "@/components/admin/TeacherStudentDossierModal";
+import { TeacherMultiModelExamCreator } from "@/components/admin/TeacherMultiModelExamCreator";
 
 const SECTION_TITLES: Record<string, string> = {
   dashboard: "لوحة التحكم",
   "my-page": "صفحتي",
+  "terms-bookings": "التيرمات والحجوزات",
   "teacher-subscriptions": "طلابك والأرقام",
+  "multi-model-exams": "الامتحانات (نماذج متعددة)",
   "in-video-responses": "تصحيح الأسئلة المقالية",
   "quiz-results": "نتائج الاختبارات",
   "create-course": "كورس جديد",
@@ -140,6 +158,7 @@ const SECTION_TITLES: Record<string, string> = {
   feedback: "ملاحظات المتعلمين",
   homework: "إدارة الواجبات",
   review: "مراجعة الإجابات",
+  "student-files": "ملفات الطلاب",
   assistants: "المساعدون",
 };
 
@@ -153,6 +172,7 @@ interface QuizQuestionInput {
   optionD?: string;
   correctAnswer: string;
   optionsCount?: 2 | 3 | 4;
+  modelNumber?: number;
 }
 
 interface NewQuizState {
@@ -161,6 +181,7 @@ interface NewQuizState {
   timeLimitMinutes: number;
   enableAutoClose: boolean;
   closeAt: string;
+  hideAnswersUntilEssayGraded?: boolean;
   questions: QuizQuestionInput[];
 }
 
@@ -180,6 +201,9 @@ export default function TeacherDashboardPage() {
   const [codeCategory, setCodeCategory] = useState<"courses" | "plans">("courses");
   const [folders, setFolders] = useState<Folder[]>([]);
   const [codes, setCodes] = useState<AccessCode[]>([]);
+  const [rosterLearners, setRosterLearners] = useState<RosterLearner[]>([]);
+  const [rosterCourseCounts, setRosterCourseCounts] = useState<Record<string, number> | null>(null);
+  const [learnerQuery, setLearnerQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [creatingCourse, setCreatingCourse] = useState(false);
   // Forms
@@ -744,12 +768,15 @@ export default function TeacherDashboardPage() {
     allowedFileTypes: "pdf,py,js,zip",
     questions: [{ question: "", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", optionsCount: 4 as 2 | 3 | 4 }],
   });
+  const [quizModels, setQuizModels] = useState<number[]>([1]);
+  const [activeQuizModel, setActiveQuizModel] = useState<number>(1);
   const [newQuiz, setNewQuiz] = useState<NewQuizState>({
     title: "", folderId: "",
     timeLimitMinutes: 30,
     enableAutoClose: false,
     closeAt: "",
-    questions: [{ question: "", questionType: "mcq", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
+    hideAnswersUntilEssayGraded: false,
+    questions: [{ question: "", questionType: "mcq", imageUrl: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", modelNumber: 1 }],
   });
   const [newMaterial, setNewMaterial] = useState({ title: "", url: "", type: "pdf", folderId: "" });
   const [courseSettings, setCourseSettings] = useState({
@@ -834,6 +861,26 @@ export default function TeacherDashboardPage() {
     const data = await readJson<{ codes?: AccessCode[] }>(res);
     setCodes(data?.codes || []);
   };
+
+  useEffect(() => {
+    if (activeSection !== "students") return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/teacher/roster", { credentials: "include" });
+      const data = await readJson<{
+        students?: RosterLearner[];
+        courses?: { id: string; enrolled: number }[];
+      }>(res);
+      if (cancelled || !res.ok) return;
+      setRosterLearners(data?.students || []);
+      const counts: Record<string, number> = {};
+      for (const course of data?.courses || []) counts[course.id] = course.enrolled;
+      setRosterCourseCounts(counts);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection]);
 
   useEffect(() => {
     const loadCoursesAndPlans = async () => {
@@ -1128,9 +1175,13 @@ export default function TeacherDashboardPage() {
             optionC: optC,
             optionD: optD,
             correctAnswer: isEssay ? "A" : (["A", "B", "C", "D"].includes(String(q.correctAnswer).toUpperCase()) ? String(q.correctAnswer).toUpperCase() : "A"),
+            modelNumber: typeof q.modelNumber === "number" ? q.modelNumber : activeQuizModel,
           };
         });
 
+        const importedModels = [...new Set(validQuestions.map((q) => q.modelNumber || 1))];
+        setQuizModels(importedModels.length ? importedModels : [1]);
+        setActiveQuizModel(importedModels[0] || 1);
         setNewQuiz((prev) => ({
           ...prev,
           title: importedTitle || prev.title,
@@ -1145,19 +1196,73 @@ export default function TeacherDashboardPage() {
     reader.readAsText(file);
   };
 
+  const handleAddQuizModel = () => {
+    const nextModel = (quizModels.length > 0 ? Math.max(...quizModels) : 0) + 1;
+    setQuizModels((prev) => [...prev, nextModel]);
+    setActiveQuizModel(nextModel);
+    setNewQuiz((prev) => ({
+      ...prev,
+      questions: [
+        ...prev.questions,
+        {
+          question: "",
+          questionType: "mcq",
+          optionsCount: 4,
+          optionA: "",
+          optionB: "",
+          optionC: "",
+          optionD: "",
+          correctAnswer: "A",
+          modelNumber: nextModel,
+        },
+      ],
+    }));
+  };
+
+  const handleRemoveQuizModel = (m: number) => {
+    if (m === 1) return;
+    setQuizModels((prev) => prev.filter((item) => item !== m));
+    setNewQuiz((prev) => ({
+      ...prev,
+      questions: prev.questions.filter((q) => (q.modelNumber || 1) !== m),
+    }));
+    setActiveQuizModel(1);
+  };
+
+  const handleCopyFromModel1 = () => {
+    const model1Questions = newQuiz.questions.filter((q) => (q.modelNumber || 1) === 1);
+    if (!model1Questions.length || !model1Questions.some((q) => q.question.trim())) {
+      notify("error", "لا توجد أسئلة مكتوبة في نموذج 1 لنسخها");
+      return;
+    }
+    const cloned = model1Questions.map((q) => ({
+      ...q,
+      modelNumber: activeQuizModel,
+    }));
+    setNewQuiz((prev) => ({
+      ...prev,
+      questions: [
+        ...prev.questions.filter((q) => (q.modelNumber || 1) !== activeQuizModel),
+        ...cloned,
+      ],
+    }));
+    notify("success", `تم نسخ ${cloned.length} سؤال من نموذج 1 إلى نموذج ${activeQuizModel} بنجاح ✅`);
+  };
+
   const addQuiz = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newQuiz.folderId) return;
 
     for (let i = 0; i < newQuiz.questions.length; i++) {
       const q = newQuiz.questions[i];
+      const modelNum = q.modelNumber || 1;
       if (!q.question.trim()) {
-        notify("error", `يرجى إدخال نص السؤال رقم ${i + 1}`);
+        notify("error", `يرجى إدخال نص السؤال رقم ${i + 1} (النموذج ${modelNum})`);
         return;
       }
       if (q.questionType !== "essay") {
         if (!q.optionA?.trim() || !q.optionB?.trim()) {
-          notify("error", `السؤال رقم ${i + 1} يحتاج إلى خيارين على الأقل (أ وب)`);
+          notify("error", `السؤال رقم ${i + 1} (النموذج ${modelNum}) يحتاج إلى خيارين على الأقل (أ وب)`);
           return;
         }
       }
@@ -1175,6 +1280,7 @@ export default function TeacherDashboardPage() {
         optionC: isEssay || count < 3 ? "" : (q.optionC?.trim() || ""),
         optionD: isEssay || count < 4 ? "" : (q.optionD?.trim() || ""),
         correctAnswer: isEssay ? "A" : q.correctAnswer,
+        modelNumber: q.modelNumber || 1,
       };
     });
 
@@ -1188,6 +1294,7 @@ export default function TeacherDashboardPage() {
         timeLimitMinutes: newQuiz.timeLimitMinutes,
         enableAutoClose: newQuiz.enableAutoClose,
         closeAt: newQuiz.closeAt || undefined,
+        hideAnswersUntilEssayGraded: Boolean(newQuiz.hideAnswersUntilEssayGraded),
       }),
     });
     const data = await readJson<{ error?: string }>(res);
@@ -1198,8 +1305,11 @@ export default function TeacherDashboardPage() {
         timeLimitMinutes: 30,
         enableAutoClose: false,
         closeAt: "",
-        questions: [{ question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }],
+        hideAnswersUntilEssayGraded: false,
+        questions: [{ question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", modelNumber: 1 }],
       });
+      setQuizModels([1]);
+      setActiveQuizModel(1);
       if (selectedCourse) fetchFolders(selectedCourse.id);
       notify("success", "تم إضافة الاختبار بنجاح");
     } else {
@@ -1758,8 +1868,14 @@ export default function TeacherDashboardPage() {
 
           {activeSection === "assistants" && <TeacherAssistantsSection />}
 
+          {/* ════════ TERMS & BOOKINGS ════════ */}
+          {activeSection === "terms-bookings" && <TeacherTermsBookingsSection />}
+
           {/* ════════ TEACHER SUBSCRIPTIONS ════════ */}
           {activeSection === "teacher-subscriptions" && <TeacherSubscriptionsSection />}
+
+          {/* ════════ MULTI-MODEL EXAMS ════════ */}
+          {activeSection === "multi-model-exams" && <TeacherMultiModelExamCreator />}
 
           {/* ════════ EXAM DASHBOARD ════════ */}
           {activeSection === "exam-dashboard" && (
@@ -3006,10 +3122,130 @@ export default function TeacherDashboardPage() {
                           />
                         </div>
 
-                        {newQuiz.questions.map((q, qi) => (
-                          <div key={qi} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 space-y-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm font-bold text-[var(--ink)]">السؤال {qi + 1}</p>
+                        {/* Hide answers toggle */}
+                        <div className="rounded-xl border border-indigo-400/30 bg-indigo-500/5 p-3">
+                          <label className="flex items-center gap-2 text-xs font-bold text-[var(--ink)] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(newQuiz.hideAnswersUntilEssayGraded)}
+                              onChange={(e) => setNewQuiz({ ...newQuiz, hideAnswersUntilEssayGraded: e.target.checked })}
+                              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span>إخفاء الإجابات الصحيحة حتى تصحيح المقالي</span>
+                          </label>
+                          <p className="text-[11px] text-[var(--ink-muted)] mt-1 mr-6">
+                            عند تفعيل هذا الخيار: لن تظهر درجات الأسئلة أو الإجابات الصحيحة للطالب بعد التسليم حتى يقوم المعلم بتصحيح الأسئلة المقالية ورصد درجاتها.
+                          </p>
+                        </div>
+
+                        {/* Multi-Model Tabs */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3 pt-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-[var(--ink-muted)]">نماذج الاختبار:</span>
+                            <div className="flex items-center gap-1.5 p-1 bg-[var(--surface)] border border-[var(--border)] rounded-xl">
+                              {quizModels.map((m) => {
+                                const qCount = newQuiz.questions.filter((q) => (q.modelNumber || 1) === m).length;
+                                const isActive = activeQuizModel === m;
+                                return (
+                                  <div key={m} className="flex items-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveQuizModel(m)}
+                                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                        isActive
+                                          ? "bg-sky-500 text-white shadow-xs"
+                                          : "text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-[var(--bg)]"
+                                      }`}
+                                    >
+                                      <span>نموذج {m}</span>
+                                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isActive ? "bg-white/20 text-white" : "bg-[var(--border)] text-[var(--ink-muted)]"}`}>
+                                        {qCount}
+                                      </span>
+                                    </button>
+                                    {m !== 1 && (
+                                      <button
+                                        type="button"
+                                        title={`حذف نموذج ${m}`}
+                                        onClick={() => handleRemoveQuizModel(m)}
+                                        className="mr-1 text-red-400 hover:text-red-600 text-xs px-1 cursor-pointer"
+                                      >
+                                        ✕
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              <button
+                                type="button"
+                                onClick={handleAddQuizModel}
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-sky-500 hover:bg-sky-500/10 transition-colors flex items-center gap-1 cursor-pointer"
+                              >
+                                <IconPlus className="w-3.5 h-3.5" /> إضافة نموذج
+                              </button>
+                            </div>
+                          </div>
+
+                          {activeQuizModel !== 1 && (
+                            <button
+                              type="button"
+                              onClick={handleCopyFromModel1}
+                              className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <span>📋 نسخ أسئلة من نموذج 1</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {(() => {
+                          const activeQuizQuestions = newQuiz.questions
+                            .map((q, originalIdx) => ({ ...q, originalIdx }))
+                            .filter((q) => (q.modelNumber || 1) === activeQuizModel);
+
+                          if (activeQuizQuestions.length === 0) {
+                            return (
+                              <div className="p-8 text-center border-2 border-dashed border-[var(--border)] rounded-2xl">
+                                <p className="text-sm font-bold text-[var(--ink-muted)]">
+                                  لا توجد أسئلة في نموذج {activeQuizModel} حتى الآن
+                                </p>
+                                <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => setNewQuiz({
+                                      ...newQuiz,
+                                      questions: [
+                                        ...newQuiz.questions,
+                                        { question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", modelNumber: activeQuizModel }
+                                      ]
+                                    })}
+                                    className={`${primaryBtn} text-xs`}
+                                  >
+                                    <IconPlus className="w-3.5 h-3.5" /> إضافة سؤال في نموذج {activeQuizModel}
+                                  </button>
+                                  {activeQuizModel !== 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={handleCopyFromModel1}
+                                      className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <span>📋 نسخ أسئلة من نموذج 1</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return activeQuizQuestions.map((q, displayIdx) => {
+                            const qi = q.originalIdx;
+                            return (
+                              <div key={qi} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 space-y-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-bold text-[var(--ink)]">السؤال {displayIdx + 1}</p>
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-sky-500/20 text-sky-500 font-bold">
+                                      نموذج {activeQuizModel}
+                                    </span>
+                                  </div>
                               <select
                                 value={q.questionType || "mcq"}
                                 onChange={(e) => {
@@ -3158,11 +3394,13 @@ export default function TeacherDashboardPage() {
                               </div>
                             )}
                           </div>
-                        ))}
+                            );
+                          });
+                        })()}
 
                         <div className="flex flex-col sm:flex-row gap-3">
-                          <button type="button" onClick={() => setNewQuiz({ ...newQuiz, questions: [...newQuiz.questions, { question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" }] })} className={ghostBtn}>
-                            <IconPlus className="w-4 h-4" /> سؤال جديد
+                          <button type="button" onClick={() => setNewQuiz({ ...newQuiz, questions: [...newQuiz.questions, { question: "", questionType: "mcq", optionsCount: 4, optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A", modelNumber: activeQuizModel }] })} className={ghostBtn}>
+                            <IconPlus className="w-4 h-4" /> سؤال جديد في نموذج {activeQuizModel}
                           </button>
                           <button type="submit" disabled={!newQuiz.folderId || !newQuiz.title} className={`${primaryBtn} flex-1`}>
                             إضافة الاختبار
@@ -4275,53 +4513,80 @@ export default function TeacherDashboardPage() {
           {/* ════════ STUDENTS ════════ */}
           {activeSection === "students" && (
             !selectedCourse ? (
-              <CoursePicker courses={courses} onSelect={(c) => selectCourse(c, "students")} hint="اختر كورساً لعرض طلابه:" sub={(c) => `${c._count?.accessCodes || 0} طالب مسجل`} />
+              <div className="space-y-5">
+                <CoursePicker
+                  courses={courses}
+                  onSelect={(c) => selectCourse(c, "students")}
+                  hint="اختر كورساً لعرض طلابه. العدد يشمل الحجز الشهري، وليس أكواد التفعيل فقط."
+                  sub={(c) => `${rosterCourseCounts ? (rosterCourseCounts[c.id] ?? 0) : "…"} طالب`}
+                />
+                <LearnerSearch value={learnerQuery} onChange={setLearnerQuery} />
+                <LearnerList
+                  learners={filterLearners(rosterLearners, learnerQuery)}
+                  emptyTitle={rosterCourseCounts ? "لا يوجد طلاب بعد" : "جاري تحميل الطلاب"}
+                  emptyHint="يظهر هنا كل من فعّل كوداً أو دفع حجزاً يغطي كورسات هذا المعلم."
+                />
+              </div>
             ) : (
               <div className="space-y-5">
                 <h2 className="font-bold text-[var(--ink)]">{selectedCourse.title} — المتعلمين</h2>
+                <LearnerSearch value={learnerQuery} onChange={setLearnerQuery} />
                 <div className={`${card} overflow-hidden`}>
-                  {codes.filter((c) => c.student).length === 0 ? (
-                    <EmptyState icon={<IconUsers className="w-7 h-7" />} title="لا يوجد طلاب مسجلون بعد" hint="سيظهر الطلاب هنا فور تفعيلهم لأكواد هذا الكورس." />
-                  ) : (
-                    <ul className="divide-y divide-[var(--border)]">
-                      {codes.filter((c) => c.student).map((c) => (
-                        <li key={c.id} className="p-4 space-y-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-11 h-11 rounded-2xl bg-sky-500/12 text-sky-500 dark:text-sky-300 flex items-center justify-center text-sm font-black shrink-0">
-                                {c.student!.name[0]}
+                  {(() => {
+                    const rows = courseLearnerRows(selectedCourse.id, codes, rosterLearners, learnerQuery);
+                    if (rows.length === 0) {
+                      return (
+                        <EmptyState
+                          icon={<IconUsers className="w-7 h-7" />}
+                          title="لا يوجد طلاب على هذا الكورس"
+                          hint="الحجز يفتح الكورس الذي يغطيه فقط. المحاضرات المباعة وحدها وشرح الدرس الأول لا يدخلان في الحجز."
+                        />
+                      );
+                    }
+                    return (
+                      <ul className="divide-y divide-[var(--border)]">
+                        {rows.map((row) => (
+                          <li key={row.id} className="p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-11 h-11 rounded-2xl bg-sky-500/12 text-sky-500 dark:text-sky-300 flex items-center justify-center text-sm font-black shrink-0">
+                                  {row.name[0]}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-bold text-[var(--ink)] text-sm truncate">{row.name}</p>
+                                  <p className="text-xs text-[var(--ink-muted)] truncate">{row.email}</p>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <p className="font-bold text-[var(--ink)] text-sm truncate">{c.student!.name}</p>
-                                <p className="text-xs text-[var(--ink-muted)] truncate">{c.student!.email}</p>
-                              </div>
+                              <span className={`text-xs font-semibold px-2 py-1 rounded-full ${row.isActive ? "bg-emerald-500/12 text-emerald-500" : "bg-[var(--error)]/12 text-[var(--error)]"}`}>
+                                {row.via === "booking" ? (row.planLabel || "مشمول بالحجز") : row.isActive ? "نشط" : "محظور"}
+                              </span>
                             </div>
-                            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${c.isActive ? "bg-emerald-500/12 text-emerald-500" : "bg-[var(--error)]/12 text-[var(--error)]"}`}>
-                              {c.isActive ? "نشط" : "محظور"}
-                            </span>
-                          </div>
-                          <StudentPhoneActions phone={c.student!.phone} />
-                          <StudentDossierButton studentId={c.student!.id} courseId={selectedCourse.id} />
-                          <div className="flex items-center gap-2">
-                            <button type="button" onClick={() => resetDevices(c.student!.id, c.student!.name)}
-                              title="مسح أجهزة الطالب ليتمكن من الدخول من جهاز جديد"
-                              className="flex-1 min-h-11 px-2.5 text-xs font-bold rounded-xl text-sky-500 bg-sky-500/10">
-                              تصفير الأجهزة
-                            </button>
-                            <button type="button" onClick={() => updateStudentAccess(c.student!.id, c.isActive ? "ban" : "unban")}
-                              className={`flex-1 min-h-11 px-2.5 text-xs font-bold rounded-xl ${c.isActive ? "text-[var(--error)] bg-[var(--error)]/10" : "text-emerald-500 bg-emerald-500/10"}`}>
-                              {c.isActive ? "حظر" : "إلغاء الحظر"}
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                            <StudentPhoneActions phone={row.phone} />
+                            <StudentDossierButton studentId={row.id} courseId={selectedCourse.id} />
+                            <div className="flex items-center gap-2">
+                              <button type="button" onClick={() => resetDevices(row.id, row.name)}
+                                title="مسح أجهزة الطالب ليتمكن من الدخول من جهاز جديد"
+                                className="flex-1 min-h-11 px-2.5 text-xs font-bold rounded-xl text-sky-500 bg-sky-500/10">
+                                تصفير الأجهزة
+                              </button>
+                              {row.via === "code" && (
+                                <button type="button" onClick={() => updateStudentAccess(row.id, row.isActive ? "ban" : "unban")}
+                                  className={`flex-1 min-h-11 px-2.5 text-xs font-bold rounded-xl ${row.isActive ? "text-[var(--error)] bg-[var(--error)]/10" : "text-emerald-500 bg-emerald-500/10"}`}>
+                                  {row.isActive ? "حظر" : "إلغاء الحظر"}
+                                </button>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    );
+                  })()}
                 </div>
               </div>
             )
           )}
 
+          {activeSection === "student-files" && <StudentFilesSection />}
           {activeSection === "quiz-results" && <TeacherQuizResults />}
           {activeSection === "requests" && <TeacherRequests key="requests" initialTab="views" />}
           {activeSection === "grade-requests" && <TeacherRequests key="grade-requests" initialTab="grades" />}
@@ -4551,6 +4816,108 @@ function EmptyState({ icon, title, hint, action }: { icon: React.ReactNode; titl
       <p className="font-bold text-[var(--ink)]">{title}</p>
       {hint && <p className="text-sm text-[var(--ink-muted)] mt-1.5 max-w-sm mx-auto leading-6">{hint}</p>}
       {action && <div className="mt-5 flex justify-center">{action}</div>}
+    </div>
+  );
+}
+
+function learnerMatches(s: { name: string; email?: string | null; phone?: string | null; parentPhone?: string | null }, q: string) {
+  const query = q.trim();
+  if (!query) return true;
+  const n = query.toLowerCase();
+  return (
+    s.name.toLowerCase().includes(n) ||
+    (s.email || "").toLowerCase().includes(n) ||
+    (s.phone || "").includes(query) ||
+    phonesMatch(s.phone, query) ||
+    phonesMatch(s.parentPhone, query)
+  );
+}
+
+function filterLearners(learners: RosterLearner[], q: string) {
+  return learners.filter((s) => learnerMatches(s, q));
+}
+
+type CourseLearnerRow = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  isActive: boolean;
+  via: "code" | "booking";
+  planLabel: string | null;
+};
+
+function courseLearnerRows(courseId: string, codes: AccessCode[], roster: RosterLearner[], q: string): CourseLearnerRow[] {
+  const byId = new Map<string, CourseLearnerRow>();
+  for (const code of codes) {
+    if (!code.student) continue;
+    const prev = byId.get(code.student.id);
+    byId.set(code.student.id, {
+      id: code.student.id,
+      name: code.student.name,
+      email: code.student.email,
+      phone: code.student.phone,
+      isActive: prev?.isActive || code.isActive !== false,
+      via: "code",
+      planLabel: null,
+    });
+  }
+  for (const student of roster) {
+    if (byId.has(student.id)) continue;
+    if (!student.courses.some((c) => c.id === courseId)) continue;
+    byId.set(student.id, {
+      id: student.id,
+      name: student.name,
+      email: student.email,
+      phone: student.phone,
+      isActive: true,
+      via: "booking",
+      planLabel: student.planLabel,
+    });
+  }
+  return Array.from(byId.values()).filter((s) => learnerMatches(s, q));
+}
+
+function LearnerSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="ابحث بالاسم أو الرقم، مثل 01101670389"
+      className={input}
+    />
+  );
+}
+
+function LearnerList({ learners, emptyTitle, emptyHint }: { learners: RosterLearner[]; emptyTitle: string; emptyHint: string }) {
+  if (learners.length === 0) {
+    return (
+      <div className={card}>
+        <EmptyState icon={<IconUsers className="w-7 h-7" />} title={emptyTitle} hint={emptyHint} />
+      </div>
+    );
+  }
+  return (
+    <div className={`${card} overflow-hidden`}>
+      <ul className="divide-y divide-[var(--border)]">
+        {learners.map((s) => (
+          <li key={s.id} className="p-4 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-bold text-[var(--ink)] text-sm truncate">{s.name}</p>
+                <p className="text-xs text-[var(--ink-muted)] truncate">{s.email}</p>
+              </div>
+              <span className="text-xs font-semibold px-2 py-1 rounded-full bg-sky-500/12 text-sky-500 shrink-0">
+                {s.planLabel || (s.kind === "booking" ? "حجز" : "كورس")}
+              </span>
+            </div>
+            <StudentPhoneActions phone={s.phone} />
+            <p className="text-xs text-[var(--ink-muted)] leading-6">
+              {s.courses.length ? s.courses.map((c) => c.title).join(" · ") : "لا يغطي حجزه كورساً حالياً"}
+            </p>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

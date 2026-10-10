@@ -1,10 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { VideoWatermark } from "./VideoWatermark";
 import { useFullscreen } from "./useFullscreen";
 import { extractYouTubeVideoId } from "@/lib/youtube";
 import { VideoSpeedMenu, usePlaybackRate } from "./VideoSpeedMenu";
+import {
+  BufferingIndicator,
+  SeekBar,
+  SeekFlash,
+  SKIP_SECONDS,
+  SkipButton,
+  isTypingTarget,
+  useFlash,
+  useIdleControls,
+} from "./player-shared";
 
 /**
  * Hardened YouTube player. Native controls are OFF and a full-surface click
@@ -25,6 +35,7 @@ interface YTPlayer {
   getDuration(): number;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getPlayerState(): number;
+  getVideoLoadedFraction?(): number;
   setPlaybackRate?(rate: number): void;
   destroy(): void;
 }
@@ -97,6 +108,8 @@ export function YouTubeSecurePlayer({
   onPause,
   onPlay,
   paused = false,
+  hideControls = false,
+  maxAllowedSecond = null,
   children,
 }: {
   videoId: string;
@@ -114,6 +127,8 @@ export function YouTubeSecurePlayer({
   /** Fired when playback resumes. */
   onPlay?: () => void;
   paused?: boolean;
+  hideControls?: boolean;
+  maxAllowedSecond?: number | null;
   children?: React.ReactNode;
 }) {
   const cleanVideoId = extractYouTubeVideoId(videoId) || videoId.trim();
@@ -137,10 +152,13 @@ export function YouTubeSecurePlayer({
   const seekedRef = useRef(false);
 
   const [ready, setReady] = useState(false);
+  const readyRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [cur, setCur] = useState(0);
   const [dur, setDur] = useState(0);
+  const [loadedFraction, setLoadedFraction] = useState(0);
+  const [buffering, setBuffering] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [useFallbackIframe, setUseFallbackIframe] = useState(false);
 
@@ -173,12 +191,19 @@ export function YouTubeSecurePlayer({
 
   useEffect(() => {
     let disposed = false;
+    let fellBack = false;
     let poll: ReturnType<typeof setInterval> | undefined;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
+    readyRef.current = false;
     setReady(false);
     setErrorMessage(null);
     seekedRef.current = false;
+
+    const markReady = () => {
+      readyRef.current = true;
+      setReady(true);
+    };
 
     if (!cleanVideoId) {
       setErrorMessage("معرف فيديو YouTube غير صالح");
@@ -187,7 +212,19 @@ export function YouTubeSecurePlayer({
 
     // Dynamic slot pattern: create child element inside containerRef so destruction doesn't break DOM tree
     const container = containerRef.current;
-    if (!container) return;
+    if (!container) {
+      // The slot is not in the DOM yet. Don't leave the spinner up forever.
+      timeoutTimer = setTimeout(() => {
+        if (!disposed && !readyRef.current) {
+          setUseFallbackIframe(true);
+          markReady();
+        }
+      }, 6000);
+      return () => {
+        disposed = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+      };
+    }
 
     // Clear any previous child slots
     container.innerHTML = "";
@@ -196,18 +233,27 @@ export function YouTubeSecurePlayer({
     slot.style.height = "100%";
     container.appendChild(slot);
 
-    // Timeout fallback: if YouTube API doesn't ready in 6s, switch to fallback iframe
+    // Timeout fallback: the IFrame API often constructs a player and then never
+    // fires onReady (embed blocked, origin mismatch, a slow phone). The old
+    // check bailed out as soon as the player object existed, so the spinner
+    // "جارٍ تحميل المشغل" stayed up forever. Readiness is the only signal.
     timeoutTimer = setTimeout(() => {
-      if (!disposed && !playerRef.current && !ready) {
-        console.warn("YouTube API init timed out, enabling fallback iframe mode");
-        setUseFallbackIframe(true);
-        setReady(true);
+      if (disposed || readyRef.current) return;
+      fellBack = true;
+      console.warn("YouTube API init timed out, enabling fallback iframe mode");
+      try {
+        playerRef.current?.destroy();
+      } catch {
+        /* the hung player may already be detached */
       }
+      playerRef.current = null;
+      setUseFallbackIframe(true);
+      markReady();
     }, 6000);
 
     loadYTApi()
       .then((YT) => {
-        if (disposed || !containerRef.current) return;
+        if (disposed || fellBack || !containerRef.current) return;
 
         try {
           playerRef.current = new YT.Player(slot, {
@@ -229,7 +275,7 @@ export function YouTubeSecurePlayer({
               onReady: () => {
                 if (disposed) return;
                 if (timeoutTimer) clearTimeout(timeoutTimer);
-                setReady(true);
+                markReady();
                 const d = playerRef.current?.getDuration() ?? 0;
                 setDur(d);
                 setMuted(playerRef.current?.isMuted() ?? false);
@@ -254,6 +300,8 @@ export function YouTubeSecurePlayer({
               onStateChange: (e: { data: number }) => {
                 const YTns = window.YT;
                 if (!YTns) return;
+                // 3 = BUFFERING: the stream stalled on a weak connection.
+                setBuffering(e.data === 3);
                 if (e.data === YTns.PlayerState.PLAYING) {
                   setPlaying(true);
                   onPlayRef.current?.();
@@ -278,21 +326,21 @@ export function YouTubeSecurePlayer({
                   msg = "صاحب الفيديو لا يسمح بتضمينه خارج YouTube. يرجى تفعيل التضمين (Allow Embedding) من إعدادات الفيديو في استوديو يوتيوب.";
                 }
                 setErrorMessage(msg);
-                setReady(true);
+                markReady();
               },
             },
           });
         } catch (err) {
           console.error("Failed to construct YT.Player:", err);
           setUseFallbackIframe(true);
-          setReady(true);
+          markReady();
         }
       })
       .catch((err) => {
         console.warn("YouTube API load rejected, switching to fallback iframe:", err);
         if (!disposed) {
           setUseFallbackIframe(true);
-          setReady(true);
+          markReady();
         }
       });
 
@@ -304,6 +352,8 @@ export function YouTubeSecurePlayer({
           setCur(t);
           const d = p.getDuration() || 0;
           if (d) setDur(d);
+          const loaded = p.getVideoLoadedFraction?.();
+          if (typeof loaded === "number") setLoadedFraction(loaded);
           if (onTimeUpdateRef.current && t > 0) {
             onTimeUpdateRef.current(t);
           }
@@ -336,9 +386,10 @@ export function YouTubeSecurePlayer({
         containerRef.current.innerHTML = "";
       }
     };
-  }, [cleanVideoId]);
+  }, [cleanVideoId, maxAllowedSecond]);
 
   const togglePlay = () => {
+    if (paused || hideControls) return;
     const p = playerRef.current;
     if (!p) return;
     if (playing) p.pauseVideo();
@@ -357,94 +408,115 @@ export function YouTubeSecurePlayer({
     }
   };
 
-  const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const seekPct = (pct: number) => {
+    if (paused || hideControls) return;
     const p = playerRef.current;
     if (!p || !dur) return;
-    const t = (Number(e.target.value) / 100) * dur;
+    let t = (pct / 100) * dur;
+    if (typeof maxAllowedSecond === "number" && t > maxAllowedSecond + 1) {
+      t = maxAllowedSecond;
+      p.seekTo(t, true);
+      p.pauseVideo();
+      setCur(t);
+      return;
+    }
     p.seekTo(t, true);
     setCur(t);
   };
 
-  const [seekBadge, setSeekBadge] = useState<string | null>(null);
+  const [flash, showFlash] = useFlash();
 
-  // Keyboard controls for seeking (+5s/-5s), play/pause, fullscreen, mute
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-
+  const skip = useCallback(
+    (seconds: number) => {
+      if (paused || hideControls) return;
       const p = playerRef.current;
       if (!p) return;
-
-      const key = e.key;
-      const lowerKey = key.toLowerCase();
-
-      if (key === "ArrowRight" || lowerKey === "l") {
-        e.preventDefault();
-        const d = p.getDuration?.() || 0;
-        const c = p.getCurrentTime?.() || 0;
-        const n = Math.min(d > 0 ? d : c + 5, c + 5);
+      const c = p.getCurrentTime?.() || 0;
+      const d = p.getDuration?.() || 0;
+      let n = Math.max(0, d > 0 ? Math.min(d, c + seconds) : c + seconds);
+      if (typeof maxAllowedSecond === "number" && n > maxAllowedSecond + 1) {
+        n = maxAllowedSecond;
         p.seekTo(n, true);
+        p.pauseVideo();
         setCur(n);
-        setSeekBadge("⏩ +5ث");
-        clearTimeout(timer);
-        timer = setTimeout(() => setSeekBadge(null), 800);
-      } else if (key === "ArrowLeft" || lowerKey === "j") {
-        e.preventDefault();
-        const c = p.getCurrentTime?.() || 0;
-        const n = Math.max(0, c - 5);
-        p.seekTo(n, true);
-        setCur(n);
-        setSeekBadge("⏪ -5ث");
-        clearTimeout(timer);
-        timer = setTimeout(() => setSeekBadge(null), 800);
-      } else if (key === " " || lowerKey === "k") {
-        e.preventDefault();
-        if (playerRef.current) {
+        return;
+      }
+      p.seekTo(n, true);
+      setCur(n);
+      showFlash(seconds > 0 ? `+${seconds}` : `−${Math.abs(seconds)}`);
+    },
+    [showFlash, maxAllowedSecond, paused, hideControls]
+  );
+
+  // Keyboard: physical keys (e.code) so the Arabic layout works the same.
+  // Space/K play, J/L ±10s, arrows ±5s, M mute, F fullscreen.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (paused || hideControls || e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
+      const p = playerRef.current;
+      if (!p) return;
+      switch (e.code) {
+        case "ArrowRight":
+          e.preventDefault();
+          skip(5);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          skip(-5);
+          break;
+        case "KeyL":
+          e.preventDefault();
+          skip(SKIP_SECONDS);
+          break;
+        case "KeyJ":
+          e.preventDefault();
+          skip(-SKIP_SECONDS);
+          break;
+        case "Space":
+        case "KeyK":
+          e.preventDefault();
           try {
-            const isP = playerRef.current.getPlayerState?.() === 1;
-            if (isP) playerRef.current.pauseVideo();
-            else playerRef.current.playVideo();
+            if (p.getPlayerState?.() === 1) p.pauseVideo();
+            else p.playVideo();
           } catch {
             /* noop */
           }
-        }
-      } else if (lowerKey === "f") {
-        e.preventDefault();
-        toggleFs();
-      } else if (lowerKey === "m") {
-        e.preventDefault();
-        if (playerRef.current) {
+          break;
+        case "KeyF":
+          e.preventDefault();
+          toggleFs();
+          break;
+        case "KeyM":
+          e.preventDefault();
           try {
-            if (playerRef.current.isMuted()) {
-              playerRef.current.unMute();
+            if (p.isMuted()) {
+              p.unMute();
               setMuted(false);
             } else {
-              playerRef.current.mute();
+              p.mute();
               setMuted(true);
             }
           } catch {
             /* noop */
           }
-        }
+          break;
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [toggleFs]);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleFs, skip]);
+
+  const [rootEl, setRootEl] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    setRootEl(wrapRef.current);
+  }, [wrapRef]);
+  const controlsVisible = useIdleControls(rootEl, playing);
+  useEffect(() => {
+    if (!rootEl) return;
+    rootEl.classList.toggle("vp-hide-cursor", !controlsVisible);
+    return () => rootEl.classList.remove("vp-hide-cursor");
+  }, [rootEl, controlsVisible]);
 
   const [isBlackoutActive, setIsBlackoutActive] = useState(false);
 
@@ -569,7 +641,8 @@ export function YouTubeSecurePlayer({
               type="button"
               onClick={() => {
                 setErrorMessage(null);
-                setReady(false);
+                readyRef.current = true;
+                setReady(true);
                 setUseFallbackIframe(true);
               }}
               className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition-all shadow-md"
@@ -626,8 +699,8 @@ export function YouTubeSecurePlayer({
       )}
 
       {/* Full-surface click shield: swallows every click so no YouTube chrome is
-          reachable; tapping toggles play/pause through our API instead. (Inactive when in fallback iframe mode) */}
-      {!useFallbackIframe && !errorMessage && (
+          reachable; tapping toggles play/pause through our API instead. (Inactive when in fallback iframe mode or modal active) */}
+      {!useFallbackIframe && !errorMessage && !hideControls && (
         <button
           type="button"
           onClick={togglePlay}
@@ -637,7 +710,7 @@ export function YouTubeSecurePlayer({
       )}
 
       {/* Center play affordance when paused */}
-      {!useFallbackIframe && ready && !playing && !errorMessage && (
+      {!useFallbackIframe && ready && !playing && !errorMessage && !hideControls && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <span className="w-16 h-16 rounded-full bg-black/55 backdrop-blur-sm flex items-center justify-center">
             <svg
@@ -655,17 +728,8 @@ export function YouTubeSecurePlayer({
       {/* Forensic watermark — child of the fullscreen element */}
       <VideoWatermark label={watermark} />
 
-      {/* Seek badge overlay */}
-      {seekBadge && (
-        <div className="absolute inset-0 z-25 flex items-center justify-center pointer-events-none">
-          <span
-            className="px-4 py-2 rounded-2xl bg-black/80 backdrop-blur-md text-white font-bold text-sm shadow-2xl animate-fade-in border border-white/10"
-            dir="ltr"
-          >
-            {seekBadge}
-          </span>
-        </div>
-      )}
+      <SeekFlash text={flash} />
+      <BufferingIndicator show={buffering && ready && !errorMessage && !useFallbackIframe} />
 
       {/* Interactive modals & overlays */}
       {children}
@@ -678,14 +742,18 @@ export function YouTubeSecurePlayer({
         </div>
       )}
 
-      {/* Custom control bar (above the shield) - hidden when fallback iframe is used to let native controls take over */}
-      {!useFallbackIframe && !errorMessage && (
-        <div className="absolute inset-x-0 bottom-0 z-20 px-3 py-2.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent flex items-center gap-3">
+      {/* Custom control bar (above the shield) - hidden when fallback iframe is used or when question modal is active */}
+      {!useFallbackIframe && !errorMessage && !hideControls && (
+        <div
+          className={`vp-bar ${controlsVisible ? "" : "is-hidden"} absolute inset-x-0 bottom-0 z-20 px-2 sm:px-3 pt-6 pb-1.5 bg-gradient-to-t from-black/85 via-black/45 to-transparent flex items-center gap-1 sm:gap-2`}
+          dir="ltr"
+        >
           <button
             type="button"
             onClick={togglePlay}
             aria-label={playing ? "إيقاف مؤقت" : "تشغيل"}
-            className="shrink-0 text-white hover:text-sky-300 transition-colors"
+            title="تشغيل / إيقاف (مسافة)"
+            className="vp-btn shrink-0"
           >
             {playing ? (
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -698,56 +766,29 @@ export function YouTubeSecurePlayer({
             )}
           </button>
 
-          <span className="shrink-0 text-[11px] font-mono text-white/85 tabular-nums" dir="ltr">
+          <SkipButton direction="back" onClick={() => skip(-SKIP_SECONDS)} />
+          <SkipButton direction="forward" onClick={() => skip(SKIP_SECONDS)} />
+
+          <span className="shrink-0 text-[11px] font-mono text-white/90 tabular-nums px-1">
             {fmt(cur)}
+            <span className="hidden sm:inline text-white/60"> / {fmt(dur)}</span>
           </span>
 
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={0.1}
-            value={pct}
-            onChange={seek}
-            aria-label="شريط التقدم"
-            className="flex-1 h-1 accent-sky-400 cursor-pointer"
-            dir="ltr"
-          />
-
-          <span className="shrink-0 text-[11px] font-mono text-white/85 tabular-nums" dir="ltr">
-            {fmt(dur)}
-          </span>
+          <SeekBar playedPct={pct} bufferedPct={loadedFraction * 100} onSeekPct={seekPct} />
 
           <button
             type="button"
             onClick={toggleMute}
             aria-label={muted ? "تشغيل الصوت" : "كتم الصوت"}
-            className="shrink-0 text-white hover:text-sky-300 transition-colors"
+            title="الصوت (M)"
+            className="vp-btn shrink-0"
           >
             {muted ? (
-              <svg
-                className="w-5 h-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M11 5L6 9H2v6h4l5 4zM23 9l-6 6M17 9l6 6" />
               </svg>
             ) : (
-              <svg
-                className="w-5 h-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 010 7M19 5a9 9 0 010 14" />
               </svg>
             )}
@@ -759,8 +800,8 @@ export function YouTubeSecurePlayer({
             type="button"
             onClick={toggleFs}
             aria-label={isFs ? "إنهاء ملء الشاشة" : "ملء الشاشة"}
-            className="shrink-0 text-white hover:text-sky-300 transition-colors"
-            title={title}
+            className="vp-btn shrink-0"
+            title="ملء الشاشة (F)"
           >
             {isFs ? (
               <svg

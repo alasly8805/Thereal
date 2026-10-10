@@ -352,7 +352,7 @@ async function testAiVideoAssessmentInvariants() {
   assert.match(homeworkSubmit, /hw\.dueAt && new Date\(\) > hw\.dueAt/);
   assert.match(homeworkSubmit, /err\?\.code === "P2002"/);
   assert.match(homeworkSubmit, /alreadySubmitted: true/, 'homework must refuse a second graded submit');
-  assert.match(homeworkSubmit, /canReplaceRejectedHomeworkUpload/, 'rejected PDF homework can be replaced without a teacher retry toggle');
+  assert.match(homeworkSubmit, /canReplaceRejectedHomeworkUpload/, 'a rejected PDF can be replaced only after the teacher or assistant opens a retake');
 }
 
 async function testQuizRetakeInvariants() {
@@ -377,7 +377,8 @@ async function testQuizRetakeInvariants() {
   assert.match(quizRoute, /draftAnswers: parseDraftAnswers/, 'in-progress GET must restore server drafts');
 
   assert.match(startRetake, /completedAt: null/, 'only Start new attempt may clear completedAt');
-  assert.match(startRetake, /if \(!existing\.allowRetake\)/, 'start-retake requires the teacher flag');
+  assert.match(startRetake, /if \(!existing\.allowRetake && !supportReopen\)/, 'start-retake requires the teacher flag unless support reopened this quiz');
+  assert.match(startRetake, /supportReopen/, 'a support reopen must skip the retake cooldown');
 
   assert.match(teacherPatch, /data: \{ allowRetake \}/, 'teacher toggle is a flag only');
   assert.doesNotMatch(teacherPatch, /completedAt:\s*null/, 'teacher allow-retake must not wipe the sheet');
@@ -402,6 +403,17 @@ async function testQuizRetakeInvariants() {
   assert.deepEqual(mergeDraftAnswers({ a: 'server' }, { a: 'local', b: 'new' }), { a: 'local', b: 'new' });
   assert.equal(parseDraftAnswers(serializeDraftAnswers({ q1: 'hello' })).q1, 'hello');
   assert.equal(retakeCooldownRemainingMs(new Date(), 0), 0);
+  const { quizActiveElapsedMs, quizRemainingMs } = await importFresh<typeof import('../src/lib/quiz-attempt.ts')>('../src/lib/quiz-attempt.ts');
+  const started = new Date(Date.now() - 10_000);
+  assert.equal(quizActiveElapsedMs({ startedAt: started, pausedAt: new Date(), elapsedMs: 4_000 }), 4_000);
+  assert.ok(quizActiveElapsedMs({ startedAt: started, pausedAt: null, elapsedMs: 0, now: new Date(started.getTime() + 3_000) }) === 3_000);
+  assert.equal(quizRemainingMs(1, 60_000), 0);
+  assert.match(quizPage, /data\.phase === "lobby"/, 'the quiz page waits before opening the exam');
+  assert.match(quizPage, /\/pause/, 'leaving the exam pauses the server clock');
+  const enterRoute = await readFile(new URL('../src/app/api/quizzes/[id]/enter/route.ts', import.meta.url), 'utf8');
+  assert.match(enterRoute, /correctAnswer: _ca/, 'entering an exam must not send the answer key');
+  assert.match(enterRoute, /canAccessContent/, 'entering an exam still checks the teacher close time');
+  assert.match(quizSubmit, /quizAttempt\.create/, 'a submitted try is stored for the waiting page');
 }
 
 async function testContentDependencyGraphInvariants() {
@@ -439,6 +451,14 @@ async function testContentDependencyGraphInvariants() {
   assert.match(courseRoute, /getCourseContentLocks/, 'student course payload must evaluate chain locks on the server');
   assert.match(courseRoute, /chainLocks\.has\(hw\.id\)/, 'homework nodes in the course payload must carry chain lock state');
   assert.match(courseRoute, /chainLocks\.has\(q\.id\)/, 'quiz nodes in the course payload must carry chain lock state');
+  assert.match(courseRoute, /myResult/, 'a finished exam in the sidebar must carry the student grade');
+  assert.match(quizRoute, /windowClosed/, 'a submitted quiz must stay readable after انتهى وقت الامتحان');
+  assert.match(quizRoute, /finished && windowClosed/, 'only a finished attempt bypasses the closed-window screen');
+  assert.match(quizRoute, /hasActiveSupportReopen/, 'support adding a student must open the quiz that student already has');
+  assert.match(quizRoute, /restartQuizClockForSupportReopen/, 'support reopen must restart an expired in-progress quiz clock');
+  assert.match(engineSrc, /support reopen opens the quiz the student already has/, 'an active support window must open that quiz past a prerequisite');
+  assert.match(homeworkRoute, /hasActiveSupportReopen/, 'support adding a student must open the homework exam that student already has');
+  assert.match(homeworkRoute, /solvedAfterClose/, 'a submitted homework exam must stay readable after the window closes');
   assert.match(courseRoute, /chainLocks\.has\(m\.id\)/, 'material nodes in the course payload must carry chain lock state');
 
   const reviewRoute = await readFile(new URL('../src/app/api/homework/[id]/review/route.ts', import.meta.url), 'utf8');
@@ -560,7 +580,8 @@ async function testContentDependencyGraphInvariants() {
  * Production PDF homework chain (homework → next video), matching the live
  * student/teacher routes: any PDF upload/submit sets review_requested and
  * COMPLETED, that status opens the next item, accept keeps it open, reject
- * closes it until the student uploads again.
+ * closes it. The student can upload again only after a teacher or assistant
+ * opens the retake; that replacement opens the next item until the next verdict.
  */
 async function testPdfHomeworkUnlockFlow() {
   const {
@@ -570,6 +591,7 @@ async function testPdfHomeworkUnlockFlow() {
     homeworkOpensNextContent,
     homeworkProgressStatusFromSubmission,
     canPersistPdfHomeworkUpload,
+    canReplaceRejectedHomeworkUpload,
     HOMEWORK_REVIEW_REQUESTED_STATUS,
   } = await importFresh<typeof import('../src/lib/content-access-engine.ts')>('../src/lib/content-access-engine.ts');
 
@@ -578,8 +600,14 @@ async function testPdfHomeworkUnlockFlow() {
     'first PDF upload must be allowed');
   assert.equal(canPersistPdfHomeworkUpload('upload', 'review_requested', false), true,
     'retried PDF upload while قيد المراجعة must be allowed so later students are not stuck on 409');
-  assert.equal(canPersistPdfHomeworkUpload('upload', 'failed', false), true,
-    'rejected PDF must be replaceable without a teacher retry toggle');
+  assert.equal(canPersistPdfHomeworkUpload('upload', 'failed', false), false,
+    'rejected PDF stays closed until the teacher or assistant opens a retake');
+  assert.equal(canPersistPdfHomeworkUpload('upload', 'failed', true), true,
+    'an opened retake lets the student store the replacement PDF');
+  assert.equal(canReplaceRejectedHomeworkUpload('upload', 'failed', false), false,
+    'rejection alone must not allow another submit');
+  assert.equal(canReplaceRejectedHomeworkUpload('upload', 'failed', true), true,
+    'teacher or assistant retake allows the replacement submit');
   assert.equal(canPersistPdfHomeworkUpload('upload', 'passed', false), false,
     'accepted PDF must stay locked until the teacher reopens the attempt');
 
@@ -895,6 +923,7 @@ async function testSupportPanelInvariants() {
   assert.match(extendRoute, /export async function POST/, 'support reopen must expose POST /api/thefake/support/extend-content');
   assert.match(extendRoute, /getSupportSession\(\)/, 'extend-content must require a support session');
   assert.match(extendRoute, /contentExtension\.create/, 'extend-content must persist a content_extensions row');
+  assert.match(extendRoute, /allowRetake: true/, 'support reopen must allow a new attempt for students who already submitted');
   assert.match(supportPanel, /فتح بعد الإغلاق/, 'the support panel must expose the reopen action');
   assert.match(supportPanel, /\/api\/thefake\/support\/extend-content/, 'the reopen form must call the extend-content API');
   assert.match(engine, /CONTENT_CLOSED_MESSAGE/, 'closed assessments must return انتهى وقت الامتحان');

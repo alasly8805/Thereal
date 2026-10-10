@@ -42,7 +42,9 @@ const CSP = [
   "font-src 'self' data: https://fonts.gstatic.com",
   "media-src 'self' blob: https:",
   `frame-src 'self' ${VIDEO_FRAME_HOSTS.join(" ")} https://www.google.com`,
-  "connect-src 'self' https://recaptchaenterprise.googleapis.com https://www.google.com https://fonts.googleapis.com https://fonts.gstatic.com https://www.youtube.com https://www.youtube-nocookie.com https://*.googlevideo.com https://*.youtube.com https://*.axprod.net https://*.drm-widevine-licensing.axprod.net https://*.drm-playready-licensing.axprod.net https://*.drm-fairplay-licensing.axprod.net https://*.axtest.net https://drm-widevine-licensing.axtest.net https://drm-playready-licensing.axtest.net https://drm-fairplay-licensing.axtest.net https://connect.facebook.net https://www.facebook.com https://*.facebook.com",
+  // The encrypted HLS player (hls.js) fetches video segments from the
+  // CloudFront video domain with XHR, which media-src does not cover.
+  `connect-src 'self'${process.env.CLOUDFRONT_VIDEO_DOMAIN ? ` https://${process.env.CLOUDFRONT_VIDEO_DOMAIN}` : ""} https://recaptchaenterprise.googleapis.com https://www.google.com https://fonts.googleapis.com https://fonts.gstatic.com https://www.youtube.com https://www.youtube-nocookie.com https://*.googlevideo.com https://*.youtube.com https://*.axprod.net https://*.drm-widevine-licensing.axprod.net https://*.drm-playready-licensing.axprod.net https://*.drm-fairplay-licensing.axprod.net https://*.axtest.net https://drm-widevine-licensing.axtest.net https://drm-playready-licensing.axtest.net https://drm-fairplay-licensing.axtest.net https://connect.facebook.net https://www.facebook.com https://*.facebook.com`,
   // Nothing in this app should ever be framed by a third party.
   "frame-ancestors 'self'",
   "base-uri 'self'",
@@ -78,6 +80,11 @@ const nextConfig: NextConfig = {
   },
 
   redirects: async () => [
+    {
+      source: "/teachers",
+      destination: "/courses",
+      permanent: true,
+    },
     // Forward Arabic standalone lesson to Arabic month course
     {
       source: "/courses/cmtqbw41d005qqwobfcrfg07c",

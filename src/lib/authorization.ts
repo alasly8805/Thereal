@@ -50,6 +50,9 @@ export async function checkCourseEnrollment(userId: string, courseId: string, ro
       isPaid: true,
       price: true,
       deliveryMode: true,
+      educationalStage: true,
+      bookingKind: true,
+      bookingTerm: true,
     },
   });
 
@@ -63,43 +66,11 @@ export async function checkCourseEnrollment(userId: string, courseId: string, ro
 
   // Booking (حجز) must never open a separately-sold lecture or a teaser lesson.
   // Those require CourseEnrollment / AccessCode / center pass only.
-  if (course?.teacherId) {
-    const { teacherSubscriptionCoversCourse } = await import("./standalone-lessons");
-    if (teacherSubscriptionCoversCourse(course)) {
-      const activeSubs = await prisma.teacherSubscription.findMany({
-        where: { ...activeTeacherSubWhere, teacherId: course.teacherId },
-        select: { id: true, languageTrack: true, amount: true, status: true },
-      });
+  // ── UNLINKED: Teacher subscriptions / packages DO NOT automatically grant access to courses ──
+  // Course access is strictly explicit: via CourseEnrollment (manual/direct enrollment),
+  // AccessCode, center pass, or study plans. Automatic dynamic inheritance across months/terms is disabled.
+  // (Previously: checked teacherSubscription and bookingCoversCourse automatically)
 
-      if (activeSubs.length > 0) {
-        const { getEffectiveCourseTrack, isSubscriptionTrackMatching } = await import("./course-track");
-        const courseTrack = await getEffectiveCourseTrack(courseId, course);
-        const matches = activeSubs.some((sub) => isSubscriptionTrackMatching(sub.languageTrack, courseTrack));
-        if (matches) return true;
-      }
-    }
-
-    // Temp center exception: a hall student with an active booking (status only,
-    // paid or not) can open that teacher's CENTER course. Access codes still
-    // win first; this only covers bookings that used to fail the isPaid filter.
-    if ((course.deliveryMode || "").toUpperCase() === "CENTER") {
-      const hallSub = await prisma.teacherSubscription.findFirst({
-        where: { ...activeTeacherSubWhere, teacherId: course.teacherId },
-        select: { id: true, amount: true, status: true },
-      });
-      if (hallSub) {
-        console.log("[center-video-access]", JSON.stringify({
-          event: "center_active_sub_granted",
-          userId,
-          courseId,
-          subscriptionId: hallSub.id,
-          status: hallSub.status,
-          amount: hallSub.amount,
-        }));
-        return true;
-      }
-    }
-  }
 
   // Check if course is linked to any active plan enrollment of the student
   const planLink = await prisma.planCourseLink.findFirst({

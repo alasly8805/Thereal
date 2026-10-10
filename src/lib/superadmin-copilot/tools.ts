@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getExpensesFromDb, getTeacherPercentagesFromDb } from "@/lib/money-control";
 import { cairoDateKey, cairoRange, eachCairoDay, formatCairoDayAr, shiftCairoDay } from "./dates";
 import type { CopilotChart, CopilotKpi, ToolResult } from "./types";
+import { listStudentGrades, proposeGradeChange, proposePointsChange } from "./actions";
 import {
   inspectGit,
   inspectHealth,
@@ -449,6 +450,7 @@ async function searchStudents(args: { query: string; limit?: number }): Promise<
       parentPhone: true,
       educationalStage: true,
       balance: true,
+      points: true,
       createdAt: true,
       lastLoginAt: true,
       isActive: true,
@@ -472,6 +474,7 @@ async function searchStudents(args: { query: string; limit?: number }): Promise<
         email: s.email,
         stage: s.educationalStage,
         balance: s.balance,
+        points: s.points,
         createdAt: s.createdAt.toISOString(),
         lastLoginAt: s.lastLoginAt?.toISOString() || null,
         isActive: s.isActive,
@@ -482,11 +485,12 @@ async function searchStudents(args: { query: string; limit?: number }): Promise<
           {
             id: "students",
             title: `نتائج البحث (${students.length})`,
-            columns: ["الاسم", "الهاتف", "المرحلة", "الرصيد", "التسجيل"],
+            columns: ["الاسم", "الهاتف", "المرحلة", "النقاط", "الرصيد", "التسجيل"],
             rows: students.map((s) => [
               s.name,
               s.phone || "—",
               s.educationalStage || "—",
+              String(s.points),
               egp(s.balance || 0),
               cairoDateKey(s.createdAt),
             ]),
@@ -520,6 +524,7 @@ async function getStudentDetail(args: { query: string }): Promise<ToolResult> {
       parentPhone: true,
       educationalStage: true,
       balance: true,
+      points: true,
       createdAt: true,
       lastLoginAt: true,
       isActive: true,
@@ -560,7 +565,7 @@ async function getStudentDetail(args: { query: string }): Promise<ToolResult> {
 
   return {
     ok: true,
-    summary: `${student.name}: رصيد ${Math.round(student.balance || 0)} ج.م، ${student.studentSubscriptions.length} حجز معلم، ${student.courseEnrollments.length} كورس. هاتف ${student.phone || "غير مسجّل"}.`,
+    summary: `${student.name}: ${student.points} نقطة، رصيد ${Math.round(student.balance || 0)} ج.م، ${student.studentSubscriptions.length} حجز معلم، ${student.courseEnrollments.length} كورس. هاتف ${student.phone || "غير مسجّل"}.`,
     data: {
       id: student.id,
       name: student.name,
@@ -569,6 +574,7 @@ async function getStudentDetail(args: { query: string }): Promise<ToolResult> {
       email: student.email,
       stage: student.educationalStage,
       balance: student.balance,
+      points: student.points,
       isActive: student.isActive,
       isDeleted: student.isDeleted,
       accountMode: student.accountMode,
@@ -591,6 +597,7 @@ async function getStudentDetail(args: { query: string }): Promise<ToolResult> {
       })),
     },
     kpis: [
+      { key: "points", label: "نقاط لوحة الشرف", value: String(student.points), tone: "gold" },
       { key: "balance", label: "رصيد المحفظة", value: egp(student.balance || 0), tone: "gold" },
       { key: "booked", label: "مدفوع حجوزات", value: egp(booked) },
       { key: "courses", label: "مدفوع كورسات", value: egp(coursesPaid) },
@@ -909,6 +916,9 @@ export const TOOL_LABELS: Record<string, string> = {
   get_signups: "يعدّ التسجيلات",
   get_alerts: "يفحص المعلّق والتنبيهات",
   search_platform: "يبحث في المنصة",
+  list_student_grades: "يجلب درجات الطالب",
+  propose_points_change: "يجهّز تعديل النقاط (بانتظار التأكيد)",
+  propose_grade_change: "يجهّز تعديل الدرجة (بانتظار التأكيد)",
   read_file: "يقرأ ملفاً (قراءة فقط)",
   list_dir: "يعرض مجلداً (قراءة فقط)",
   search_code: "يبحث في الكود (قراءة فقط)",
@@ -967,6 +977,12 @@ export async function executeCopilotTool(name: string, rawArgs: string): Promise
       return getAlerts();
     case "search_platform":
       return searchPlatform({ query: str(args.query) || "" });
+    case "list_student_grades":
+      return listStudentGrades({ query: str(args.query) });
+    case "propose_points_change":
+      return proposePointsChange(args);
+    case "propose_grade_change":
+      return proposeGradeChange(args);
     case "read_file":
       return inspectReadFile({ path: str(args.path), offset: num(args.offset) });
     case "list_dir":

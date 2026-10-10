@@ -13,6 +13,8 @@ import {
   recordContentCompleted,
 } from "@/lib/content-access-engine";
 import { PASS_MARK, summarizeAnswers, parseDegree } from "@/lib/quiz-grading";
+import { quizActiveElapsedMs, quizRemainingMs } from "@/lib/quiz-attempt";
+import { displayToOriginal, parsePresentation } from "@/lib/attempt-presentation";
 import { enqueueEssayGrading, kickEssayGrading } from "@/lib/essay-ai-grading";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -109,18 +111,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // display-only unless a superadmin re-enables enforcement.
   if (!(await getConfigBool("quiz_time_limit_disabled"))) {
     const limitMinutes = (quiz as any).timeLimitMinutes ?? 30;
-    const elapsedSeconds = Math.floor((Date.now() - dbStartedAt.getTime()) / 1000);
-    if (elapsedSeconds > limitMinutes * 60) {
+    const activeMs = quizActiveElapsedMs({
+      startedAt: existingResult.startedAt,
+      pausedAt: existingResult.pausedAt,
+      elapsedMs: existingResult.elapsedMs,
+    });
+    if (quizRemainingMs(limitMinutes, activeMs) <= 0) {
       return NextResponse.json({ error: "انتهى وقت الاختبار" }, { status: 400 });
     }
   }
 
-  const breakdown = quiz.questions.map((question: any) => {
+  const presentation = parsePresentation(existingResult.presentation);
+  const studentModel = existingResult?.modelNumber || 1;
+  const filteredQuestions = quiz.questions.filter((q: any) => (q.modelNumber || 1) === studentModel);
+  const targetQuestions = filteredQuestions.length > 0 ? filteredQuestions : quiz.questions;
+
+  const breakdown = targetQuestions.map((question: any) => {
     // Only strings are answers. A malformed body (e.g. an object) must not reach
     // the DB write below, which runs after the attempt is already marked complete.
+    // The client sends the letter the student saw. Grading stores the original letter.
     const rawAnswer = answers[question.id];
-    const yourAnswer = typeof rawAnswer === "string" ? rawAnswer : null;
+    const seenAnswer = typeof rawAnswer === "string" ? rawAnswer : null;
     const isEssay = question.questionType === "essay";
+    const yourAnswer = isEssay || !seenAnswer
+      ? seenAnswer
+      : displayToOriginal(presentation?.choices[question.id], seenAnswer);
     const isCorrect = isEssay ? false : yourAnswer === question.correctAnswer;
     return {
       questionId: question.id,
@@ -161,8 +176,48 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const completedAt = new Date();
       const savedResult = await tx.quizResult.upsert({
         where: { studentId_quizId: { studentId: session.id, quizId } },
-        update: { score, totalQ, completedAt, allowRetake: false, startedAt: dbStartedAt, draftAnswers: null },
-        create: { studentId: session.id, quizId, score, totalQ, startedAt: dbStartedAt },
+        update: {
+          score,
+          totalQ,
+          completedAt,
+          allowRetake: false,
+          startedAt: dbStartedAt,
+          draftAnswers: null,
+          pausedAt: null,
+          essayGraded: !hasPendingEssays,
+        },
+        create: {
+          studentId: session.id,
+          quizId,
+          score,
+          totalQ,
+          startedAt: dbStartedAt,
+          modelNumber: studentModel,
+          essayGraded: !hasPendingEssays,
+        },
+      });
+      const attemptNumber = (await tx.quizAttempt.count({ where: { studentId: session.id, quizId } })) + 1;
+      await tx.quizAttempt.create({
+        data: {
+          studentId: session.id,
+          userId: session.id,
+          quizId,
+          attemptNumber,
+          score,
+          totalScore: 100,
+          totalQ,
+          startedAt: dbStartedAt,
+          completedAt,
+          modelNumber: studentModel,
+          essayGraded: !hasPendingEssays,
+          status: hasPendingEssays ? "PENDING_ESSAY_CORRECTION" : "GRADED",
+          answers: (breakdown as any[]).map((b) => ({
+            questionId: b.questionId,
+            selectedIndex: ["A", "B", "C", "D"].indexOf(b.yourAnswer),
+            essayText: b.essayAnswer || "",
+            isCorrect: b.isCorrect,
+          })),
+        },
       });
       if (session.role === "student") {
         await recordContentCompleted(
@@ -225,21 +280,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Deferred while essays are pending — recomputeQuizResult awards them when the
   // teacher's last decision makes the grade final.
   if (session.role === "student" && !hasPendingEssays) {
-    const { addPoints, POINTS } = await import("@/lib/points");
-    let pointsEarned = 0;
-    
-    // First try bonus: awarded only on the very first completion if passed
-    const isFirstAttempt = !existingResult?.completedAt;
-    if (isFirstAttempt && passed) {
-      pointsEarned += POINTS.FIRST_TRY_BONUS;
-    }
-    
-    // Perfect score bonus: awarded only if they achieve 100% and hadn't scored 100% previously
-    const previousScore = existingResult?.completedAt ? existingResult.score : 0;
-    if (score === 100 && previousScore < 100) {
-      pointsEarned += POINTS.EXAM_FULL_SCORE;
-    }
-    
+    const { addPoints, quizBonusPoints } = await import("@/lib/points");
+    // Judged from the attempt history, not existingResult: start-retake clears
+    // completedAt, so existingResult always looks like a first attempt here.
+    const pointsEarned = await quizBonusPoints(session.id, quizId, score, passed);
     if (pointsEarned > 0) {
       await addPoints(session.id, pointsEarned);
     }
@@ -267,19 +311,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
   }
 
+  const isHidden = Boolean((quiz as any).hideAnswersUntilEssayGraded) && hasPendingEssays;
+  const safeBreakdown = isHidden
+    ? (breakdown as any[]).map((b) => ({
+        ...b,
+        correctAnswer: "",
+        isCorrect: false,
+      }))
+    : breakdown;
+
   return NextResponse.json({
     result,
-    correct,
+    correct: isHidden ? null : correct,
     totalQ,
-    score,
-    passed,
+    score: isHidden ? null : score,
+    passed: isHidden ? null : passed,
     pendingEssays: pendingCount,
     aiGradingQueued,
     gradingStatus: summary.gradingStatus,
     mcqCount: summary.mcqCount,
-    mcqCorrect: summary.mcqCorrect,
+    mcqCorrect: isHidden ? null : summary.mcqCorrect,
     essayCount: summary.essayCount,
-    breakdown,
+    breakdown: safeBreakdown,
+    hideAnswersUntilEssayGraded: isHidden,
     quizTitle: quiz.title,
     courseId: quiz.folder?.courseId ?? 'plan',
   });

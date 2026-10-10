@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { TeacherHomeworkHubClient, type HomeworkItem } from "./TeacherHomeworkHubClient";
+import { presentStudentView } from "@/lib/attempt-presentation";
+import { ensureHomeworkExamView, homeworkPresentationOptions } from "@/lib/homework-exam-view";
 
 interface Props {
   params: Promise<{ teacherSlug: string }>;
@@ -41,12 +43,14 @@ export default async function TeacherHomeworkHubPage({ params }: Props) {
   // ── Identify student from session cookie ─────────────────────────────────
   // We do a lightweight session check (same pattern as getSession but server-side)
   let studentId: string | null = null;
+  let studentRole: string | null = null;
   let isTesterOrAdmin = false;
   try {
     const { getSession } = await import("@/lib/auth");
     const session = await getSession();
     if (session) {
       studentId = session.id;
+      studentRole = session.role;
       isTesterOrAdmin = session.accountMode === "TESTER" || session.role === "superadmin";
     }
   } catch { /* not logged in */ }
@@ -169,18 +173,33 @@ export default async function TeacherHomeworkHubPage({ params }: Props) {
           studentId,
           homeworkId: { in: Array.from(accessibleHomeworkIds) },
         },
-        include: { review: { select: { verdict: true, note: true } } },
+        include: { review: { select: { verdict: true, note: true, reviewedAt: true } } },
       })
     : [];
 
   const subMap = new Map(submissions.map(s => [s.homeworkId, s]));
 
   // ── Build serializable homework list ──────────────────────────────────────
-  const homeworks: HomeworkItem[] = rawHomeworks
-    .filter(hw => accessibleHomeworkIds.has(hw.id))
-    .map(hw => {
+  const visibleHomeworks = rawHomeworks.filter(hw => accessibleHomeworkIds.has(hw.id));
+  const homeworks: HomeworkItem[] = [];
+  for (const hw of visibleHomeworks) {
       const sub = subMap.get(hw.id) as any;
-      return {
+      let questions = hw.questions as HomeworkItem["questions"] | undefined;
+      if (hw.type === "exam") {
+        if (studentRole === "student" && studentId && (!sub || sub.allowRetake)) {
+          const presentation = await ensureHomeworkExamView(
+            studentId,
+            hw.id,
+            hw.questions,
+            !!sub?.allowRetake,
+            homeworkPresentationOptions(hw)
+          );
+          questions = presentStudentView(hw.questions, presentation) as HomeworkItem["questions"];
+        }
+      } else {
+        questions = undefined;
+      }
+      homeworks.push({
         id:              hw.id,
         title:           hw.title,
         description:     hw.description,
@@ -194,7 +213,7 @@ export default async function TeacherHomeworkHubPage({ params }: Props) {
         isPublished:     hw.isPublished,
         courseTitle:     hw.video?.folder?.course?.title ?? undefined,
         lessonTitle:     hw.video?.title ?? undefined,
-        questions:       hw.type === "exam" ? (hw.questions as HomeworkItem["questions"]) : undefined,
+        questions,
         mySubmission:    sub
           ? {
               id:             sub.id,
@@ -205,11 +224,18 @@ export default async function TeacherHomeworkHubPage({ params }: Props) {
               fileUrl:        sub.fileUrl,
               fileName:       sub.fileName,
               allowRetake:    sub.allowRetake,
-              review:         sub.review ?? null,
+              completedAt:    sub.completedAt ? new Date(sub.completedAt).toISOString() : null,
+              review:         sub.review
+                ? {
+                    verdict: sub.review.verdict,
+                    note: sub.review.note,
+                    reviewedAt: sub.review.reviewedAt ? new Date(sub.review.reviewedAt).toISOString() : null,
+                  }
+                : null,
             }
           : null,
-      };
-    });
+      });
+  }
 
   return (
     <>

@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
+import { Lock } from "lucide-react";
+import { Button, Field, Input } from "@/components/admin/ui/kit";
 
 /**
  * Locks a section behind the access password (BULK_DELETE_PASSWORD). Children —
@@ -8,21 +10,30 @@ import { useEffect, useState } from "react";
  */
 export function AccessGate({ id, title, type, children }: { id: string; title: string; type?: string; children: React.ReactNode }) {
   const storeKey = `gate_${id}`;
-  const [unlocked, setUnlocked] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return sessionStorage.getItem(storeKey) === "1";
-  });
+  const [unlocked, setUnlocked] = useState(false);
+  const [ready, setReady] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
 
+  // Read the session unlock after mount (sessionStorage is not available during SSR).
   useEffect(() => {
     let cancelled = false;
+    try {
+      if (sessionStorage.getItem(storeKey) === "1") setUnlocked(true);
+    } catch {
+      /* private mode */
+    }
+    setReady(true);
     void fetch("/api/auth/me", { credentials: "include" })
       .then((r) => r.json())
       .then((data: { user?: { demoTour?: boolean } }) => {
         if (cancelled || !data?.user?.demoTour) return;
-        sessionStorage.setItem(storeKey, "1");
+        try {
+          sessionStorage.setItem(storeKey, "1");
+        } catch {
+          /* ignore */
+        }
         setUnlocked(true);
       })
       .catch(() => {});
@@ -31,6 +42,7 @@ export function AccessGate({ id, title, type, children }: { id: string; title: s
     };
   }, [storeKey]);
 
+  if (!ready) return null;
   if (unlocked) return <>{children}</>;
 
   const submit = async (e: React.FormEvent) => {
@@ -49,7 +61,11 @@ export function AccessGate({ id, title, type, children }: { id: string; title: s
         setError("كلمة المرور غير صحيحة");
         return;
       }
-      sessionStorage.setItem(storeKey, "1");
+      try {
+        sessionStorage.setItem(storeKey, "1");
+      } catch {
+        /* ignore */
+      }
       setPassword("");
       setUnlocked(true);
     } catch {
@@ -60,37 +76,36 @@ export function AccessGate({ id, title, type, children }: { id: string; title: s
   };
 
   return (
-    <div className="mx-auto mt-10 max-w-md" dir="rtl">
-      <div className="rounded-2xl p-6 text-center" style={{ border: "1px solid var(--gold-soft)", background: "var(--gold-soft)" }}>
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl text-2xl" style={{ background: "var(--surface)" }}>🔒</div>
-        <h2 className="text-lg font-black" style={{ color: "var(--ink)" }}>{title}</h2>
-        <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--ink-2)" }}>
-          هذه المنطقة محميّة. أدخل كلمة مرور الوصول للمتابعة.
+    <div className="mx-auto mt-6 sm:mt-12 w-full max-w-md" dir="rtl">
+      <div className="adm-panel p-6 sm:p-8">
+        <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl" style={{ background: "var(--gold-soft)", color: "var(--gold)" }} aria-hidden>
+          <Lock size={22} />
+        </span>
+        <h1 className="adm-h2 text-center">{title}</h1>
+        <p className="adm-sub text-center mt-2">
+          منطقة محميّة. أدخل كلمة مرور الوصول للمتابعة — تبقى مفتوحة حتى تغلق المتصفح.
           <br />
-          إن لم تكن تعرفها، اطلبها من المالك (قل له: {type === "wallet" ? "«أحتاج كلمة مرور المحفظة»" : "«أحتاج كلمة مرور الـ bulk»"}).
+          إن لم تعرفها اطلبها من المالك ({type === "wallet" ? "«كلمة مرور المحفظة»" : "«كلمة مرور الـ bulk»"}).
         </p>
-        <form onSubmit={submit} className="mt-5 space-y-3 text-right">
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              if (error) setError("");
-            }}
-            placeholder="••••••••"
-            autoFocus
-            className="w-full rounded-lg px-3 py-2.5 text-sm focus:outline-none"
-            style={{ border: "1px solid var(--border)", background: "var(--surface)", color: "var(--ink)" }}
-          />
-          {error && <p className="text-xs" style={{ color: "var(--danger)" }}>{error}</p>}
-          <button
-            type="submit"
-            disabled={checking}
-            className="w-full rounded-xl py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer border-none"
-            style={{ background: "var(--gold-2)" }}
-          >
-            {checking ? "جارٍ التحقق..." : "دخول"}
-          </button>
+        <form onSubmit={submit} className="mt-6 flex flex-col gap-3">
+          <Field label="كلمة مرور الوصول" htmlFor={`gate-${id}`} error={error || undefined}>
+            <Input
+              id={`gate-${id}`}
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (error) setError("");
+              }}
+              placeholder="••••••••"
+              autoFocus
+              autoComplete="off"
+              aria-invalid={error ? true : undefined}
+            />
+          </Field>
+          <Button type="submit" variant="primary" block loading={checking} disabled={!password}>
+            فتح
+          </Button>
         </form>
       </div>
     </div>

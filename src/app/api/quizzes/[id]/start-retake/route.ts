@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkQuizAccess } from "@/lib/authorization";
 import { blockSupportView } from "@/lib/support-auth";
-import { canAccessContent, contentDeniedPayload, ContentType } from "@/lib/content-access-engine";
+import { canAccessContent, contentDeniedPayload, ContentType, hasActiveSupportReopen } from "@/lib/content-access-engine";
 import { retakeCooldownRemainingMs } from "@/lib/quiz-attempt";
 
 /**
@@ -51,7 +51,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ started: true, alreadyInProgress: true });
   }
 
-  if (!existing.allowRetake) {
+  // A support reopen opens the quiz this student already has, and skips the
+  // teacher cooldown so the new attempt can start as soon as the window is open.
+  const supportReopen = await hasActiveSupportReopen(session.id, quizId, [
+    ContentType.QUIZ,
+    ContentType.EXAM,
+  ]);
+  if (!existing.allowRetake && !supportReopen) {
     return NextResponse.json(
       { error: "لم يُسمح بإعادة هذا الاختبار", alreadySubmitted: true },
       { status: 409 }
@@ -62,7 +68,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     existing.completedAt,
     quiz.retakeCooldownHours ?? 0
   );
-  if (cooldownRemainingMs > 0) {
+  if (!supportReopen && cooldownRemainingMs > 0) {
     return NextResponse.json(
       { error: "إعادة الاختبار غير متاحة بعد", cooldownRemainingMs },
       { status: 429 }
@@ -75,10 +81,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   await prisma.quizResult.update({
     where: { id: existing.id },
     data: {
-      startedAt: new Date(),
+      startedAt: null,
+      pausedAt: null,
+      elapsedMs: 0,
       completedAt: null,
       allowRetake: false,
       draftAnswers: null,
+      presentation: null,
     },
   });
 

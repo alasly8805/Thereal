@@ -5,6 +5,7 @@ import {
 } from "@/generated/prisma";
 import { prisma } from "@/lib/prisma";
 import { getCenterPassGrant, type CenterItemKind } from "@/lib/center-pass";
+import { quizActiveElapsedMs } from "@/lib/quiz-attempt";
 
 export { ContentProgressStatus, ContentType };
 
@@ -74,6 +75,70 @@ export function isContentClosed(input: {
     return now.getTime() <= until.getTime();
   });
   return !hasValidExtension;
+}
+
+/** Active support reopen for this student, or for every student (studentId null). */
+export async function hasActiveSupportReopen(
+  studentId: string,
+  sourceId: string,
+  types: ContentType[]
+): Promise<boolean> {
+  const row = await prisma.contentExtension.findFirst({
+    where: {
+      revokedAt: null,
+      extendedUntil: { gte: new Date() },
+      OR: [{ studentId: null }, { studentId }],
+      content: { sourceId, type: { in: types } },
+    },
+    select: { id: true },
+  });
+  return row != null;
+}
+
+/**
+ * A support reopen gives this student a fresh clock on an unfinished attempt.
+ * The first visit starts the timer; coming back two days later must not be
+ * treated as "time is already over" after support explicitly opened it again.
+ */
+export async function restartQuizClockForSupportReopen(
+  quizId: string,
+  studentId: string | null
+): Promise<number> {
+  const quiz = await prisma.quiz.findUnique({
+    where: { id: quizId },
+    select: { timeLimitMinutes: true },
+  });
+  if (!quiz) return 0;
+
+  const now = new Date();
+  const limitMs = Math.max(1, quiz.timeLimitMinutes || 30) * 60 * 1000;
+  const rows = await prisma.quizResult.findMany({
+    where: {
+      quizId,
+      completedAt: null,
+      ...(studentId ? { studentId } : {}),
+    },
+    select: { id: true, startedAt: true, pausedAt: true, elapsedMs: true },
+  });
+  const staleIds = rows
+    .filter(
+      (row) =>
+        quizActiveElapsedMs({
+          startedAt: row.startedAt,
+          pausedAt: row.pausedAt,
+          elapsedMs: row.elapsedMs,
+          now,
+        }) >= limitMs
+    )
+    .map((row) => row.id);
+  if (staleIds.length === 0) return 0;
+
+  // Fresh clock, but do not start it. The waiting page starts the exam.
+  await prisma.quizResult.updateMany({
+    where: { id: { in: staleIds } },
+    data: { startedAt: null, pausedAt: null, elapsedMs: 0 },
+  });
+  return staleIds.length;
 }
 
 export function contentDeniedPayload(access: ContentAccessDecision): {
@@ -522,6 +587,20 @@ export async function canAccessContent(
   locator: ContentLocator
 ): Promise<ContentAccessDecision> {
   const timed = await loadTimedCloseState(locator, studentId);
+  const reopenTypes =
+    locator.type === ContentType.QUIZ || locator.type === ContentType.EXAM
+      ? [ContentType.QUIZ, ContentType.EXAM]
+      : locator.type === ContentType.HOMEWORK
+        ? [ContentType.HOMEWORK, ContentType.EXAM]
+        : null;
+  // A support reopen opens the quiz the student already has for the window,
+  // including when the previous lesson is still locked.
+  if (
+    reopenTypes &&
+    (await hasActiveSupportReopen(studentId, locator.sourceId, reopenTypes))
+  ) {
+    return { allowed: true };
+  }
   if (timed.closed) {
     return { allowed: false, code: "CONTENT_CLOSED", message: CONTENT_CLOSED_MESSAGE };
   }
@@ -684,7 +763,15 @@ export async function getCourseContentLocks(
 
   const progress = await loadProgressWithLegacyFallback(studentId, allItems);
 
+  const reopenedSourceIds = new Set<string>();
   for (const item of items) {
+    if ((extensionsByContentId.get(item.id) ?? []).length > 0) {
+      reopenedSourceIds.add(item.sourceId);
+    }
+  }
+
+  for (const item of items) {
+    if (reopenedSourceIds.has(item.sourceId)) continue;
     const decision = evaluateContentAccess({
       targetContentId: item.id,
       items: allItems,
@@ -803,9 +890,10 @@ export function isHomeworkUnderReview(
  * Global PDF homework chain rule (all current and future uploads):
  * - Any قيد المراجعة row (`review_requested`, or legacy `pending` with a file)
  *   marks progress COMPLETED and unlocks the next item.
- * - Teacher reject (`failed`) locks the next item again.
- * - Teacher accept (`passed`) keeps it unlocked.
- * Re-upload after reject returns to قيد المراجعة and unlocks again.
+ * - Teacher reject (`failed`) locks the next item again and closes re-upload.
+ * - Re-upload stays closed until the teacher or an assistant sets allowRetake.
+ * - That replacement returns to قيد المراجعة and unlocks the next item.
+ * - Teacher accept (`passed`) keeps it unlocked. A later reject locks it again.
  *
  * `canAccessContent` / `getCourseContentLocks` both overlay live submissions
  * through this helper, so a later upload cannot stay locked just because
@@ -829,20 +917,29 @@ export function homeworkProgressStatusFromSubmission(
     : ContentProgressStatus.IN_PROGRESS;
 }
 
-/** Rejected upload homework can be replaced without a teacher retry toggle. */
+/**
+ * A second file is allowed only after the teacher or an assistant opens it.
+ * Rejection alone does not reopen the upload.
+ */
 export function canReplaceRejectedHomeworkUpload(
   homeworkType: string,
   status: string,
   allowRetake: boolean
 ): boolean {
-  if (allowRetake) return true;
-  return homeworkType === "upload" && status === "failed";
+  if (!allowRetake) return false;
+  if (homeworkType !== "upload") return true;
+  return (
+    status === "failed" ||
+    status === "passed" ||
+    status === "pending" ||
+    status === HOMEWORK_REVIEW_REQUESTED_STATUS
+  );
 }
 
 /**
- * /upload may store a PDF on this attempt. Passed work stays locked until the
- * teacher reopens it. قيد المراجعة rows may be replaced so a retried upload
- * after a dropped /submit still writes the same global unlock rule.
+ * /upload may store a PDF on this attempt. A rejected or accepted file stays
+ * locked until the teacher or an assistant reopens it. قيد المراجعة rows may
+ * still be replaced so a dropped follow-up /submit can finish the same attempt.
  */
 export function canPersistPdfHomeworkUpload(
   homeworkType: string,
@@ -850,13 +947,9 @@ export function canPersistPdfHomeworkUpload(
   allowRetake: boolean
 ): boolean {
   if (!status) return true;
-  if (allowRetake) return true;
   if (homeworkType !== "upload") return false;
-  return (
-    status === "pending" ||
-    status === HOMEWORK_REVIEW_REQUESTED_STATUS ||
-    status === "failed"
-  );
+  if (allowRetake) return true;
+  return status === "pending" || status === HOMEWORK_REVIEW_REQUESTED_STATUS;
 }
 
 /**

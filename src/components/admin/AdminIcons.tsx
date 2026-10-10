@@ -398,6 +398,7 @@ export const SECTION_ICONS: Record<string, (p: IconProps) => React.ReactElement>
   courses: IconBook,
   "quiz-results": IconClipboard,
   "create-course": IconPlus,
+  terms: IconBook,
   create: IconPlus,
   codes: IconKey,
   students: IconUsers,

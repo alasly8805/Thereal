@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown, DoorOpen, GraduationCap, Search, Trash2, Users } from "lucide-react";
+import { ChevronDown, DoorOpen, GraduationCap, Layers, Search, Trash2, Users } from "lucide-react";
 import type { OverviewData, OverviewTeacher } from "./types";
 import { Card, CardHeader, EmptyState, Pill, StackedBar, ar, egp, fmtDate, tone } from "./primitives";
 import { PaymentsPanel } from "./PaymentsPanel";
@@ -133,12 +133,12 @@ function TeacherRow({
         className="w-full px-4 py-3 grid gap-3 items-center cursor-pointer transition-colors hover:bg-[var(--surface-2)]/60 grid-cols-1 sm:grid-cols-[minmax(180px,1.4fr)_minmax(160px,2fr)_auto]"
       >
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl text-white flex items-center justify-center font-black text-base shrink-0" style={{ background: "var(--brand)" }}>
+          <div className="w-10 h-10 rounded-xl text-[var(--on-brand)] flex items-center justify-center font-black text-base shrink-0" style={{ background: "var(--brand)" }}>
             {t.name[0]}
           </div>
           <div className="min-w-0">
             <div className="font-bold truncate text-sm" style={{ color: "var(--ink)" }}>{t.name}</div>
-            <div className="text-[10px] truncate flex items-center gap-1.5" style={{ color: "var(--ink-3)" }}>
+            <div className="text-xs truncate flex items-center gap-1.5" style={{ color: "var(--ink-3)" }}>
               <span>{ar(t.totalCourses)} كورس</span>·<span>{ar(courseStudents)} طالب في الكورسات</span>·
               <span style={{ color: tone.green }}>{ar(paidStudents)} دفعوا</span>
               {freeSubs > 0 && <>·<span>{ar(freeSubs)} مجاناً</span></>}
@@ -147,7 +147,7 @@ function TeacherRow({
         </div>
 
         <div className="min-w-0">
-          <div className="flex items-center justify-between text-[11px] mb-1">
+          <div className="flex items-center justify-between text-xs mb-1">
             <span className="font-black tabular-nums" style={{ color: tone.green }}>{egp(revenue)} <span className="font-medium" style={{ color: "var(--ink-3)" }}>إجمالي</span></span>
             <span className="tabular-nums" style={{ color: "var(--ink-3)" }}>
               منصة <b style={{ color: tone.sky }}>{egp(platformShare)}</b> ({ar(pctVal)}٪) · معلم <b style={{ color: tone.gold }}>{egp(teacherShare)}</b>
@@ -168,7 +168,7 @@ function TeacherRow({
             <input type="hidden" name="teacherId" value={t.id} />
             <button
               type="submit"
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors"
               style={{ background: "var(--brand-soft)", color: "var(--brand)", border: "1px solid transparent" }}
               title={`دخول لوحة تحكم المعلم (${t.name})`}
             >
@@ -176,6 +176,15 @@ function TeacherRow({
               <span className="hidden md:inline">لوحة المعلم</span>
             </button>
           </form>
+          <a
+            href={`/adminpanel/superadmin?section=teacher-packages&teacherId=${t.id}`}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors"
+            style={{ background: "rgba(16, 185, 129, 0.12)", color: "#10b981", border: "1px solid rgba(16, 185, 129, 0.25)" }}
+            title={`إدارة باقات وكورسات ${t.name} ومقارنة الفرق البياني`}
+          >
+            <Layers size={13} />
+            <span className="hidden sm:inline">باقات وكورسات ومقارنة 📊</span>
+          </a>
           <button
             onClick={onDelete}
             className="w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer transition-colors hover:bg-[var(--danger-soft)]"
@@ -199,7 +208,7 @@ function TeacherRow({
       {expanded && (
         <div className="px-4 pb-4 space-y-3" style={{ background: "var(--bg)", borderTop: "1px solid var(--border)" }}>
           {/* Mini facts */}
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-2 pt-3 text-[11px]">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-2 pt-3 text-xs">
             {[
               { l: "إيراد الحجوزات", v: egp(subsRevenue), c: tone.sky },
               { l: "إيراد الكورسات", v: egp(coursesRevenue), c: tone.green },
@@ -209,7 +218,7 @@ function TeacherRow({
               { l: "انضم في", v: fmtDate(t.createdAt), c: "var(--ink-2)" },
             ].map((f) => (
               <div key={f.l} className="rounded-lg px-2.5 py-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <div style={{ color: "var(--ink-3)" }} className="text-[10px]">{f.l}</div>
+                <div style={{ color: "var(--ink-3)" }} className="text-xs">{f.l}</div>
                 <div className="font-black tabular-nums mt-0.5" style={{ color: f.c }}>{f.v}</div>
               </div>
             ))}
@@ -221,7 +230,7 @@ function TeacherRow({
           <div className="rounded-xl overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <div className="px-3 py-2 flex items-center justify-between" style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
               <h3 className="text-xs font-bold" style={{ color: "var(--ink)" }}>إدارة الكورسات — فتح قائمة الطلاب</h3>
-              <span className="text-[11px] font-bold tabular-nums" style={{ color: tone.gold }}>{ar(t.courses.length)} كورس · {egp(coursesRevenue)}</span>
+              <span className="text-xs font-bold tabular-nums" style={{ color: tone.gold }}>{ar(t.courses.length)} كورس · {egp(coursesRevenue)}</span>
             </div>
             {t.courses.length === 0 ? (
               <p className="p-4 text-xs text-center" style={{ color: "var(--ink-3)" }}>لا توجد كورسات بعد</p>
@@ -229,7 +238,7 @@ function TeacherRow({
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead style={{ background: "var(--surface-2)" }}>
-                    <tr className="text-[10px]" style={{ color: "var(--ink-3)" }}>
+                    <tr className="text-xs" style={{ color: "var(--ink-3)" }}>
                       <th className="px-3 py-2 text-right font-medium">الكورس</th>
                       <th className="px-3 py-2 text-center font-medium">النوع</th>
                       <th className="px-3 py-2 text-center font-medium">الطلاب</th>
@@ -242,14 +251,14 @@ function TeacherRow({
                       <tr key={c.id} className="hover:bg-[var(--surface-2)]/50">
                         <td className="px-3 py-2 max-w-[240px]">
                           <div className="font-bold truncate" style={{ color: "var(--ink)" }} title={c.title}>{c.title}</div>
-                          <div className="text-[10px]" style={{ color: "var(--ink-3)" }}>{c.subject}</div>
+                          <div className="text-xs" style={{ color: "var(--ink-3)" }}>{c.subject}</div>
                         </td>
                         <td className="px-3 py-2 text-center">{c.isPaid ? <Pill color="gold">مدفوع</Pill> : <Pill color="slate">مجاني</Pill>}</td>
                         <td className="px-3 py-2 text-center">
                           <button
                             type="button"
                             onClick={() => onOpenCourseStudents(c, t)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black cursor-pointer transition-transform hover:scale-105"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black cursor-pointer transition-transform hover:scale-105"
                             style={{ background: "var(--brand-soft)", color: "var(--brand)" }}
                             title="عرض وإدارة طلاب الكورس"
                           >

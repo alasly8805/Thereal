@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { phoneCore } from "@/lib/phone-match";
 import { hasPermission } from "@/lib/rbac";
 
 function buildWhere(params: {
@@ -17,9 +18,14 @@ function buildWhere(params: {
     name: params.name ? { contains: params.name } : undefined,
     educationalStage: params.stage || undefined,
     age: params.ageNum,
-    phone: params.phone ? { contains: params.phone } : undefined,
-    parentPhone: params.parentPhone ? { contains: params.parentPhone } : undefined,
   };
+
+  const phoneKeys = [params.phone, params.parentPhone].map(phoneCore).filter((k) => k.length >= 7);
+  if (phoneKeys.length) {
+    where.AND = phoneKeys.map((key) => ({
+      OR: [{ phone: { contains: key } }, { parentPhone: { contains: key } }],
+    }));
+  }
 
   if (params.verification === "confirmed") {
     where.parentVerificationStatus = "CONFIRMED";

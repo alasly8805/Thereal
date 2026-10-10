@@ -22,7 +22,7 @@ export async function GET() {
         status: "active",
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
       },
-      select: { teacherId: true, languageTrack: true, amount: true, status: true },
+      select: { teacherId: true, languageTrack: true, planType: true, amount: true, status: true, educationalStage: true, termNumbers: true },
     }) : [];
 
     const centerGrant = session.role === "student" ? await getCenterPassGrant(session.id) : null;
@@ -52,6 +52,8 @@ export async function GET() {
         deliveryMode: true,
         thumbnailUrl: true,
         educationalStage: true,
+        bookingKind: true,
+        bookingTerm: true,
         createdAt: true,
         teacher: { select: { id: true, name: true } },
         accessCodes: {
@@ -96,6 +98,10 @@ export async function GET() {
 
     const { getCourseLanguageTrack, isSubscriptionTrackMatching } = await import("@/lib/course-track");
     const { isTeaserLesson, teacherSubscriptionCoversCourse } = await import("@/lib/standalone-lessons");
+    const { bookingCoversCourse, loadTeacherTerms } = await import("@/lib/teacher-terms");
+    const bookingTerms = await loadTeacherTerms(
+      rawEnrolledCourses.map((c) => c.teacher?.id ?? "")
+    );
 
     const enrolledCourses = rawEnrolledCourses.filter((course) => {
       if (session.role === "teacher") return true;
@@ -111,15 +117,8 @@ export async function GET() {
       if (course.enrollments && course.enrollments.length > 0) return true;
       if (course.planCourseLinks && course.planCourseLinks.length > 0) return true;
 
-      const isCenterCourse = (course.deliveryMode || "").toUpperCase() === "CENTER";
-      if (course.teacher?.id && (teacherSubscriptionCoversCourse(course) || isCenterCourse)) {
-        const teacherSubs = activeSubs.filter((s) => s.teacherId === course.teacher.id);
-        if (teacherSubs.length > 0) {
-          const courseTrack = getCourseLanguageTrack(course);
-          return teacherSubs.some((s) => isSubscriptionTrackMatching(s.languageTrack, courseTrack));
-        }
-      }
-
+      // UNLINKED: Subscriptions do not automatically add courses to student library.
+      // Access requires explicit enrollment (CourseEnrollment), AccessCode, or PlanLink.
       return false;
     });
 

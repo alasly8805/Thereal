@@ -1,9 +1,23 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Archive, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { ConfirmActionModal } from "./ConfirmActionModal";
 import { EDUCATIONAL_STAGES } from "@/types";
 import { hasPermission } from "@/lib/rbac";
+import {
+  Button,
+  EmptyState,
+  Input,
+  Notice,
+  PageHeader,
+  Pagination,
+  Panel,
+  SkeletonRows,
+  fmtDate,
+  fmtNum,
+  readJson,
+} from "@/components/admin/ui/kit";
 
 interface DeletedStudent {
   id: string;
@@ -24,44 +38,46 @@ function stageLabel(v: string | null) {
   return EDUCATIONAL_STAGES.find((s) => s.value === v)?.label ?? v;
 }
 
-function fmtDate(d: string | null) {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("ar-EG");
-}
-
 export function DeletedStudentsSection({ userRole = "superadmin" }: { userRole?: string }) {
   const { success: toastSuccess } = useToast();
   const [students, setStudents] = useState<DeletedStudent[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [page, setPage] = useState(0);
   const [nameFilter, setNameFilter] = useState("");
   const [lastFilter, setLastFilter] = useState("");
   const [modalAction, setModalAction] = useState<ModalAction>(null);
 
+  const canRestore = hasPermission(userRole, "restore_student");
+  const canHardDelete = hasPermission(userRole, "hard_delete_student");
+
   const fetchDeleted = useCallback(async (name: string, pageOffset: number) => {
     setLoading(true);
+    setLoadError("");
     const params = new URLSearchParams();
-    if (name) params.set("name", name);
+    if (name.trim()) params.set("name", name.trim());
     params.set("limit", String(PAGE_SIZE));
     params.set("offset", String(pageOffset * PAGE_SIZE));
-
     try {
-      const res = await fetch(
-        `/api/admin/superadmin/students/deleted?${params.toString()}`,
-        { credentials: "include" }
-      );
-      const data = (await res.json()) as { students?: DeletedStudent[]; total?: number };
-      if (res.ok) {
-        setStudents(data.students ?? []);
-        setTotal(data.total ?? 0);
-        setSearched(true);
+      const res = await fetch(`/api/admin/superadmin/students/deleted?${params.toString()}`, { credentials: "include" });
+      const data = await readJson<{ students?: DeletedStudent[]; total?: number; error?: string }>(res);
+      if (!res.ok) {
+        setLoadError(data?.error || "تعذر تحميل المتعلمين المحذوفين");
+        return;
       }
+      setStudents(data?.students ?? []);
+      setTotal(data?.total ?? 0);
+    } catch {
+      setLoadError("تعذر الاتصال بالخادم");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    void fetchDeleted("", 0);
+  }, [fetchDeleted]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,174 +91,128 @@ export function DeletedStudentsSection({ userRole = "superadmin" }: { userRole?:
     void fetchDeleted(lastFilter, newPage);
   };
 
+  const removeFromList = (id: string) => {
+    setStudents((prev) => prev.filter((s) => s.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
+  };
+
   const handleRestore = async (password: string) => {
-    if (!modalAction || modalAction.type !== "restore") return;
+    if (modalAction?.type !== "restore") return;
     const { student } = modalAction;
-    const res = await fetch(
-      `/api/admin/superadmin/students/${student.id}/restore`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actionPassword: password }),
-      }
-    );
-    const json = (await res.json()) as { error?: string };
-    if (!res.ok) throw new Error(json.error ?? "تعذر استعادة الحساب");
-    toastSuccess(`تم استعادة حساب ${student.name} بنجاح`);
-    setStudents((prev) => prev.filter((s) => s.id !== student.id));
-    setTotal((t) => t - 1);
+    const res = await fetch(`/api/admin/superadmin/students/${student.id}/restore`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actionPassword: password }),
+    });
+    const json = await readJson<{ error?: string }>(res);
+    if (!res.ok) throw new Error(json?.error ?? "تعذر استعادة الحساب");
+    toastSuccess(`استُعيد حساب ${student.name}`);
+    removeFromList(student.id);
     setModalAction(null);
   };
 
   const handleHardDelete = async (password: string) => {
-    if (!modalAction || modalAction.type !== "hard_delete") return;
+    if (modalAction?.type !== "hard_delete") return;
     const { student } = modalAction;
-    const res = await fetch(
-      `/api/admin/superadmin/students/${student.id}`,
-      {
-        method: "DELETE",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actionPassword: password, permanent: true }),
-      }
-    );
-    const json = (await res.json()) as { error?: string };
-    if (!res.ok) throw new Error(json.error ?? "تعذر الحذف النهائي");
-    toastSuccess(`تم حذف حساب ${student.name} نهائياً`);
-    setStudents((prev) => prev.filter((s) => s.id !== student.id));
-    setTotal((t) => t - 1);
+    const res = await fetch(`/api/admin/superadmin/students/${student.id}`, {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actionPassword: password, permanent: true }),
+    });
+    const json = await readJson<{ error?: string }>(res);
+    if (!res.ok) throw new Error(json?.error ?? "تعذر الحذف النهائي");
+    toastSuccess(`حُذف حساب ${student.name} نهائياً`);
+    removeFromList(student.id);
     setModalAction(null);
   };
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
-    <div dir="rtl" className="space-y-4">
-      {/* Search */}
-      <form
-        onSubmit={handleSubmit}
-        className="bg-gray-800 rounded-2xl border border-gray-700 p-4 flex gap-3 items-end"
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="المتعلمون المحذوفون"
+        description="حسابات أُرشفت من ملف المتعلم. يمكن استعادتها كما كانت، أو حذفها نهائياً."
+      />
+
+      <Panel
+        padded={false}
+        title={loading && students.length === 0 ? "جارٍ التحميل" : `${fmtNum(total)} حساب مؤرشف`}
+        actions={
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <Input
+              inputSize="sm"
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+              placeholder="بحث بالاسم"
+              aria-label="بحث باسم المتعلم"
+              className="w-56 max-w-full"
+            />
+            <Button type="submit" size="sm" icon={<Search size={14} />} loading={loading}>
+              بحث
+            </Button>
+          </form>
+        }
+        footer={
+          totalPages > 1 ? (
+            <Pagination page={page} pageCount={totalPages} total={total} unit="حساب" onPage={handlePageChange} disabled={loading} />
+          ) : undefined
+        }
       >
-        <div className="flex-1">
-          <label className="block text-xs text-gray-400 mb-1">بحث باسم المتعلم</label>
-          <input
-            type="text"
-            value={nameFilter}
-            onChange={(e) => setNameFilter(e.target.value)}
-            placeholder="اكتب اسم المتعلم..."
-            className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
-        >
-          {loading ? "جارٍ البحث..." : "عرض المحذوفين"}
-        </button>
-      </form>
-
-      {/* Results */}
-      {searched && (
-        <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-700 flex items-center gap-2">
-            <span className="text-orange-400">🗑️</span>
-            <p className="text-sm text-gray-300 font-medium">
-              المتعلمين المؤرشفون ({total})
-            </p>
+        {loadError ? (
+          <div className="p-4">
+            <Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchDeleted(lastFilter, page)}>إعادة المحاولة</Button>} />
           </div>
-
-          {students.length === 0 ? (
-            <div className="p-10 text-center text-gray-500">
-              <div className="text-4xl mb-2">✅</div>
-              <p>لا يوجد طلاب مؤرشفون</p>
-            </div>
-          ) : (
-            <>
-              <div className="divide-y divide-slate-200 dark:divide-gray-700">
-                {students.map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-center justify-between gap-3 px-4 py-3"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 bg-gray-700 rounded-xl flex items-center justify-center text-gray-400 font-bold shrink-0">
-                        {s.name[0]}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-white text-sm font-medium truncate">{s.name}</p>
-                        <p className="text-gray-500 text-xs">
-                          {stageLabel(s.educationalStage)}
-                          {s.age ? ` · ${s.age} سنة` : ""}
-                        </p>
-                        <p className="text-gray-600 text-xs">
-                          أُرشف: {fmtDate(s.deletedAt)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 shrink-0">
-                      {hasPermission(userRole, "restore_student") && (
-                      <button
-                        onClick={() => setModalAction({ type: "restore", student: s })}
-                        className="px-3 py-1.5 text-xs bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg transition-colors"
-                      >
-                        ↩️ استعادة
-                      </button>
-                      )}
-                      {hasPermission(userRole, "hard_delete_student") && (
-                      <button
-                        onClick={() => setModalAction({ type: "hard_delete", student: s })}
-                        className="px-3 py-1.5 text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg transition-colors"
-                      >
-                        🗑️ حذف نهائي
-                      </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {totalPages > 1 && (
-                <div className="px-4 py-3 border-t border-gray-700 flex items-center justify-between">
-                  <p className="text-xs text-gray-500">
-                    صفحة {page + 1} من {totalPages}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handlePageChange(page - 1)}
-                      disabled={page === 0}
-                      className="px-3 py-1.5 text-xs bg-gray-700 disabled:opacity-40 hover:bg-gray-600 text-white rounded-lg"
-                    >
-                      السابق
-                    </button>
-                    <button
-                      onClick={() => handlePageChange(page + 1)}
-                      disabled={page >= totalPages - 1}
-                      className="px-3 py-1.5 text-xs bg-gray-700 disabled:opacity-40 hover:bg-gray-600 text-white rounded-lg"
-                    >
-                      التالي
-                    </button>
+        ) : loading && students.length === 0 ? (
+          <SkeletonRows rows={4} h={52} />
+        ) : students.length === 0 ? (
+          <EmptyState
+            icon={<Archive size={22} />}
+            title={lastFilter ? "لا نتائج مطابقة" : "لا يوجد متعلمون مؤرشفون"}
+            text={lastFilter ? undefined : "عند أرشفة متعلم من ملفه سيظهر هنا."}
+          />
+        ) : (
+          <ul className="adm-list" style={{ opacity: loading ? 0.6 : 1 }}>
+            {students.map((s) => (
+              <li key={s.id} className="adm-row">
+                <div className="flex items-center gap-3 min-w-0 flex-1 basis-60">
+                  <span className="adm-avatar" style={{ background: "var(--surface-2)", color: "var(--ink-3)" }} aria-hidden>
+                    {s.name?.[0] ?? "؟"}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold truncate">{s.name}</p>
+                    <p className="text-xs adm-muted">
+                      {stageLabel(s.educationalStage)}
+                      {s.age ? ` · ${fmtNum(s.age)} سنة` : ""}
+                      {s.phone ? <> · <span className="adm-mono">{s.phone}</span></> : null}
+                      {" "}· أُرشف {fmtDate(s.deletedAt)}
+                    </p>
                   </div>
                 </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
+                <div className="flex gap-2">
+                  {canRestore && (
+                    <Button size="sm" variant="primary" icon={<RotateCcw size={14} />} onClick={() => setModalAction({ type: "restore", student: s })}>
+                      استعادة
+                    </Button>
+                  )}
+                  {canHardDelete && (
+                    <Button size="sm" variant="danger" icon={<Trash2 size={14} />} onClick={() => setModalAction({ type: "hard_delete", student: s })}>
+                      حذف نهائي
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
 
-      {!searched && !loading && (
-        <div className="bg-gray-800 rounded-2xl border border-gray-700 p-10 text-center text-gray-500">
-          <div className="text-4xl mb-2">🗑️</div>
-          <p>اضغط &quot;عرض المحذوفين&quot; لتحميل المتعلمين المؤرشفين</p>
-        </div>
-      )}
-
-      {/* Restore modal */}
       {modalAction?.type === "restore" && (
         <ConfirmActionModal
           title="استعادة حساب المتعلم"
-          description={`سيُعاد تفعيل حساب المتعلم "‏${modalAction.student.name}‏" ويستطيع تسجيل الدخول مجدداً.`}
+          description={`سيُعاد تفعيل حساب "‏${modalAction.student.name}‏" ويستطيع تسجيل الدخول مجدداً.`}
           actionLabel="استعادة الحساب"
           variant="warning"
           onConfirm={handleRestore}
@@ -250,11 +220,10 @@ export function DeletedStudentsSection({ userRole = "superadmin" }: { userRole?:
         />
       )}
 
-      {/* Hard delete modal */}
       {modalAction?.type === "hard_delete" && (
         <ConfirmActionModal
           title="حذف نهائي — لا يمكن التراجع"
-          description={`تحذير: سيتم حذف بيانات المتعلم "‏${modalAction.student.name}‏" وجميع سجلاته بصورة نهائية تماماً غير قابلة للاسترداد.`}
+          description={`ستُحذف بيانات "‏${modalAction.student.name}‏" وكل سجلاته نهائياً ولا يمكن استرجاعها.`}
           actionLabel="حذف نهائياً"
           variant="danger"
           onConfirm={handleHardDelete}

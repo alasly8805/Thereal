@@ -31,6 +31,15 @@ export type CopilotLink = {
   label: string;
 };
 
+/** A change the model prepared. The chat cannot apply it; the confirm button does. */
+export type CopilotProposal = {
+  token: string;
+  title: string;
+  detail: string;
+  before: string;
+  after: string;
+};
+
 export type ToolResult = {
   ok: boolean;
   summary: string;
@@ -39,6 +48,7 @@ export type ToolResult = {
   tables?: CopilotTable[];
   kpis?: CopilotKpi[];
   links?: CopilotLink[];
+  proposal?: CopilotProposal;
 };
 
 export type CopilotMessage = {
@@ -194,6 +204,58 @@ export const COPILOT_TOOLS: Array<{
           query: { type: "string" },
         },
         required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_student_grades",
+      description:
+        "Read one student's leaderboard points plus recent quiz and homework scores (percent). Use before changing a degree. If several students match, ask which one. Never invent a score.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Student id, phone, or name" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "propose_points_change",
+      description:
+        "PREPARE ONLY. Does not save. Propose adding or setting one student's leaderboard points. mode=add for 'plus 100' / 'زود 100' (amount may be negative to subtract). mode=set for 'make the points 500'. The superadmin must press confirm. If several students match, do not call this — ask which one.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Student id, phone, or name" },
+          mode: { type: "string", enum: ["add", "set"], description: "add = plus/minus, set = replace the total" },
+          amount: { type: "integer", description: "Whole points. add: -10000 to 10000, not zero. set: 0 to 1000000." },
+        },
+        required: ["query", "mode", "amount"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "propose_grade_change",
+      description:
+        "PREPARE ONLY. Does not save. Propose setting one quiz or homework official percentage (الدرجة) from 0 to 100. Call list_student_grades first and pass targetId. Use which=latest only when the user explicitly said the latest exam. If the title matches more than one exam, ask which one. Individual answers are not rewritten. The superadmin must press confirm.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Student id, phone, or name" },
+          kind: { type: "string", enum: ["quiz", "homework"] },
+          score: { type: "number", description: "New percentage, 0 to 100" },
+          targetId: { type: "string", description: "quizId or homeworkId from list_student_grades" },
+          title: { type: "string", description: "Exam title fragment, used only when targetId is omitted" },
+          which: { type: "string", enum: ["latest"], description: "Only when the user said the latest exam and no targetId/title" },
+        },
+        required: ["query", "kind", "score"],
       },
     },
   },

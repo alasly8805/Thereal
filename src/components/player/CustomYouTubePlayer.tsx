@@ -237,12 +237,13 @@ export function CustomYouTubePlayer({
     const pending = questions.find((q) => {
       const isAnswered = answeredQuestionIds.has(q.id);
       if (isAnswered && !q.refireOnRewatch) return false;
-      return !firedQuestionIds.has(q.id) && q.triggerSecond === currentSecond;
+      const qTime = q.triggerSecond ?? q.timestamp ?? 0;
+      return !firedQuestionIds.has(q.id) && qTime === currentSecond;
     });
 
     if (pending) {
       setFiredQuestionIds((prev) => new Set([...prev, pending.id]));
-      if (pending.mode === "pause") {
+      if (pending.mode === "pause" || pending.isRequired !== false) {
         try {
           playerRef.current?.pauseVideo();
         } catch { /* noop */ }
@@ -260,7 +261,8 @@ export function CustomYouTubePlayer({
     setFiredQuestionIds((prev) => {
       const next = new Set(prev);
       questions.forEach((q) => {
-        if (q.refireOnRewatch && q.triggerSecond > seconds) {
+        const qTime = q.triggerSecond ?? q.timestamp ?? 0;
+        if (q.refireOnRewatch && qTime > seconds) {
           next.delete(q.id);
         }
       });
@@ -269,6 +271,7 @@ export function CustomYouTubePlayer({
   };
 
   const handlePlayToggle = () => {
+    if (activeQuestion) return;
     const p = playerRef.current;
     if (!p || !ready) return;
     if (isPlaying) {
@@ -298,13 +301,32 @@ export function CustomYouTubePlayer({
     const pct = Number(e.target.value);
     const targetSec = Math.round((pct / 100) * duration);
     
+    // Seek protection: find any unanswered question before or at target
+    const unanswered = questions.find((q) => {
+      const qTime = q.triggerSecond ?? q.timestamp ?? 0;
+      return targetSec > qTime + 1 && !answeredQuestionIds.has(q.id) && q.isRequired !== false;
+    });
+
+    if (unanswered) {
+      const unTime = unanswered.triggerSecond ?? unanswered.timestamp ?? 0;
+      p.seekTo(unTime, true);
+      try {
+        p.pauseVideo();
+      } catch { /* noop */ }
+      setIsPlaying(false);
+      setActiveQuestion(unanswered);
+      setCurrentSecond(unTime);
+      onPauseChange?.(true);
+      return;
+    }
+
     // Jump instantly to seek point locally and update YT player
     p.seekTo(targetSec, true);
     handleSeekReset(targetSec);
     setCurrentSecond(targetSec);
   };
 
-  const handleModalAnswered = (res: { isCorrect: boolean; correctOption: string; explanation?: string }) => {
+  const handleModalAnswered = (_res: { isCorrect: boolean; attempts: number }) => {
     if (activeQuestion) {
       onQuestionAnswered(activeQuestion.id);
     }
@@ -319,7 +341,7 @@ export function CustomYouTubePlayer({
     }
   };
 
-  const handleOverlayAnswered = (res: { isCorrect: boolean; correctOption: string; explanation?: string }) => {
+  const handleOverlayAnswered = (_res: { isCorrect: boolean; attempts: number }) => {
     if (activeOverlayQuestion) {
       onQuestionAnswered(activeOverlayQuestion.id);
     }

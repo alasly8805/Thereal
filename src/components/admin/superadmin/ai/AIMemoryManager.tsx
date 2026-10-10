@@ -25,7 +25,7 @@ export default function AIMemoryManager() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-[var(--ink-3)]">{m.lastSession}</span>
-                <button className="text-xs font-bold text-red-500 hover:underline">محي الذاكرة</button>
+                <button className="text-xs font-bold text-[var(--danger)] hover:underline">محي الذاكرة</button>
               </div>
             </div>
           ))}

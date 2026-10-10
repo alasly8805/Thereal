@@ -147,9 +147,9 @@ async function persistHomeworkFile(opts: {
   });
 
   // Global rule: every stored PDF is قيد المراجعة immediately, including a
-  // replacement after teacher reject or a retried upload. Progress is
+  // replacement the teacher or assistant explicitly reopened. Progress is
   // COMPLETED so the next item unlocks even if the follow-up /submit never
-  // arrives.
+  // arrives. Accept keeps it open; a later reject closes it again.
   const completedAt = new Date();
   const submissionData = {
     fileUrl: fileRef,

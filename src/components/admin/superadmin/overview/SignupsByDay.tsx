@@ -6,17 +6,17 @@ import { Card, ar, tone } from "./primitives";
 
 const CAIRO_TZ = "Africa/Cairo";
 
-function cairoKey(d = new Date()) {
+export function cairoKey(d = new Date()) {
   return d.toLocaleDateString("en-CA", { timeZone: CAIRO_TZ });
 }
 
-function shiftCairoDay(key: string, days: number) {
+export function shiftCairoDay(key: string, days: number) {
   const [y, m, d] = key.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + days, 12));
   return cairoKey(dt);
 }
 
-function formatCairoDay(key: string) {
+export function formatCairoDay(key: string) {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString("ar-EG", {
     weekday: "long",
@@ -27,7 +27,7 @@ function formatCairoDay(key: string) {
   });
 }
 
-function weekday(key: string) {
+export function weekday(key: string) {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString("ar-EG", {
     weekday: "short",
@@ -54,12 +54,12 @@ export function SignupsByDay({ days }: { days: Array<{ date: string; count: numb
   const max14 = Math.max(1, ...last14.map((x) => x.count));
 
   const table = useMemo(() => {
-    let runningFromOldest = 0;
     const oldestFirst = [...days].sort((a, b) => a.date.localeCompare(b.date));
-    const withCum = oldestFirst.map((row) => {
-      runningFromOldest += row.count;
-      return { ...row, cumulative: runningFromOldest };
-    });
+    const withCum: Array<{ date: string; count: number; cumulative: number }> = [];
+    for (const row of oldestFirst) {
+      const prev = withCum.length ? withCum[withCum.length - 1].cumulative : 0;
+      withCum.push({ ...row, cumulative: prev + row.count });
+    }
     return withCum.reverse();
   }, [days]);
 
@@ -74,12 +74,12 @@ export function SignupsByDay({ days }: { days: Array<{ date: string; count: numb
             <h2 className="font-black text-sm" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
               تسجيل الطلاب يوم بيوم
             </h2>
-            <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: "var(--ink-3)" }}>
+            <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "var(--ink-3)" }}>
               نفس فلتر «الطلاب المسجلون»: حساب حقيقي، غير محذوف، وليس فحص QA. اليوم حسب توقيت القاهرة.
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-1.5 text-[11px] font-bold tabular-nums">
+        <div className="flex flex-wrap gap-1.5 text-xs font-bold tabular-nums">
           <span className="px-2 py-1 rounded-lg" style={{ background: "var(--brand-soft)", color: "var(--brand)" }}>
             اليوم {ar(todayCount)}
           </span>
@@ -98,7 +98,7 @@ export function SignupsByDay({ days }: { days: Array<{ date: string; count: numb
           const isToday = d.date === today;
           return (
             <div key={d.date} className="flex-1 min-w-0 flex flex-col items-center gap-1" title={`${formatCairoDay(d.date)}: ${d.count}`}>
-              <span className="text-[10px] font-black tabular-nums" style={{ color: d.count > 0 ? "var(--ink)" : "var(--ink-3)" }}>
+              <span className="text-xs font-black tabular-nums" style={{ color: d.count > 0 ? "var(--ink)" : "var(--ink-3)" }}>
                 {ar(d.count)}
               </span>
               <div
@@ -108,7 +108,7 @@ export function SignupsByDay({ days }: { days: Array<{ date: string; count: numb
                   background: isToday ? "var(--brand)" : d.count > 0 ? "color-mix(in srgb, var(--brand) 55%, var(--surface-2))" : "var(--surface-2)",
                 }}
               />
-              <span className="text-[9px] truncate w-full text-center" style={{ color: isToday ? "var(--brand)" : "var(--ink-3)" }}>
+              <span className="text-xs truncate w-full text-center" style={{ color: isToday ? "var(--brand)" : "var(--ink-3)" }}>
                 {weekday(d.date)}
               </span>
             </div>
@@ -122,7 +122,7 @@ export function SignupsByDay({ days }: { days: Array<{ date: string; count: numb
         <div className="overflow-x-auto max-h-80 overflow-y-auto rounded-xl" style={{ border: "1px solid var(--border)" }}>
           <table className="w-full text-xs">
             <thead className="sticky top-0" style={{ background: "var(--surface-2)" }}>
-              <tr className="text-[10px]" style={{ color: "var(--ink-3)" }}>
+              <tr className="text-xs" style={{ color: "var(--ink-3)" }}>
                 <th className="px-3 py-2 text-right font-medium">اليوم</th>
                 <th className="px-3 py-2 text-center font-medium">سجّلوا</th>
                 <th className="px-3 py-2 text-center font-medium">التراكمي</th>
@@ -135,7 +135,7 @@ export function SignupsByDay({ days }: { days: Array<{ date: string; count: numb
                   <tr key={row.date} className="hover:bg-[var(--surface-2)]/50" style={isToday ? { background: "color-mix(in srgb, var(--brand) 8%, transparent)" } : undefined}>
                     <td className="px-3 py-2">
                       <div className="font-bold" style={{ color: "var(--ink)" }}>{formatCairoDay(row.date)}</div>
-                      {isToday && <div className="text-[10px]" style={{ color: "var(--brand)" }}>اليوم</div>}
+                      {isToday && <div className="text-xs" style={{ color: "var(--brand)" }}>اليوم</div>}
                     </td>
                     <td className="px-3 py-2 text-center font-black tabular-nums" style={{ color: row.count > 0 ? tone.green : "var(--ink-3)" }}>
                       {ar(row.count)}

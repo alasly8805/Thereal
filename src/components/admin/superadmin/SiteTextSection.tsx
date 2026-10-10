@@ -1,44 +1,62 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { RotateCcw, Save, Undo2 } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
-import { FileText, Save, RotateCcw, Lock } from "lucide-react";
+import { Badge, Button, Field, Input, Notice, PageHeader, Panel, Skeleton, Textarea, fmtNum, readJson } from "@/components/admin/ui/kit";
+
+const SHORT_KEYS = new Set(["contact_email", "contact_phone", "contact_heading"]);
+
+function storedActionPassword() {
+  try {
+    return sessionStorage.getItem("admin_action_password") || "";
+  } catch {
+    return "";
+  }
+}
 
 export function SiteTextSection() {
   const { success: toastSuccess, error: toastError } = useToast();
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [values, setValues] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState<Record<string, string>>({});
   const [defaults, setDefaults] = useState<Record<string, string>>({});
   const [actionPassword, setActionPassword] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    setActionPassword(storedActionPassword());
     let isMounted = true;
-    const loadData = async () => {
+    (async () => {
       try {
         const res = await fetch("/api/admin/superadmin/site-text", { credentials: "include" });
-        const json = await res.json();
+        const json = await readJson<{ text?: Record<string, string>; defaults?: Record<string, string>; labels?: Record<string, string>; error?: string }>(res);
         if (!isMounted) return;
         if (!res.ok) {
-          toastError(json.error ?? "تعذر تحميل النصوص");
+          setLoadError(json?.error ?? "تعذر تحميل النصوص");
           return;
         }
-        setValues(json.text ?? {});
-        setDefaults(json.defaults ?? {});
-        setLabels(json.labels ?? {});
+        setValues(json?.text ?? {});
+        setSaved(json?.text ?? {});
+        setDefaults(json?.defaults ?? {});
+        setLabels(json?.labels ?? {});
       } catch {
-        if (isMounted) toastError("تعذر الاتصال بالخادم");
+        if (isMounted) setLoadError("تعذر الاتصال بالخادم");
       } finally {
         if (isMounted) setLoading(false);
       }
-    };
-    void loadData();
+    })();
     return () => {
       isMounted = false;
     };
-  }, [toastError]);
+  }, []);
 
-  const save = async () => {
+  const keys = Object.keys(labels);
+  const dirtyKeys = useMemo(() => keys.filter((k) => (values[k] ?? "") !== (saved[k] ?? "")), [keys, values, saved]);
+
+  const save = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!actionPassword) {
       toastError("أدخل كلمة مرور المشرف لتأكيد الحفظ");
       return;
@@ -51,14 +69,15 @@ export function SiteTextSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ updates: values, actionPassword }),
       });
-      const json = await res.json();
+      const json = await readJson<{ text?: Record<string, string>; error?: string }>(res);
       if (!res.ok) {
-        toastError(json.error ?? "تعذر الحفظ");
+        toastError(json?.error ?? "تعذر الحفظ");
         return;
       }
-      setValues(json.text ?? values);
-      toastSuccess("تم حفظ نصوص الموقع بنجاح — قد تستغرق التحديث دقيقة على الموقع");
-      setActionPassword("");
+      const next = json?.text ?? values;
+      setValues(next);
+      setSaved(next);
+      toastSuccess("حُفظت النصوص — قد يستغرق ظهورها على الموقع دقيقة");
     } catch {
       toastError("تعذر الاتصال بالخادم");
     } finally {
@@ -66,101 +85,85 @@ export function SiteTextSection() {
     }
   };
 
-  const keys = Object.keys(labels);
-
   return (
-    <div className="max-w-4xl space-y-6" dir="rtl">
-      {/* Header Info Card (Clean White / Pure Dark) */}
-      <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90 transition-all">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
-            <FileText className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-lg font-black text-slate-900 dark:text-white">نصوص وواجهات الموقع العامة</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              تعديل مباشر لجميع النصوص والبيانات الظاهرة للزوّار والطلاب (العنوان الرئيسي، وسائل التواصل، روابط الدعم) دون لمس الكود.
-            </p>
-          </div>
-        </div>
-      </div>
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader
+        title="نصوص الموقع"
+        description="النصوص الظاهرة للزوّار والطلاب: العنوان الرئيسي، وسائل التواصل، وروابط الدعم — بدون تعديل الكود."
+      />
+
+      {loadError && <Notice tone="bad" title={loadError} />}
 
       {loading ? (
-        <div className="py-16 text-center text-slate-500 flex flex-col items-center gap-2">
-          <div className="w-6 h-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-bold">جارٍ تحميل نصوص الموقع...</span>
+        <div className="flex flex-col gap-3 max-w-4xl">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} h={96} r={16} />
+          ))}
         </div>
       ) : (
-        <div className="space-y-4">
-          {keys.map((k) => {
-            const isShort = k === "contact_email" || k === "contact_phone" || k === "contact_heading";
-            return (
-              <div
-                key={k}
-                className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90 transition-all"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
-                    {labels[k]}
-                  </label>
-                  {defaults[k] !== undefined && values[k] !== defaults[k] && (
-                    <button
-                      type="button"
-                      onClick={() => setValues({ ...values, [k]: defaults[k] })}
-                      className="text-[11px] font-bold text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 flex items-center gap-1 transition-colors cursor-pointer"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>استعادة الافتراضي</span>
-                    </button>
-                  )}
-                </div>
-
-                {isShort ? (
-                  <input
-                    value={values[k] ?? ""}
-                    onChange={(e) => setValues({ ...values, [k]: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-medium text-slate-900 outline-none focus:border-slate-400 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-slate-700 transition-all"
-                  />
-                ) : (
-                  <textarea
-                    value={values[k] ?? ""}
-                    onChange={(e) => setValues({ ...values, [k]: e.target.value })}
-                    rows={2}
-                    className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-medium text-slate-900 outline-none focus:border-slate-400 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-slate-700 transition-all"
-                  />
-                )}
-              </div>
-            );
-          })}
-
-          {/* Confirmation & Save Card */}
-          <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90 transition-all">
-            <div className="flex items-center gap-2 mb-3">
-              <Lock className="w-4 h-4 text-slate-500" />
-              <label className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                كلمة مرور المشرف العام لتأكيد الحفظ
-              </label>
+        <form onSubmit={save} className="flex flex-col gap-4 max-w-4xl">
+          <Panel padded={false}>
+            <div className="adm-list">
+              {keys.map((k) => {
+                const isShort = SHORT_KEYS.has(k);
+                const isDirty = (values[k] ?? "") !== (saved[k] ?? "");
+                const differsFromDefault = defaults[k] !== undefined && values[k] !== defaults[k];
+                const id = `st-${k}`;
+                return (
+                  <div key={k} className="px-[18px] py-4 flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label htmlFor={id} className="text-sm font-bold flex items-center gap-2">
+                        {labels[k]}
+                        {isDirty && <Badge tone="warn">معدّل</Badge>}
+                      </label>
+                      <div className="flex gap-1">
+                        {isDirty && (
+                          <Button size="sm" variant="ghost" icon={<Undo2 size={13} />} onClick={() => setValues({ ...values, [k]: saved[k] ?? "" })}>
+                            تراجع
+                          </Button>
+                        )}
+                        {differsFromDefault && (
+                          <Button size="sm" variant="ghost" icon={<RotateCcw size={13} />} onClick={() => setValues({ ...values, [k]: defaults[k] })}>
+                            الافتراضي
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {isShort ? (
+                      <Input id={id} value={values[k] ?? ""} onChange={(e) => setValues({ ...values, [k]: e.target.value })} />
+                    ) : (
+                      <Textarea id={id} rows={2} value={values[k] ?? ""} onChange={(e) => setValues({ ...values, [k]: e.target.value })} />
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-              <input
+          </Panel>
+
+          <div
+            className="adm-panel sticky flex flex-col sm:flex-row sm:items-end gap-3 p-4"
+            style={{ bottom: 12, zIndex: 5, boxShadow: dirtyKeys.length ? "var(--shadow)" : undefined }}
+          >
+            <Field
+              label="كلمة مرور المشرف العام للتأكيد"
+              htmlFor="st-pass"
+              className="flex-1"
+              hint={dirtyKeys.length ? `${fmtNum(dirtyKeys.length)} تعديل غير محفوظ` : "لا توجد تعديلات غير محفوظة"}
+            >
+              <Input
+                id="st-pass"
                 type="password"
+                autoComplete="current-password"
                 value={actionPassword}
                 onChange={(e) => setActionPassword(e.target.value)}
-                placeholder="أدخل كلمة مرور المشرف للتأكيد..."
-                className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-medium text-slate-900 outline-none focus:border-slate-400 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-slate-700 transition-all"
+                placeholder="••••••••"
               />
-              <button
-                type="button"
-                onClick={save}
-                disabled={saving}
-                className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-sm shrink-0"
-              >
-                <Save className="w-4 h-4" />
-                <span>{saving ? "جارٍ الحفظ..." : "حفظ التغييرات"}</span>
-              </button>
-            </div>
+            </Field>
+            <Button type="submit" variant="primary" loading={saving} disabled={dirtyKeys.length === 0} icon={<Save size={15} />}>
+              حفظ التغييرات
+            </Button>
           </div>
-        </div>
+        </form>
       )}
     </div>
   );

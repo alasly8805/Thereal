@@ -1,4 +1,5 @@
 import { Prisma } from "@/generated/prisma";
+import { isAutoEnrollEnabled } from "@/lib/fulfillment-settings";
 import { prisma } from "@/lib/prisma";
 import { SHAKEOUT_CREDITED_TYPE } from "@/lib/shakeout";
 import { SHA7NAWY_CREDITED_TYPE } from "@/lib/sha7nawy";
@@ -18,6 +19,8 @@ export interface FulfillmentResult {
   itemName?: string;
   message?: string;
   error?: string;
+  /** Auto-enroll is off: the money stays in the wallet and the student chooses what to buy. */
+  awaitingChoice?: boolean;
 }
 
 /**
@@ -60,6 +63,18 @@ export async function fulfillPendingItemPurchase({
 
   if (!itemType) {
     return { fulfilled: false, message: "لا ينطبق — عملية شحن رصيد عامة" };
+  }
+
+  // Owner switch: with auto-enroll off, nothing is bought on the student's behalf.
+  // The payment is already in their wallet (split-wallet portions are only
+  // charged below, so none is taken), and they choose on /choose-course.
+  if (!(await isAutoEnrollEnabled(tx || undefined))) {
+    return {
+      fulfilled: false,
+      awaitingChoice: true,
+      itemType: itemType as FulfillmentResult["itemType"],
+      message: "تم إضافة المبلغ لمحفظتك ✅ اختار الكورس أو الحجز اللي عايز تشترك فيه",
+    };
   }
 
   const baseAmount = meta.base ? parseFloat(meta.base) : 0;

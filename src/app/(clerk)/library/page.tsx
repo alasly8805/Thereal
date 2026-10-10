@@ -167,6 +167,18 @@ export default function LibraryPage() {
   const achievements = stats?.achievements ?? [];
   const weaknesses = stats?.weaknesses ?? [];
 
+  // The course to resume: one already started and not finished, else the
+  // first with lessons left. The learn page opens at its first unwatched lesson.
+  const resume = (() => {
+    const rows = courses.map((course) => {
+      const total = course.folders?.reduce((a, f) => a + f.videos.length, 0) ?? 0;
+      const watched = course.folders?.reduce((a, f) => a + f.videos.filter((v) => v.watched).length, 0) ?? 0;
+      return { course, total, watched, pct: total ? Math.round((watched / total) * 100) : 0 };
+    });
+    const open = rows.filter((r) => r.total > 0 && r.watched < r.total);
+    return open.find((r) => r.watched > 0) ?? open[0] ?? null;
+  })();
+
   // Real last-28-day activity counts → 0–4 intensity buckets for the heatmap.
   const activitySquares = (stats?.activity ?? Array.from({ length: 28 }, () => 0)).map((c) =>
     c >= 4 ? 4 : c
@@ -187,14 +199,7 @@ export default function LibraryPage() {
         >
           <h1 className="text-3xl md:text-4xl font-black mb-2 flex items-center gap-3" style={{ fontFamily: "var(--font-head)" }}>
             مرحباً،{" "}
-            <span
-              style={{
-                backgroundImage: "linear-gradient(to left, #14B8A6, #10B981)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
+            <span style={{ color: "var(--brand)" }}>
               {user?.name ? user.name.split(' ')[0] : 'طالب'}
             </span>{" "}
             👋
@@ -208,11 +213,51 @@ export default function LibraryPage() {
           </div>
         ) : (
           <>
+            {/* ── Resume: the one thing most students open the library for ── */}
+            {resume && (
+              <Link
+                href={`/courses/${resume.course.id}/learn`}
+                className="group mb-8 flex flex-col sm:flex-row sm:items-center gap-4 rounded-3xl p-5 sm:p-6 no-underline transition-[box-shadow] hover:shadow-[0_4px_24px_rgba(0,0,0,0.12)]"
+                style={{ background: "var(--surface)", border: "1px solid var(--brand)" }}
+              >
+                <span
+                  className="w-14 h-14 rounded-2xl grid place-items-center shrink-0"
+                  style={{ background: "var(--brand)", color: "var(--on-brand)" }}
+                  aria-hidden
+                >
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold" style={{ color: "var(--brand)" }}>
+                    {resume.watched > 0 ? "كمّل من حيث وقفت" : "ابدأ أول درس"}
+                  </p>
+                  <h2 className="text-xl font-black truncate" style={{ color: "var(--ink)", fontFamily: "var(--font-head)" }}>
+                    {resume.course.title}
+                  </h2>
+                  <div className="mt-2 flex items-center gap-3">
+                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
+                      <div className="h-full rounded-full" style={{ width: `${resume.pct}%`, background: "var(--brand)" }} />
+                    </div>
+                    <span className="text-xs font-bold shrink-0" style={{ color: "var(--ink-2)" }}>
+                      {resume.watched} من {resume.total} درس
+                    </span>
+                  </div>
+                </div>
+                <span
+                  className="min-h-12 inline-flex items-center justify-center gap-2 px-6 rounded-2xl font-bold text-sm shrink-0 transition-colors group-hover:bg-[var(--brand-strong)]"
+                  style={{ background: "var(--brand)", color: "var(--on-brand)" }}
+                >
+                  {resume.watched > 0 ? "كمّل" : "ابدأ"}
+                  <span aria-hidden>←</span>
+                </span>
+              </Link>
+            )}
+
             {/* ── Top Stats Row ── */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-8">
               <StatCard
                 icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>}
-                iconBg="rgba(16,185,129,0.12)" iconColor="#10B981" iconGlow="rgba(16,185,129,0.2)"
+                iconBg="var(--brand-soft)" iconColor="var(--brand)" iconGlow="transparent"
                 value={courses.length + plans.length}
                 label="مسارات نشطة"
                 badge={courses.length > 0 ? "نشط" : undefined}
@@ -236,7 +281,7 @@ export default function LibraryPage() {
               />
               <StatCard
                 icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>}
-                iconBg="rgba(16,185,129,0.12)" iconColor="#10B981" iconGlow="rgba(16,185,129,0.2)"
+                iconBg="var(--brand-soft)" iconColor="var(--brand)" iconGlow="transparent"
                 value={realHours}
                 label="ساعات تعلّم"
               />
@@ -291,7 +336,7 @@ export default function LibraryPage() {
                 )}
 
                 {/* Continue Learning */}
-                <DashCard title="واصل التعلم" titleLink={{ href: "/courses", label: "عرض الكل" }}>
+                <DashCard title="كورساتي" titleLink={{ href: "/courses", label: "تصفح كورسات تانية" }}>
                   {courses.length === 0 && plans.length === 0 ? (
                     <div className="text-center py-12">
                       <div className="text-5xl mb-4">📭</div>
@@ -299,7 +344,7 @@ export default function LibraryPage() {
                       <p className="text-sm mb-5" style={{ color: "var(--ink-2)" }}>لم تنضم إلى أي كورس أو خطة بعد.</p>
                       <div className="flex gap-3 justify-center">
                         <Link href="/courses" className="px-6 py-3 font-bold text-sm rounded-xl text-white no-underline transition-all hover:opacity-90"
-                          style={{ background: "linear-gradient(135deg, #10B981, #14B8A6)", boxShadow: "0 4px 14px -4px rgba(16,185,129,0.4)" }}>
+                          style={{ background: "var(--brand)", color: "var(--on-brand)" }}>
                           تصفح الكورسات الآن
                         </Link>
                         <Link href="/plans" className="px-6 py-3 font-bold text-sm rounded-xl no-underline transition-colors"
@@ -330,7 +375,7 @@ export default function LibraryPage() {
                             <span className="w-12" style={{ color: "var(--ink)" }}>{p.progressPercent}%</span>
                             <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
                               <div className="h-full rounded-full transition-all duration-1000"
-                                style={{ width: `${p.progressPercent}%`, background: "linear-gradient(to left, #10B981, #14B8A6)" }} />
+                                style={{ width: `${p.progressPercent}%`, background: "var(--brand)" }} />
                             </div>
                           </div>
                           <div className="text-xs text-left flex items-center justify-end gap-1" style={{ color: "var(--ink-3)" }}>
@@ -341,7 +386,7 @@ export default function LibraryPage() {
                         </div>
                       ))}
                       {courses.map((course: Course) => {
-                        const tVideos = course.folders?.reduce((a, f) => a + f.videos.length, 0) || 1;
+                        const tVideos = course.folders?.reduce((a, f) => a + f.videos.length, 0) || 0;
                         const wVideos = course.folders?.reduce((a, f) => a + f.videos.filter(v => v.watched).length, 0) || 0;
                         const progress = Math.round((wVideos / Math.max(tVideos, 1)) * 100);
                         return (
@@ -367,12 +412,12 @@ export default function LibraryPage() {
                               <span className="w-12" style={{ color: "var(--ink)" }}>{progress}%</span>
                               <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
                                 <div className="h-full rounded-full transition-all duration-1000"
-                                  style={{ width: `${progress}%`, background: "linear-gradient(to left, #10B981, #14B8A6)" }} />
+                                  style={{ width: `${progress}%`, background: "var(--brand)" }} />
                               </div>
                             </div>
                             <div className="text-xs text-left flex items-center justify-end gap-1" style={{ color: "var(--ink-3)" }}>
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                              {wVideos} من {tVideos} درس مكتمل
+                              {tVideos ? `${wVideos} من ${tVideos} درس مكتمل` : "لسه مفيش دروس منشورة"}
                             </div>
                             <div className="absolute -bottom-3 left-0 right-0 h-px group-last:hidden" style={{ background: "var(--border)" }} />
                           </div>
@@ -384,20 +429,20 @@ export default function LibraryPage() {
 
                 {/* ── Activity Heatmap ── */}
                 <DashCard title="نشاطك التعليمي">
-                  <div className="min-w-[600px]">
+                  <div>
                     <div className="grid grid-cols-7 gap-2">
                       {activitySquares.map((intensity, i) => {
                         const colors = [
                           "var(--border)",
-                          "rgba(16,185,129,0.2)",
-                          "rgba(16,185,129,0.4)",
-                          "rgba(16,185,129,0.65)",
-                          "#10B981",
+                          "color-mix(in srgb, var(--brand) 22%, transparent)",
+                          "color-mix(in srgb, var(--brand) 45%, transparent)",
+                          "color-mix(in srgb, var(--brand) 70%, transparent)",
+                          "var(--brand)",
                         ];
                         return (
                           <div
                             key={i}
-                            className="aspect-square rounded-xl transition-colors"
+                            className="aspect-square rounded-md sm:rounded-xl transition-colors"
                             style={{ background: colors[intensity] }}
                             title={`مستوى النشاط: ${intensity}`}
                           />
@@ -409,9 +454,9 @@ export default function LibraryPage() {
                         أقل
                         <div className="flex gap-1">
                           <div className="w-3 h-3 rounded-sm" style={{ background: "var(--border)" }} />
-                          <div className="w-3 h-3 rounded-sm" style={{ background: "rgba(16,185,129,0.2)" }} />
-                          <div className="w-3 h-3 rounded-sm" style={{ background: "rgba(16,185,129,0.65)" }} />
-                          <div className="w-3 h-3 rounded-sm" style={{ background: "#10B981" }} />
+                          <div className="w-3 h-3 rounded-sm" style={{ background: "color-mix(in srgb, var(--brand) 22%, transparent)" }} />
+                          <div className="w-3 h-3 rounded-sm" style={{ background: "color-mix(in srgb, var(--brand) 70%, transparent)" }} />
+                          <div className="w-3 h-3 rounded-sm" style={{ background: "var(--brand)" }} />
                         </div>
                         أكثر
                       </div>
@@ -450,7 +495,7 @@ export default function LibraryPage() {
                   </div>
                   <Link href="/ai-study"
                     className="relative z-10 w-full py-3.5 rounded-2xl font-black flex items-center justify-center gap-2 no-underline transition-all hover:opacity-90 text-sm"
-                    style={{ background: "linear-gradient(135deg, #10B981, #14B8A6)", color: "#fff", boxShadow: "0 4px 14px -4px rgba(16,185,129,0.4)" }}>
+                    style={{ background: "var(--brand)", color: "var(--on-brand)" }}>
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
                     ابدأ محادثة جديدة 💬
                   </Link>

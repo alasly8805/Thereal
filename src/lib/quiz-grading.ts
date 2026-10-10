@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ContentType, recordContentCompleted } from "@/lib/content-access-engine";
-import { addPoints, POINTS } from "@/lib/points";
+import { addPoints, quizBonusPoints } from "@/lib/points";
 import { acquireAdvisoryLock } from "@/lib/distributed-lock";
 
 /**
@@ -110,7 +110,10 @@ export async function recomputeQuizResult(resultId: string, opts: { wasPendingBe
 
   await prisma.quizResult.update({
     where: { id: resultId },
-    data: { score: summary.score },
+    data: {
+      score: summary.score,
+      essayGraded: summary.pendingCount === 0,
+    },
   });
 
   const becameFinal = opts.wasPendingBefore && summary.gradingStatus === "GRADED";
@@ -147,9 +150,7 @@ export async function recomputeQuizResult(resultId: string, opts: { wasPendingBe
 
   // Points were deferred by the submit route while essays were pending.
   if (becameFinal && isStudent) {
-    let pointsEarned = 0;
-    if (summary.passed) pointsEarned += POINTS.FIRST_TRY_BONUS;
-    if (summary.score === 100) pointsEarned += POINTS.EXAM_FULL_SCORE;
+    const pointsEarned = await quizBonusPoints(result.studentId, result.quizId, summary.score, summary.passed === true);
     if (pointsEarned > 0) await addPoints(result.studentId, pointsEarned);
   }
 

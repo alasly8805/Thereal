@@ -109,9 +109,10 @@ export async function POST(req: NextRequest) {
     await setAuthCookie(token);
     if (isNew) await setDeviceCookie(deviceId);
 
-    // Points Logic: Award daily login points
-    const { awardDailyLoginPoints } = await import("@/lib/points");
-    await awardDailyLoginPoints(user.id);
+    // Daily login streak points — same logic as /api/auth/me, so a login and the
+    // page's /me calls can't award the day twice.
+    const { checkAndUpdateStreak } = await import("@/lib/streak-middleware");
+    await checkAndUpdateStreak(user.id).catch((err) => console.error("Login streak update failed:", err));
 
     return NextResponse.json({ user: { id: user.id, name: user.name, role: user.role } });
   } catch (err) {

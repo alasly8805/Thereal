@@ -1,7 +1,27 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowRight, BarChart3, CalendarDays, CheckCircle2, ListChecks, Plus, Trash2, Trophy } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { EDUCATIONAL_STAGES } from "@/types";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  Notice,
+  PageHeader,
+  Panel,
+  Select,
+  SkeletonRows,
+  Switch,
+  Textarea,
+  fmtDate,
+  fmtNum,
+  readJson,
+} from "@/components/admin/ui/kit";
 
 interface Question {
   id: string;
@@ -24,272 +44,328 @@ interface DailyExam {
   questions?: Question[];
 }
 
+const LETTERS: Array<{ key: "A" | "B" | "C" | "D"; ar: string; field: keyof Question }> = [
+  { key: "A", ar: "أ", field: "optionA" },
+  { key: "B", ar: "ب", field: "optionB" },
+  { key: "C", ar: "ج", field: "optionC" },
+  { key: "D", ar: "د", field: "optionD" },
+];
+
+const EMPTY_Q = { question: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" };
+
+function stageLabel(v: string) {
+  return EDUCATIONAL_STAGES.find((s) => s.value === v)?.label ?? v;
+}
+
 export function DailyExamsSection() {
+  const { success, error } = useToast();
   const [exams, setExams] = useState<DailyExam[]>([]);
   const [loading, setLoading] = useState(true);
-  const { success, error } = useToast();
-
-  const [newExam, setNewExam] = useState({ title: "", educationalStage: "sec_1", date: "", timeLimitMinutes: 30 });
+  const [loadError, setLoadError] = useState("");
+  const [newExam, setNewExam] = useState({ title: "", educationalStage: "sec_1", date: "", timeLimitMinutes: "30" });
+  const [creating, setCreating] = useState(false);
   const [selectedExam, setSelectedExam] = useState<DailyExam | null>(null);
-  
-  const [newQuestion, setNewQuestion] = useState({ question: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" });
+  const [newQuestion, setNewQuestion] = useState(EMPTY_Q);
+  const [addingQ, setAddingQ] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ kind: "exam"; exam: DailyExam } | { kind: "question"; q: Question } | null>(null);
 
-  const fetchExams = async () => {
+  const fetchExams = useCallback(async () => {
+    setLoadError("");
     try {
-      const res = await fetch("/api/admin/superadmin/daily-exams");
-      const data = await res.json();
-      if (res.ok) setExams(data.exams);
+      const res = await fetch("/api/admin/superadmin/daily-exams", { credentials: "include" });
+      const data = await readJson<{ exams?: DailyExam[]; error?: string }>(res);
+      if (!res.ok) {
+        setLoadError(data?.error || "تعذر تحميل الامتحانات");
+        return;
+      }
+      setExams(data?.exams ?? []);
+    } catch {
+      setLoadError("تعذر الاتصال بالخادم");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   const fetchExamDetails = async (id: string) => {
-    const res = await fetch(`/api/admin/superadmin/daily-exams/${id}`);
-    const data = await res.json();
-    if (res.ok) setSelectedExam(data.exam);
+    setBusyId(`open:${id}`);
+    try {
+      const res = await fetch(`/api/admin/superadmin/daily-exams/${id}`, { credentials: "include" });
+      const data = await readJson<{ exam?: DailyExam; error?: string }>(res);
+      if (!res.ok || !data?.exam) throw new Error(data?.error || "تعذر فتح الامتحان");
+      setSelectedExam(data.exam);
+    } catch (e) {
+      error(e instanceof Error ? e.message : "تعذر فتح الامتحان");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   useEffect(() => {
-    fetchExams();
-  }, []);
+    void fetchExams();
+  }, [fetchExams]);
 
   const handleCreateExam = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch("/api/admin/superadmin/daily-exams", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newExam)
-    });
-    const data = await res.json();
-    if (res.ok) {
-      success("تم إنشاء الامتحان بنجاح");
-      fetchExams();
-      setNewExam({ title: "", educationalStage: "sec_1", date: "", timeLimitMinutes: 30 });
-    } else {
-      error(data.error || "خطأ في إنشاء الامتحان");
+    setCreating(true);
+    try {
+      const res = await fetch("/api/admin/superadmin/daily-exams", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...newExam, timeLimitMinutes: parseInt(newExam.timeLimitMinutes, 10) || 30 }),
+      });
+      const data = await readJson<{ error?: string; exam?: DailyExam }>(res);
+      if (!res.ok) throw new Error(data?.error || "تعذر إنشاء الامتحان");
+      success("أُنشئ الامتحان — أضف أسئلته الآن");
+      setNewExam({ title: "", educationalStage: newExam.educationalStage, date: "", timeLimitMinutes: "30" });
+      await fetchExams();
+      if (data?.exam?.id) void fetchExamDetails(data.exam.id);
+    } catch (err) {
+      error(err instanceof Error ? err.message : "تعذر إنشاء الامتحان");
+    } finally {
+      setCreating(false);
     }
   };
 
-  const handleDeleteExam = async (id: string) => {
-    if (!confirm("هل أنت متأكد من الحذف؟")) return;
-    const res = await fetch(`/api/admin/superadmin/daily-exams/${id}`, { method: "DELETE" });
-    if (res.ok) {
-      success("تم الحذف بنجاح");
-      fetchExams();
-      if (selectedExam?.id === id) setSelectedExam(null);
-    }
-  };
-
-  const handleToggleStatus = async (id: string, isActive: boolean) => {
-    const res = await fetch(`/api/admin/superadmin/daily-exams/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: !isActive })
-    });
-    if (res.ok) {
-      fetchExams();
+  const handleToggleStatus = async (exam: DailyExam) => {
+    setBusyId(`toggle:${exam.id}`);
+    try {
+      const res = await fetch(`/api/admin/superadmin/daily-exams/${exam.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !exam.isActive }),
+      });
+      if (!res.ok) throw new Error((await readJson<{ error?: string }>(res))?.error || "تعذر تغيير الحالة");
+      setExams((prev) => prev.map((x) => (x.id === exam.id ? { ...x, isActive: !x.isActive } : x)));
+      success(exam.isActive ? "عُطّل الامتحان" : "فُعّل الامتحان");
+    } catch (e) {
+      error(e instanceof Error ? e.message : "تعذر تغيير الحالة");
+    } finally {
+      setBusyId(null);
     }
   };
 
   const handleAddQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedExam) return;
-    const res = await fetch(`/api/admin/superadmin/daily-exams/${selectedExam.id}/questions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newQuestion)
-    });
-    const data = await res.json();
-    if (res.ok) {
-      success("تمت إضافة السؤال بنجاح");
-      fetchExamDetails(selectedExam.id);
-      fetchExams();
-      setNewQuestion({ question: "", optionA: "", optionB: "", optionC: "", optionD: "", correctAnswer: "A" });
-    } else {
-      error(data.error || "خطأ في إضافة السؤال");
+    setAddingQ(true);
+    try {
+      const res = await fetch(`/api/admin/superadmin/daily-exams/${selectedExam.id}/questions`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newQuestion),
+      });
+      const data = await readJson<{ error?: string }>(res);
+      if (!res.ok) throw new Error(data?.error || "تعذر إضافة السؤال");
+      success("أُضيف السؤال");
+      setNewQuestion(EMPTY_Q);
+      void fetchExamDetails(selectedExam.id);
+      void fetchExams();
+    } catch (err) {
+      error(err instanceof Error ? err.message : "تعذر إضافة السؤال");
+    } finally {
+      setAddingQ(false);
     }
   };
 
-  const handleDeleteQuestion = async (qId: string) => {
-    if (!confirm("هل أنت متأكد من حذف السؤال؟") || !selectedExam) return;
-    const res = await fetch(`/api/admin/superadmin/daily-exams/questions/${qId}`, { method: "DELETE" });
-    if (res.ok) {
-      success("تم حذف السؤال");
-      fetchExamDetails(selectedExam.id);
-      fetchExams();
+  const runConfirm = async () => {
+    const c = confirm;
+    if (!c) return;
+    setBusyId("confirm");
+    try {
+      const url = c.kind === "exam" ? `/api/admin/superadmin/daily-exams/${c.exam.id}` : `/api/admin/superadmin/daily-exams/questions/${c.q.id}`;
+      const res = await fetch(url, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error((await readJson<{ error?: string }>(res))?.error || "تعذر الحذف");
+      success(c.kind === "exam" ? "حُذف الامتحان" : "حُذف السؤال");
+      setConfirm(null);
+      if (c.kind === "exam" && selectedExam?.id === c.exam.id) setSelectedExam(null);
+      if (c.kind === "question" && selectedExam) void fetchExamDetails(selectedExam.id);
+      void fetchExams();
+    } catch (e) {
+      error(e instanceof Error ? e.message : "تعذر الحذف");
+    } finally {
+      setBusyId(null);
     }
   };
 
-  if (loading) return <div className="p-8 text-center text-slate-500">جار التحميل...</div>;
-
-  return (
-    <div className="space-y-6">
-      {selectedExam ? (
-        <div className="bg-white dark:bg-gray-800 rounded-2xl border border-slate-200 dark:border-gray-700 p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-6 border-b border-slate-100 dark:border-gray-700 pb-4">
-            <div>
-              <button onClick={() => setSelectedExam(null)} className="text-sm text-sky-500 hover:underline mb-2 block">← العودة للقائمة</button>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white">{selectedExam.title}</h2>
-              <p className="text-sm text-slate-500 mt-1">إدارة الأسئلة</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-1 bg-slate-50 dark:bg-gray-900 p-4 rounded-xl border border-slate-200 dark:border-gray-800">
-              <h3 className="font-bold mb-4 text-slate-900 dark:text-white">إضافة سؤال جديد</h3>
-              <form onSubmit={handleAddQuestion} className="space-y-3">
-                <textarea
-                  value={newQuestion.question}
-                  onChange={e => setNewQuestion({...newQuestion, question: e.target.value})}
-                  placeholder="نص السؤال..."
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  rows={3}
-                  required
-                />
-                <input
-                  type="text" value={newQuestion.optionA} onChange={e => setNewQuestion({...newQuestion, optionA: e.target.value})} placeholder="الخيار أ"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-white" required
-                />
-                <input
-                  type="text" value={newQuestion.optionB} onChange={e => setNewQuestion({...newQuestion, optionB: e.target.value})} placeholder="الخيار ب"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-white" required
-                />
-                <input
-                  type="text" value={newQuestion.optionC} onChange={e => setNewQuestion({...newQuestion, optionC: e.target.value})} placeholder="الخيار ج"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-white" required
-                />
-                <input
-                  type="text" value={newQuestion.optionD} onChange={e => setNewQuestion({...newQuestion, optionD: e.target.value})} placeholder="الخيار د"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-white" required
-                />
-                <select
-                  value={newQuestion.correctAnswer} onChange={e => setNewQuestion({...newQuestion, correctAnswer: e.target.value})}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-slate-900 dark:text-white" required
-                >
-                  <option value="A">الخيار أ هو الصحيح</option>
-                  <option value="B">الخيار ب هو الصحيح</option>
-                  <option value="C">الخيار ج هو الصحيح</option>
-                  <option value="D">الخيار د هو الصحيح</option>
-                </select>
-                <button type="submit" className="w-full py-2 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-lg transition-colors">
-                  إضافة السؤال
-                </button>
-              </form>
-            </div>
-
-            <div className="lg:col-span-2 space-y-4">
-              <h3 className="font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-gray-700 pb-2">الأسئلة الحالية ({selectedExam.questions?.length || 0})</h3>
-              {selectedExam.questions?.map((q, i) => (
-                <div key={q.id} className="p-4 bg-slate-50 dark:bg-gray-900 rounded-xl border border-slate-200 dark:border-gray-700">
-                  <div className="flex justify-between items-start gap-4">
-                    <p className="font-bold text-slate-900 dark:text-white text-sm">
-                      <span className="text-sky-500 ml-1">{i + 1}.</span> {q.question}
-                    </p>
-                    <button onClick={() => handleDeleteQuestion(q.id)} className="text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg transition-colors shrink-0">
-                      حذف
-                    </button>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <div className={`p-2 rounded-lg border ${q.correctAnswer === "A" ? "bg-green-100 border-green-300 dark:bg-green-900/30 dark:border-green-700/50" : "bg-white border-slate-200 dark:bg-gray-800 dark:border-gray-700"}`}>أ: {q.optionA}</div>
-                    <div className={`p-2 rounded-lg border ${q.correctAnswer === "B" ? "bg-green-100 border-green-300 dark:bg-green-900/30 dark:border-green-700/50" : "bg-white border-slate-200 dark:bg-gray-800 dark:border-gray-700"}`}>ب: {q.optionB}</div>
-                    <div className={`p-2 rounded-lg border ${q.correctAnswer === "C" ? "bg-green-100 border-green-300 dark:bg-green-900/30 dark:border-green-700/50" : "bg-white border-slate-200 dark:bg-gray-800 dark:border-gray-700"}`}>ج: {q.optionC}</div>
-                    <div className={`p-2 rounded-lg border ${q.correctAnswer === "D" ? "bg-green-100 border-green-300 dark:bg-green-900/30 dark:border-green-700/50" : "bg-white border-slate-200 dark:bg-gray-800 dark:border-gray-700"}`}>د: {q.optionD}</div>
-                  </div>
-                </div>
-              ))}
-              {selectedExam.questions?.length === 0 && <p className="text-slate-500 text-sm py-4 text-center">لا توجد أسئلة بعد</p>}
-            </div>
-          </div>
-        </div>
-      ) : (
+  const confirmModal = (
+    <Modal
+      open={!!confirm}
+      onClose={() => busyId !== "confirm" && setConfirm(null)}
+      size="sm"
+      title={confirm?.kind === "exam" ? "حذف الامتحان؟" : "حذف السؤال؟"}
+      description={confirm?.kind === "exam" ? `سيُحذف "${confirm.exam.title}" بأسئلته ونتائجه.` : "سيُحذف السؤال من الامتحان."}
+      footer={
         <>
-          {/* Create Exam */}
-          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-slate-200 dark:border-gray-700 p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-              <span>🏆</span> إضافة امتحان جديد للوحة الشرف
-            </h2>
-            <form onSubmit={handleCreateExam} className="flex flex-wrap gap-4 items-end">
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-medium text-slate-500 dark:text-gray-400 mb-1">عنوان الامتحان</label>
-                <input
-                  type="text" value={newExam.title} onChange={e => setNewExam({...newExam, title: e.target.value})} required
-                  placeholder="مثال: التحدي اليومي - الاثنين"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-                />
-              </div>
-              <div className="w-full sm:w-48">
-                <label className="block text-xs font-medium text-slate-500 dark:text-gray-400 mb-1">المرحلة التدريبية</label>
-                <select
-                  value={newExam.educationalStage} onChange={e => setNewExam({...newExam, educationalStage: e.target.value})} required
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-slate-900 dark:text-white"
-                >
-                  {EDUCATIONAL_STAGES.map((stage) => (
-                    <option key={stage.value} value={stage.value}>
-                      {stage.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="w-full sm:w-48">
-                <label className="block text-xs font-medium text-slate-500 dark:text-gray-400 mb-1">تاريخ التحدي</label>
-                <input
-                  type="date" value={newExam.date} onChange={e => setNewExam({...newExam, date: e.target.value})} required
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-slate-900 dark:text-white"
-                />
-              </div>
-              <div className="w-full sm:w-32">
-                <label className="block text-xs font-medium text-slate-500 dark:text-gray-400 mb-1">المدة (دقائق)</label>
-                <input
-                  type="number" value={newExam.timeLimitMinutes} onChange={e => setNewExam({...newExam, timeLimitMinutes: parseInt(e.target.value) || 30})} required min="1"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-slate-900 dark:text-white"
-                />
-              </div>
-              <button type="submit" className="px-6 py-2 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-lg transition-colors w-full sm:w-auto">
-                إنشاء
-              </button>
-            </form>
-          </div>
+          <Button onClick={() => setConfirm(null)} disabled={busyId === "confirm"}>إلغاء</Button>
+          <Button variant="danger-solid" loading={busyId === "confirm"} onClick={() => void runConfirm()}>حذف</Button>
+        </>
+      }
+    />
+  );
 
-          {/* List Exams */}
-          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-slate-200 dark:border-gray-700 overflow-hidden shadow-sm">
-            <div className="p-4 border-b border-slate-200 dark:border-gray-700 flex justify-between items-center bg-slate-50 dark:bg-gray-900/50">
-              <h2 className="font-bold text-slate-900 dark:text-white">قائمة الامتحانات اليومية</h2>
-              <span className="text-xs bg-slate-200 dark:bg-gray-700 text-slate-700 dark:text-gray-300 px-2 py-1 rounded-full">{exams.length} امتحانات</span>
-            </div>
-            <div className="divide-y divide-slate-100 dark:divide-gray-700">
-              {exams.map(exam => (
-                <div key={exam.id} className="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-gray-800 transition-colors">
-                  <div>
-                    <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+  /* ── Question editor view ── */
+  if (selectedExam) {
+    const questions = selectedExam.questions ?? [];
+    return (
+      <div dir="rtl" className="flex flex-col gap-5">
+        <Button variant="ghost" size="sm" icon={<ArrowRight size={15} />} onClick={() => setSelectedExam(null)} className="self-start">
+          كل الامتحانات
+        </Button>
+        <PageHeader
+          title={selectedExam.title}
+          description={`${fmtDate(selectedExam.date)} · ${stageLabel(selectedExam.educationalStage)} · ${fmtNum(selectedExam.timeLimitMinutes)} دقيقة`}
+          actions={
+            <a href={`/adminpanel/superadmin/daily-exams/${selectedExam.id}/results`} className="adm-btn">
+              <BarChart3 size={15} aria-hidden /> النتائج
+            </a>
+          }
+        />
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] items-start">
+          <Panel title="سؤال جديد" icon={<Plus size={16} />}>
+            <form onSubmit={handleAddQuestion} className="flex flex-col gap-3">
+              <Field label="نص السؤال" htmlFor="dq-text">
+                <Textarea id="dq-text" rows={3} required value={newQuestion.question} onChange={(e) => setNewQuestion({ ...newQuestion, question: e.target.value })} />
+              </Field>
+              {LETTERS.map((l) => (
+                <Field key={l.key} label={`الخيار ${l.ar}`} htmlFor={`dq-${l.key}`}>
+                  <Input
+                    id={`dq-${l.key}`}
+                    required
+                    value={newQuestion[l.field as keyof typeof newQuestion]}
+                    onChange={(e) => setNewQuestion({ ...newQuestion, [l.field]: e.target.value })}
+                  />
+                </Field>
+              ))}
+              <Field label="الإجابة الصحيحة" htmlFor="dq-correct">
+                <Select id="dq-correct" value={newQuestion.correctAnswer} onChange={(e) => setNewQuestion({ ...newQuestion, correctAnswer: e.target.value })}>
+                  {LETTERS.map((l) => (
+                    <option key={l.key} value={l.key}>الخيار {l.ar}</option>
+                  ))}
+                </Select>
+              </Field>
+              <Button type="submit" variant="primary" loading={addingQ}>إضافة السؤال</Button>
+            </form>
+          </Panel>
+
+          <Panel title={`الأسئلة (${fmtNum(questions.length)})`} icon={<ListChecks size={16} />} padded={questions.length === 0}>
+            {questions.length === 0 ? (
+              <EmptyState title="لا توجد أسئلة بعد" text="أضف أول سؤال من النموذج. الطلاب يرون الامتحان عند تفعيله ووجود أسئلة." />
+            ) : (
+              <ol className="adm-list">
+                {questions.map((q, i) => (
+                  <li key={q.id} className="px-[18px] py-4 flex flex-col gap-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-bold leading-relaxed">
+                        <span className="adm-muted adm-num me-1">{fmtNum(i + 1)}.</span>
+                        {q.question}
+                      </p>
+                      <IconButton label="حذف السؤال" size="sm" onClick={() => setConfirm({ kind: "question", q })} style={{ color: "var(--danger)" }}>
+                        <Trash2 size={15} />
+                      </IconButton>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[13px]">
+                      {LETTERS.map((l) => {
+                        const correct = q.correctAnswer === l.key;
+                        return (
+                          <div
+                            key={l.key}
+                            className="rounded-[10px] px-3 py-2 flex items-start gap-2"
+                            style={{
+                              background: correct ? "var(--ok-soft)" : "var(--surface-2)",
+                              border: `1px solid ${correct ? "color-mix(in srgb, var(--ok) 40%, transparent)" : "var(--border)"}`,
+                            }}
+                          >
+                            <b style={{ color: correct ? "var(--ok)" : "var(--ink-3)" }}>{l.ar}</b>
+                            <span className="flex-1">{q[l.field] as string}</span>
+                            {correct && <CheckCircle2 size={14} style={{ color: "var(--ok)" }} aria-label="الإجابة الصحيحة" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </Panel>
+        </div>
+        {confirmModal}
+      </div>
+    );
+  }
+
+  /* ── List view ── */
+  return (
+    <div dir="rtl" className="flex flex-col gap-5">
+      <PageHeader title="امتحانات لوحة الشرف" description="التحديات اليومية لكل صف. الطلاب يحلّونها في وقت محدد، وتظهر نتائجهم في لوحة الشرف." />
+
+      <Panel title="امتحان جديد" icon={<Trophy size={16} />}>
+        <form onSubmit={handleCreateExam} className="grid gap-4 items-end" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 170px), 1fr))" }}>
+          <Field label="العنوان" htmlFor="de-title" className="col-span-full sm:col-span-2">
+            <Input id="de-title" required value={newExam.title} onChange={(e) => setNewExam({ ...newExam, title: e.target.value })} placeholder="التحدي اليومي — الاثنين" />
+          </Field>
+          <Field label="الصف" htmlFor="de-stage">
+            <Select id="de-stage" value={newExam.educationalStage} onChange={(e) => setNewExam({ ...newExam, educationalStage: e.target.value })}>
+              {EDUCATIONAL_STAGES.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="التاريخ" htmlFor="de-date">
+            <Input id="de-date" type="date" required value={newExam.date} onChange={(e) => setNewExam({ ...newExam, date: e.target.value })} />
+          </Field>
+          <Field label="المدة (دقائق)" htmlFor="de-mins">
+            <Input id="de-mins" type="number" min="1" required mono value={newExam.timeLimitMinutes} onChange={(e) => setNewExam({ ...newExam, timeLimitMinutes: e.target.value })} />
+          </Field>
+          <Button type="submit" variant="primary" loading={creating}>إنشاء</Button>
+        </form>
+      </Panel>
+
+      <Panel padded={false} title={`الامتحانات (${fmtNum(exams.length)})`}>
+        {loadError ? (
+          <div className="p-4"><Notice tone="bad" title={loadError} action={<Button size="sm" onClick={() => void fetchExams()}>إعادة المحاولة</Button>} /></div>
+        ) : loading ? (
+          <SkeletonRows rows={4} h={56} />
+        ) : exams.length === 0 ? (
+          <EmptyState icon={<Trophy size={22} />} title="لا توجد امتحانات" text="أنشئ أول تحدٍّ يومي من النموذج بالأعلى." />
+        ) : (
+          <ul className="adm-list">
+            {exams.map((exam) => {
+              const noQuestions = (exam._count?.questions ?? 0) === 0;
+              return (
+                <li key={exam.id} className="adm-row">
+                  <div className="min-w-0 flex-1 basis-64">
+                    <p className="text-sm font-bold flex flex-wrap items-center gap-2">
                       {exam.title}
-                      {!exam.isActive && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">معطل</span>}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-gray-400 mt-1 flex gap-3">
-                      <span>📅 {new Date(exam.date).toLocaleDateString("ar-EG")}</span>
-                      <span>⏱️ {exam.timeLimitMinutes} دقيقة</span>
-                      <span>📝 {exam._count?.questions || 0} أسئلة</span>
-                      <span>👨‍🎓 {exam._count?.results || 0} مجيب</span>
+                      <Badge>{stageLabel(exam.educationalStage)}</Badge>
+                      {!exam.isActive && <Badge tone="bad">معطل</Badge>}
+                      {exam.isActive && noQuestions && <Badge tone="warn">بلا أسئلة</Badge>}
+                    </p>
+                    <p className="text-xs adm-muted mt-1 flex flex-wrap gap-x-3">
+                      <span className="inline-flex items-center gap-1"><CalendarDays size={12} aria-hidden /> {fmtDate(exam.date)}</span>
+                      <span>{fmtNum(exam.timeLimitMinutes)} دقيقة</span>
+                      <span>{fmtNum(exam._count?.questions ?? 0)} سؤال</span>
+                      <span>{fmtNum(exam._count?.results ?? 0)} مشارك</span>
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => fetchExamDetails(exam.id)} className="px-3 py-1.5 bg-slate-100 dark:bg-gray-700 text-slate-700 dark:text-white text-xs font-bold rounded-lg hover:bg-slate-200 dark:hover:bg-gray-600 transition-colors">
-                      إدارة الأسئلة
-                    </button>
-                    <button onClick={() => handleToggleStatus(exam.id, exam.isActive)} className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${exam.isActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}>
-                      {exam.isActive ? 'تعطيل' : 'تفعيل'}
-                    </button>
-                    <button onClick={() => handleDeleteExam(exam.id)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
-                      🗑️
-                    </button>
+                  <div className="flex items-center gap-1.5">
+                    <Button size="sm" variant="primary" loading={busyId === `open:${exam.id}`} onClick={() => void fetchExamDetails(exam.id)}>الأسئلة</Button>
+                    <a href={`/adminpanel/superadmin/daily-exams/${exam.id}/results`} className="adm-btn is-sm is-ghost">النتائج</a>
+                    <Switch checked={exam.isActive} onChange={() => void handleToggleStatus(exam)} disabled={busyId === `toggle:${exam.id}`} label={`تفعيل ${exam.title}`} />
+                    <IconButton label="حذف الامتحان" size="sm" onClick={() => setConfirm({ kind: "exam", exam })} style={{ color: "var(--danger)" }}>
+                      <Trash2 size={15} />
+                    </IconButton>
                   </div>
-                </div>
-              ))}
-              {exams.length === 0 && <div className="p-8 text-center text-slate-500">لا توجد امتحانات، أضف امتحاناً جديداً للبدء</div>}
-            </div>
-          </div>
-        </>
-      )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Panel>
+      {confirmModal}
     </div>
   );
 }

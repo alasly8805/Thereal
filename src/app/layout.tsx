@@ -2,11 +2,14 @@ import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { ToastProvider } from "@/components/ui/Toast";
+import { Toaster } from "@/components/ui/sonner";
 import { ErrorReporter } from "@/components/ErrorReporter";
 import { AIAssistant } from "@/components/ai/AIAssistant";
 import { MobileTabBar } from "@/components/ui/MobileTabBar";
 import { CenterModeBanner } from "@/components/center/CenterModeBanner";
 import SupportViewBanner from "@/components/SupportViewBanner";
+import StudentPollGate from "@/components/student/StudentPollGate";
+import NewCoursePopupGate from "@/components/student/NewCoursePopupGate";
 import { MaintenanceScreen } from "@/components/MaintenanceScreen";
 import { OverloadWaitingScreen } from "@/components/OverloadWaitingScreen";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -289,11 +292,14 @@ export default async function RootLayout({
             <>
               <ErrorReporter />
               <ToastProvider>
+                <Toaster />
                 <CenterModeBanner />
                 <SupportViewBanner />
                 {children}
                 {!hideAppChrome && <AIAssistant />}
                 {!hideAppChrome && <MobileTabBar />}
+                {!hideAppChrome && <StudentPollGate />}
+                {!hideAppChrome && <NewCoursePopupGate />}
                 {!hideAppChrome && <SponsorMetaPixel />}
               </ToastProvider>
             </>

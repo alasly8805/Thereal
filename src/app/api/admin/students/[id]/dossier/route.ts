@@ -46,13 +46,24 @@ export async function GET(
 
   const course = await prisma.course.findFirst({
     where: { id: courseId, teacherId: ctx.teacherId },
-    select: { id: true, title: true, teacherId: true },
+    select: {
+      id: true,
+      title: true,
+      teacherId: true,
+      subject: true,
+      description: true,
+      deliveryMode: true,
+      isPaid: true,
+      price: true,
+    },
   });
   if (!course) {
     return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
   }
 
-  const enrolled = await prisma.user.findFirst({
+  // A code or a direct enrollment is enough. A paid booking that opens this
+  // course is enough too — the course list already shows those students.
+  let enrolled = await prisma.user.findFirst({
     where: {
       id: studentId,
       role: "student",
@@ -76,6 +87,30 @@ export async function GET(
       loginStreak: true,
     },
   });
+
+  if (!enrolled && (await TeacherVisibilityService.bookingOpensCourse(course, studentId))) {
+    enrolled = await prisma.user.findFirst({
+      where: {
+        id: studentId,
+        role: "student",
+        isVirtual: false,
+        isDeleted: false,
+        accountMode: { not: "TESTER" },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        parentPhone: true,
+        educationalStage: true,
+        isActive: true,
+        lastLoginAt: true,
+        createdAt: true,
+        loginStreak: true,
+      },
+    });
+  }
 
   if (!enrolled) {
     const visible = await TeacherVisibilityService.findStudentById(ctx.teacherId, studentId);

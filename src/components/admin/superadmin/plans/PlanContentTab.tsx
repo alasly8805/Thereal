@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/components/ui/Toast";
+import { admConfirm } from "@/components/admin/ui/kit";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -119,7 +120,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
 
   // ── Remove source from lesson ──
   const handleRemoveSource = async (lessonId: string, sourceId: string) => {
-    if (!confirm("هل تريد إزالة هذا المصدر؟")) return;
+    if (!(await admConfirm({ title: "إزالة هذا المصدر من الدرس؟", confirmLabel: "إزالة", danger: true }))) return;
     try {
       const res = await fetch(`/api/admin/superadmin/plans/${planId}/lessons/${lessonId}/sources/${sourceId}`, {
         method: "DELETE",
@@ -175,7 +176,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
 
   // ── Delete quiz ──
   const handleDeleteQuiz = async (quizId: string, lessonId: string) => {
-    if (!confirm("هل أنت متأكد من حذف هذا الاختبار؟ سيتم حذف جميع أسئلته.")) return;
+    if (!(await admConfirm({ title: "حذف هذا الاختبار؟", text: "ستُحذف كل أسئلته.", confirmLabel: "حذف", danger: true }))) return;
     setDeletingQuizId(quizId);
     try {
       const res = await fetch(`/api/admin/superadmin/plans/${planId}/lessons/${lessonId}/quiz`, {
@@ -200,7 +201,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
 
   // ─── Render ───────────────────────────────────────────────────────────────────
 
-  const inp = "w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-[var(--ink)] text-sm focus:outline-none focus:border-indigo-400/60 transition-all";
+  const inp = "w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-[var(--ink)] text-sm focus:outline-none focus:border-[var(--brand)] transition-all";
   const lbl = "block text-xs font-bold text-[var(--ink-2)] mb-1";
 
   return (
@@ -232,8 +233,8 @@ export function PlanContentTab({ planId }: { planId: string }) {
                 onClick={() => { setSelectedCourseId(c.id); setCourseDetail(null); }}
                 className={`text-right px-3 py-2 rounded-xl text-sm border transition-all ${
                   selectedCourseId === c.id
-                    ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 font-bold"
-                    : "border-[var(--border)] text-[var(--ink)] hover:border-indigo-300"
+                    ? "border-[color-mix(in_srgb,var(--info)_32%,transparent)] bg-[var(--info-soft)] text-[var(--info)] font-bold"
+                    : "border-[var(--border)] text-[var(--ink)] hover:border-[color-mix(in_srgb,var(--info)_32%,transparent)]"
                 }`}
               >
                 <div className="font-semibold truncate">{c.title}</div>
@@ -249,40 +250,40 @@ export function PlanContentTab({ planId }: { planId: string }) {
                 <p className="text-xs text-center py-6 text-[var(--ink-3)]">جارٍ تحميل الدورة...</p>
               ) : !courseDetail ? null : (
                 <div>
-                  <div className="px-4 py-3 border-b bg-slate-50 dark:bg-slate-900/50 sticky top-0" style={{ borderColor: "var(--border)" }}>
+                  <div className="px-4 py-3 border-b bg-[var(--surface-2)] sticky top-0" style={{ borderColor: "var(--border)" }}>
                     <p className="font-black text-xs text-[var(--ink)]">{courseDetail.title}</p>
-                    <p className="text-[10px] text-[var(--ink-3)]">{courseDetail.teacher.name} · {courseDetail.folders.length} محاضرة</p>
+                    <p className="text-xs text-[var(--ink-3)]">{courseDetail.teacher.name} · {courseDetail.folders.length} محاضرة</p>
                   </div>
 
                   {courseDetail.folders.map(folder => (
                     <div key={folder.id}>
-                      <div className="px-4 py-2 bg-indigo-50/50 dark:bg-indigo-950/10 border-b" style={{ borderColor: "var(--border)" }}>
-                        <p className="text-xs font-black text-indigo-700 dark:text-indigo-400">📁 {folder.name}</p>
-                        <p className="text-[10px] text-[var(--ink-3)]">{folder.videos.length} فيديو</p>
+                      <div className="px-4 py-2 bg-[var(--info-soft)] border-b" style={{ borderColor: "var(--border)" }}>
+                        <p className="text-xs font-black text-[var(--info)]">📁 {folder.name}</p>
+                        <p className="text-xs text-[var(--ink-3)]">{folder.videos.length} فيديو</p>
                       </div>
                       <div className="divide-y" style={{ borderColor: "var(--border)" }}>
                         {folder.videos.map(video => {
                           const isAlreadyAttached = selectedLesson?.sources?.some(s => s.video?.title === video.title);
                           return (
-                            <div key={video.id} className="px-4 py-2.5 flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-900/30">
+                            <div key={video.id} className="px-4 py-2.5 flex items-center gap-2 hover:bg-[var(--adm-hover)]">
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-semibold text-[var(--ink)] truncate">{video.title}</p>
                                 {video.lessonIndexInMonth && (
-                                  <p className="text-[10px] text-[var(--ink-3)]">درس {video.lessonIndexInMonth}</p>
+                                  <p className="text-xs text-[var(--ink-3)]">درس {video.lessonIndexInMonth}</p>
                                 )}
                               </div>
                               <button
                                 onClick={() => handleAttachVideo(video)}
                                 disabled={attachingVideoId === video.id || !selectedLessonId}
                                 title={!selectedLessonId ? "اختر درساً أولاً" : "إضافة كمصدر للدرس المختار"}
-                                className={`text-[10px] px-2 py-1 rounded-lg font-bold border-none cursor-pointer transition-colors shrink-0 ${
+                                className={`text-xs px-2 py-1 rounded-lg font-bold border-none cursor-pointer transition-colors shrink-0 ${
                                   !selectedLessonId
-                                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                    ? "bg-[var(--surface-2)] text-[var(--ink-2)] cursor-not-allowed"
                                     : isAlreadyAttached
-                                    ? "bg-green-100 text-green-700 cursor-default"
+                                    ? "bg-[var(--ok-soft)] text-[var(--ok)] cursor-default"
                                     : attachingVideoId === video.id
-                                    ? "bg-indigo-100 text-indigo-500"
-                                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                    ? "bg-[var(--info-soft)] text-[var(--info)]"
+                                    : "bg-[var(--brand)] hover:bg-[var(--brand-strong)] text-[var(--on-brand)]"
                                 }`}
                               >
                                 {isAlreadyAttached ? "✓ مضاف" : attachingVideoId === video.id ? "..." : "إضافة →"}
@@ -319,26 +320,26 @@ export function PlanContentTab({ planId }: { planId: string }) {
                     onClick={() => { setSelectedLessonId(lesson.id); setActivePanel("sources"); }}
                     className={`text-right px-4 py-2.5 rounded-xl border transition-all flex items-center gap-3 ${
                       selectedLessonId === lesson.id
-                        ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30"
-                        : "border-[var(--border)] hover:border-emerald-300"
+                        ? "border-[color-mix(in_srgb,var(--ok)_32%,transparent)] bg-[var(--ok-soft)]"
+                        : "border-[var(--border)] hover:border-[color-mix(in_srgb,var(--ok)_32%,transparent)]"
                     }`}
                   >
                     <span className={`w-7 h-7 rounded-full font-black text-xs flex items-center justify-center shrink-0 ${
-                      selectedLessonId === lesson.id ? "bg-emerald-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-[var(--ink-2)]"
+                      selectedLessonId === lesson.id ? "bg-emerald-500 text-white" : "bg-[var(--surface-2)] text-[var(--ink-2)]"
                     }`}>{idx + 1}</span>
                     <div className="flex-1 min-w-0">
-                      <p className={`font-bold text-sm truncate ${selectedLessonId === lesson.id ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--ink)]"}`}>{lesson.title}</p>
+                      <p className={`font-bold text-sm truncate ${selectedLessonId === lesson.id ? "text-[var(--ok)]" : "text-[var(--ink)]"}`}>{lesson.title}</p>
                       <div className="flex gap-1 mt-0.5">
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${lesson.sources.length > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"}`}>
+                        <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${lesson.sources.length > 0 ? "bg-[var(--ok-soft)] text-[var(--ok)]" : "bg-[var(--danger-soft)] text-[var(--danger)]"}`}>
                           {lesson.sources.length} مصدر
                         </span>
-                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${lesson.quizzes.length > 0 ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-500"}`}>
+                        <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${lesson.quizzes.length > 0 ? "bg-[var(--warn-soft)] text-[var(--warn)]" : "bg-[var(--surface-2)] text-[var(--ink-3)]"}`}>
                           {lesson.quizzes.length} اختبار
                         </span>
                       </div>
                     </div>
                     {lesson.sources.some(s => s.isDefault) && (
-                      <span className="text-[10px] text-green-600 font-bold shrink-0">✓ مكتمل</span>
+                      <span className="text-xs text-[var(--ok)] font-bold shrink-0">✓ مكتمل</span>
                     )}
                   </button>
                 ))}
@@ -350,7 +351,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
           {selectedLesson && (
             <div className="flex-1 border rounded-2xl overflow-hidden" style={{ borderColor: "var(--border)" }}>
               {/* Header */}
-              <div className="p-4 border-b bg-slate-50 dark:bg-slate-900/50 flex items-center gap-3" style={{ borderColor: "var(--border)" }}>
+              <div className="p-4 border-b bg-[var(--surface-2)] flex items-center gap-3" style={{ borderColor: "var(--border)" }}>
                 <div className="flex-1">
                   <h4 className="font-black text-[var(--ink)] text-sm">{selectedLesson.title}</h4>
                 </div>
@@ -358,7 +359,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
                   <button
                     onClick={() => setActivePanel("sources")}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold border-none cursor-pointer transition-colors ${
-                      activePanel === "sources" ? "bg-indigo-600 text-white" : "bg-[var(--surface)] text-[var(--ink-2)] hover:bg-[var(--surface-2)]"
+                      activePanel === "sources" ? "bg-[var(--brand)] text-[var(--on-brand)]" : "bg-[var(--surface)] text-[var(--ink-2)] hover:bg-[var(--surface-2)]"
                     }`}
                   >
                     🎬 مصادر الفيديو
@@ -392,13 +393,13 @@ export function PlanContentTab({ planId }: { planId: string }) {
                           <div
                             key={source.id}
                             className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                              source.isDefault ? "border-green-500 bg-green-50 dark:bg-green-950/20" : "border-[var(--border)]"
+                              source.isDefault ? "border-[color-mix(in_srgb,var(--ok)_32%,transparent)] bg-[var(--ok-soft)]" : "border-[var(--border)]"
                             }`}
                           >
                             <div className="text-lg">{source.isDefault ? "✅" : "🎬"}</div>
                             <div className="flex-1 min-w-0">
                               <p className="font-bold text-sm text-[var(--ink)] truncate">{source.video?.title || "فيديو"}</p>
-                              <p className="text-[10px] text-[var(--ink-3)]">
+                              <p className="text-xs text-[var(--ink-3)]">
                                 {source.isDefault ? "الافتراضي — سيُعرض هذا للطالب" : source.isManual ? "يدوي" : "تلقائي"}
                               </p>
                             </div>
@@ -406,14 +407,14 @@ export function PlanContentTab({ planId }: { planId: string }) {
                               {!source.isDefault && (
                                 <button
                                   onClick={() => handleSetDefault(selectedLesson.id, source.id)}
-                                  className="text-[10px] px-2 py-1 rounded-lg bg-green-100 hover:bg-green-200 text-green-700 font-bold border-none cursor-pointer"
+                                  className="text-xs px-2 py-1 rounded-lg bg-[var(--ok-soft)] hover:bg-[color-mix(in_srgb,var(--ok)_18%,transparent)] text-[var(--ok)] font-bold border-none cursor-pointer"
                                 >
                                   تعيين افتراضي
                                 </button>
                               )}
                               <button
                                 onClick={() => handleRemoveSource(selectedLesson.id, source.id)}
-                                className="text-[10px] px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold border-none cursor-pointer"
+                                className="text-xs px-2 py-1 rounded-lg bg-[var(--danger-soft)] hover:bg-[color-mix(in_srgb,var(--danger)_18%,transparent)] text-[var(--danger)] font-bold border-none cursor-pointer"
                               >
                                 إزالة
                               </button>
@@ -433,18 +434,18 @@ export function PlanContentTab({ planId }: { planId: string }) {
                       <div className="space-y-2">
                         <h5 className="text-xs font-black text-[var(--ink-2)] uppercase tracking-wide">الاختبارات المرتبطة</h5>
                         {selectedLesson.quizzes.map(quiz => (
-                          <div key={quiz.id} className="flex items-center gap-3 p-3 rounded-xl border border-orange-200 bg-orange-50 dark:bg-orange-950/10">
+                          <div key={quiz.id} className="flex items-center gap-3 p-3 rounded-xl border border-[color-mix(in_srgb,var(--warn)_32%,transparent)] bg-[var(--warn-soft)]">
                             <div className="text-lg">📝</div>
                             <div className="flex-1 min-w-0">
                               <p className="font-bold text-sm text-[var(--ink)]">{quiz.title}</p>
-                              <p className="text-[10px] text-[var(--ink-3)]">
+                              <p className="text-xs text-[var(--ink-3)]">
                                 {quiz.questions?.length ?? 0} سؤال · {quiz.timeLimitMinutes} دقيقة
                               </p>
                             </div>
                             <button
                               onClick={() => handleDeleteQuiz(quiz.id, selectedLesson.id)}
                               disabled={deletingQuizId === quiz.id}
-                              className="text-[10px] px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold border-none cursor-pointer disabled:opacity-50"
+                              className="text-xs px-2 py-1 rounded-lg bg-[var(--danger-soft)] hover:bg-[color-mix(in_srgb,var(--danger)_18%,transparent)] text-[var(--danger)] font-bold border-none cursor-pointer disabled:opacity-50"
                             >
                               {deletingQuizId === quiz.id ? "..." : "حذف"}
                             </button>
@@ -493,7 +494,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
                                 <button
                                   type="button"
                                   onClick={() => setQuizForm(f => ({ ...f, questions: f.questions.filter((_, i) => i !== qi) }))}
-                                  className="text-[11px] text-red-500 hover:underline bg-transparent border-none cursor-pointer"
+                                  className="text-xs text-[var(--danger)] hover:underline bg-transparent border-none cursor-pointer"
                                 >
                                   حذف
                                 </button>
@@ -525,7 +526,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
                                     className={`w-6 h-6 rounded-full text-xs font-black shrink-0 transition-colors border-none cursor-pointer ${
                                       q.correctAnswer === opt
                                         ? "bg-emerald-500 text-white"
-                                        : "bg-[var(--border)] text-[var(--ink-3)] hover:bg-emerald-200"
+                                        : "bg-[var(--border)] text-[var(--ink-3)] hover:bg-[color-mix(in_srgb,var(--ok)_18%,transparent)]"
                                     }`}
                                   >
                                     {opt}
@@ -549,7 +550,7 @@ export function PlanContentTab({ planId }: { planId: string }) {
                         <button
                           type="button"
                           onClick={() => setQuizForm(f => ({ ...f, questions: [...f.questions, emptyQuestion()] }))}
-                          className="text-sm text-indigo-500 hover:text-indigo-700 bg-transparent border-none cursor-pointer font-bold"
+                          className="text-sm text-[var(--info)] hover:text-[var(--info)] bg-transparent border-none cursor-pointer font-bold"
                         >
                           + إضافة سؤال
                         </button>

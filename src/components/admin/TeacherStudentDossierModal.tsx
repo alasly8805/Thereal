@@ -160,9 +160,13 @@ function hwStatus(row: HomeworkRow) {
   if (!row.submitted) {
     return { text: "لم يسلّم", cls: "bg-slate-500/12 text-slate-500" };
   }
+  if (row.contentChanged && row.reviewVerdict === "failed") {
+    return { text: "اترفض — رُفع من جديد", cls: "bg-rose-500/15 text-rose-500" };
+  }
   if (row.contentChanged) {
     return { text: "المحتوى اتغيّر بعد الموافقة", cls: "bg-rose-500/15 text-rose-500" };
   }
+  if (row.allowRetake && row.status === "failed") return { text: "مرفوض — مسموح إعادة الرفع", cls: "bg-rose-500/15 text-rose-500" };
   if (row.allowRetake) return { text: "مسموح إعادة المحاولة", cls: "bg-sky-500/15 text-sky-600" };
   if (row.status === "passed") return { text: "تم الحل — مقبول", cls: "bg-emerald-500/15 text-emerald-600" };
   if (row.status === "failed") return { text: "تم التسليم — مرفوض", cls: "bg-rose-500/15 text-rose-500" };

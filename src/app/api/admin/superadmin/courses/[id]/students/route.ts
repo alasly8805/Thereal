@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { invalidateStudentContextCache } from "@/lib/ai-context";
+import { bookingGrantsCourseAccess, getEffectiveCourseTrack } from "@/lib/course-track";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,8 @@ export async function GET(
         subject: true,
         isPaid: true,
         price: true,
+        deliveryMode: true,
+        description: true,
         teacherId: true,
         teacher: { select: { id: true, name: true, email: true } },
       },
@@ -70,8 +73,9 @@ export async function GET(
       orderBy: { createdAt: "desc" },
     });
 
-    // 2. Fetch redeemed access codes for this course
-    // Booking / teacher subscriptions are NEVER mixed into this list.
+    // 2. Fetch redeemed access codes for this course.
+    // A booking is added later only when it actually opens this course, and only
+    // for students who have no enrollment row — so nobody is listed twice.
     const redeemedCodes = await prisma.accessCode.findMany({
       where: {
         courseId,
@@ -120,6 +124,46 @@ export async function GET(
     // Exclude teacher and any superadmin IDs just in case
     allStudentIds.delete(course.teacherId);
     allStudentIds.delete("superadmin");
+
+    const courseTrack = await getEffectiveCourseTrack(courseId, course);
+    const bookingSubs = bookingGrantsCourseAccess(course, "languages", courseTrack) || bookingGrantsCourseAccess(course, "arabic", courseTrack)
+      ? await prisma.teacherSubscription.findMany({
+          where: {
+            teacherId: course.teacherId,
+            status: "active",
+            amount: { gt: 0 },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            student: {
+              role: "student",
+              accountMode: { not: "TESTER" },
+              isVirtual: false,
+              isDeleted: false,
+              id: { not: course.teacherId },
+            },
+          },
+          include: {
+            student: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                parentPhone: true,
+                educationalStage: true,
+                createdAt: true,
+                lastLoginAt: true,
+                devices: { select: { id: true, lastSeenAt: true }, take: 1, orderBy: { lastSeenAt: "desc" } },
+              },
+            },
+          },
+        })
+      : [];
+    const entitledBookings = bookingSubs.filter(
+      (sub) =>
+        !excludedStudentIds.has(sub.studentId) &&
+        bookingGrantsCourseAccess(course, sub.languageTrack, courseTrack, sub.planType)
+    );
+    for (const sub of entitledBookings) allStudentIds.add(sub.student.id);
 
     const studentIdsList = Array.from(allStudentIds);
 
@@ -222,6 +266,17 @@ export async function GET(
       if (date < agg.firstEnrolledAt) {
         agg.firstEnrolledAt = date;
       }
+    }
+
+    for (const sub of entitledBookings) {
+      if (studentMap.has(sub.student.id)) continue;
+      const agg = getOrCreate(sub.student, sub.createdAt);
+      agg.sources.push({
+        type: "TEACHER_SUBSCRIPTION",
+        label: `مشمول بحجز ${sub.planLabel || "الاشتراك"}`,
+        amount: 0,
+        date: sub.createdAt,
+      });
     }
 
     const studentsList = Array.from(studentMap.values()).sort((a, b) => {

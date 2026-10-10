@@ -32,14 +32,49 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, stage: "DEAD" });
     }
 
-    // 2. Validate Token
+    // 2. Validate Token (either secret parentToken or direct student code/ID)
     const userAgent = req.headers.get("user-agent") || undefined;
     const parentToken = await validateParentToken(token, ip, userAgent);
-    if (!parentToken || !parentToken.student) {
-      return NextResponse.json({ success: true, stage: "DEAD" });
+
+    let student = parentToken?.student;
+    let isPendingVerification = false;
+
+    if (parentToken?.student) {
+      student = parentToken.student;
+      isPendingVerification = parentToken.status === "PENDING";
+    } else {
+      // Allow direct student lookup by code, referralCode, or id
+      const directStudent = await prisma.user.findFirst({
+        where: {
+          role: "student",
+          isDeleted: false,
+          OR: [
+            { id: token },
+            { referralCode: token },
+            { referralCode: { equals: token, mode: "insensitive" } },
+          ],
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          parentPhone: true,
+          educationalStage: true,
+          role: true,
+          points: true,
+          createdAt: true,
+        },
+      });
+
+      if (!directStudent) {
+        return NextResponse.json({ success: true, stage: "DEAD" });
+      }
+
+      student = directStudent;
+      isPendingVerification = false;
     }
 
-    const student = parentToken.student;
     const studentId = student.id;
 
     // Check Feature Flag for Parent Verification Requirement
@@ -47,7 +82,7 @@ export async function GET(req: NextRequest) {
     const requireVerification = waConfig.requireParentVerification;
 
     // GATE state check: If feature flag active and status is PENDING
-    if (requireVerification && parentToken.status === "PENDING") {
+    if (requireVerification && isPendingVerification) {
       return NextResponse.json({
         success: true,
         stage: "GATE",

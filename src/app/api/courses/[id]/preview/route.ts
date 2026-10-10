@@ -31,6 +31,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     let hasAccess = false;
     let inLibrary = false;
     let isOwnerTeacher = false;
+    let isRenewalRequired = false;
+    let renewalMonth: number | null = null;
+
     try {
       const session = await getSession();
       if (session) {
@@ -38,6 +41,34 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const isAdminPreview = session.role === "admin" || session.role === "superadmin";
         inLibrary = await checkCourseEnrollment(session.id, course.id, session.role);
         hasAccess = inLibrary || isOwnerTeacher || isAdminPreview || (session.role === "teacher" && (!course.isPaid || course.price === 0));
+
+        if (!hasAccess && session.role === "student" && course.teacherId) {
+          const studentSubs = await prisma.teacherSubscription.findMany({
+            where: {
+              studentId: session.id,
+              teacherId: course.teacherId,
+            },
+            select: { planType: true, termNumbers: true },
+          });
+          if (studentSubs.length > 0) {
+            const { parseCoursePlacements } = await import("@/lib/teacher-terms");
+            const placements = parseCoursePlacements(course);
+            const monthPlacements = placements.filter((p) => p.kind === "month");
+            if (monthPlacements.length > 0) {
+              const ownedMonths = Array.from(
+                new Set(studentSubs.flatMap((s) => (s.termNumbers || []).filter((n) => typeof n === "number" && n > 0)))
+              );
+              if (ownedMonths.length === 0 && studentSubs.some((s) => s.planType === "monthly")) {
+                ownedMonths.push(1);
+              }
+              const targetPlacement = monthPlacements.find((p) => !ownedMonths.includes(p.term)) || monthPlacements[0];
+              if (targetPlacement) {
+                isRenewalRequired = true;
+                renewalMonth = targetPlacement.term || 2;
+              }
+            }
+          }
+        }
       }
     } catch {
       // If auth fails, just show as no-access
@@ -96,6 +127,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       hasAccess,
       inLibrary,
       isOwnerTeacher,
+      isRenewalRequired,
+      renewalMonth,
     };
 
     const response = NextResponse.json({ course: preview });

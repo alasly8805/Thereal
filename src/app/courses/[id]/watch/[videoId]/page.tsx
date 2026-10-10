@@ -692,6 +692,7 @@ export default function VideoWatchPage() {
                 disabled={directDriveMode || session?.video.videoProvider === "youtube"}
               >
                 <SecurePlayer
+                  videoId={videoId}
                   embedUrl={iframeSrc}
                   title={session.video.title}
                   watermark={wmLabel}

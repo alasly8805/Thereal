@@ -42,7 +42,9 @@
     ".build-essay-ai/types/**/*.ts",
     ".build-essay-ai/dev/types/**/*.ts",
     ".build-drm-s3/types/**/*.ts",
-    ".build-drm-s3/dev/types/**/*.ts"
+    ".build-drm-s3/dev/types/**/*.ts",
+    ".next.staging/types/**/*.ts",
+    ".next.staging/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

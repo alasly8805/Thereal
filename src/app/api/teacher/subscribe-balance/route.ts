@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { teacherId, planType, languageTrack, studentGrade, discountCode } = body;
+    const { teacherId, planType, languageTrack, studentGrade, discountCode, monthNumber } = body;
 
     if (!teacherId || typeof teacherId !== "string") {
       return NextResponse.json({ error: "معرف الأستاذ مطلوب" }, { status: 400 });
@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
       languageTrack,
       studentGrade,
       discountCode,
+      monthNumber: typeof monthNumber === "number" ? monthNumber : undefined,
       paymentMethod: "wallet_balance",
     });
 

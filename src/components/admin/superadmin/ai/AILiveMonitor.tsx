@@ -217,7 +217,7 @@ export default function AILiveMonitor() {
                   {req.provider}
                 </span>
                 <span
-                  className="inline-flex items-center justify-center text-[10px] font-black px-2 py-0.5 rounded-full"
+                  className="inline-flex items-center justify-center text-xs font-black px-2 py-0.5 rounded-full"
                   style={{ background: st.bg, color: st.color }}
                 >
                   {st.label}
@@ -266,7 +266,7 @@ export default function AILiveMonitor() {
                 { label: "التكلفة", value: `$${selected.costUsd.toFixed(5)}` },
               ].map((item) => (
                 <div key={item.label}>
-                  <div className="text-[11px] font-bold mb-0.5" style={{ color: "var(--ink-3)" }}>
+                  <div className="text-xs font-bold mb-0.5" style={{ color: "var(--ink-3)" }}>
                     {item.label}
                   </div>
                   <div className="text-sm" style={{ color: "var(--ink)" }}>

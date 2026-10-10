@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { StudentReportsLinks } from "@/components/AssistantSidebar";
+import { CopyStudentReport } from "@/components/CopyStudentReport";
 
 function formatWhen(iso: string | null): string {
   if (!iso) return "—";
@@ -53,6 +54,10 @@ function Shell({
 type StudentRow = {
   id: string;
   name: string;
+  code?: string | null;
+  referralCode?: string | null;
+  phone?: string | null;
+  parentPhone?: string | null;
   email: string | null;
   educationalStage: string | null;
   isActive: boolean;
@@ -119,14 +124,17 @@ export function TeacherStudentsListPage({
                       {s.courses.length} كورس · آخر دخول {formatWhen(s.lastLoginAt)}
                     </p>
                   </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-black ${
-                      s.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/10 text-rose-500"
-                    }`}
-                  >
-                  {s.isActive ? "نشط" : "موقوف"}
-                </span>
-              </div>
+                  <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <CopyStudentReport student={s} />
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-black ${
+                        s.isActive ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/10 text-rose-500"
+                      }`}
+                    >
+                      {s.isActive ? "نشط" : "موقوف"}
+                    </span>
+                  </div>
+                </div>
               </Link>
             </li>
           ))}
@@ -214,18 +222,25 @@ export function TeacherReportsPage({
                 }
                 className="block rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm"
               >
-                <p className="font-black">{s.name}</p>
-                {s.noActiveCourse ? (
-                  <p className="mt-2 text-xs font-bold text-amber-600">لا يوجد كورس مفعل</p>
-                ) : (
-                  <p className="mt-2 text-xs leading-6 text-[var(--ink-3)]">
-                    الكورس المفعل: {s.courses.map((c) => c.title).join(" · ") || "—"}
-                    <br />
-                    واجبات {s.homeworkSubmitted}/{s.homeworkTotal} · اختبارات {s.quizzesTaken}
-                    {s.quizAverage != null ? ` · متوسط ${s.quizAverage}%` : ""} · حضور {s.videosWatched}/
-                    {s.videosTotal}
-                  </p>
-                )}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-black">{s.name}</p>
+                    {s.noActiveCourse ? (
+                      <p className="mt-2 text-xs font-bold text-amber-600">لا يوجد كورس مفعل</p>
+                    ) : (
+                      <p className="mt-2 text-xs leading-6 text-[var(--ink-3)]">
+                        الكورس المفعل: {s.courses.map((c) => c.title).join(" · ") || "—"}
+                        <br />
+                        واجبات {s.homeworkSubmitted}/{s.homeworkTotal} · اختبارات {s.quizzesTaken}
+                        {s.quizAverage != null ? ` · متوسط ${s.quizAverage}%` : ""} · حضور {s.videosWatched}/
+                        {s.videosTotal}
+                      </p>
+                    )}
+                  </div>
+                  <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <CopyStudentReport student={s} />
+                  </div>
+                </div>
               </Link>
             </li>
           ))}
@@ -354,8 +369,28 @@ export function TeacherStudentReportPage({
       {report && (
         <>
           <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4">
-            <p className="text-lg font-black">{report.student.name}</p>
-            <p className="mt-1 text-sm text-[var(--ink-3)]">{report.student.email}</p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-lg font-black">{report.student.name}</p>
+                <p className="mt-1 text-sm text-[var(--ink-3)]">{report.student.email}</p>
+              </div>
+              <CopyStudentReport
+                student={{
+                  ...report.student,
+                  ...report,
+                  completedVideos: (report.attendance || []).filter((a) => a.watched).map((a) => ({
+                    id: a.videoId,
+                    title: a.title,
+                    courseTitle: a.courseTitle,
+                    folderName: a.folder,
+                    lastWatchedAt: a.lastWatchedAt,
+                  })),
+                  watchedCount: report.summary.videosWatched,
+                  totalVideos: report.summary.videosOpened,
+                  courses: report.activeCourses || report.courses,
+                }}
+              />
+            </div>
             <p className="mt-2 text-xs leading-6 text-[var(--ink-3)]">
               {report.student.educationalStage || "بدون مرحلة"} · آخر دخول {formatWhen(report.student.lastLoginAt)} ·
               ستريك {report.student.loginStreak}

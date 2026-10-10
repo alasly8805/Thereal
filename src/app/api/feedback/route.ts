@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStudentSession } from "@/lib/auth";
+import { checkCourseEnrollment } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
 
 // POST — student submits feedback
@@ -29,13 +30,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "الكورس غير موجود" }, { status: 404 });
     }
 
-    // Check student has access to this course
-    const access = await prisma.accessCode.findFirst({
-      where: { courseId, studentId: session.id },
-    });
-    if (!access) {
+    // A monthly booking opens the course without an access-code row.
+    const allowed = await checkCourseEnrollment(session.id, courseId, session.role);
+    if (!allowed) {
       return NextResponse.json(
-        { error: "يجب أن تكون مسجلاً في الكورس لتقديم ملاحظات" },
+        { error: "اشتراكك لا يشمل هذا الكورس، لذلك لا يمكن إرسال ملاحظة أو تقييم" },
         { status: 403 }
       );
     }

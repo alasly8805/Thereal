@@ -3,15 +3,15 @@ import { getSession } from "@/lib/auth";
 import { isTeacherLike, actingTeacherId, hasAssistantPermission } from "@/lib/teacher-scope";
 import { prisma } from "@/lib/prisma";
 import { ContentType, syncHomeworkContentProgress } from "@/lib/content-access-engine";
+import { resetHomeworkExamView } from "@/lib/homework-exam-view";
 
 /**
  * POST /api/homework/[id]/retry
  * Teacher/assistant toggles a second attempt on a locked submission.
  * Body: { submissionId: string, allowRetake: boolean }
  *
- * Rejecting a homework still closes the next item — that is intentional.
- * Rejected PDF uploads can be replaced without this toggle; other types
- * still need the teacher to reopen the attempt here.
+ * Rejecting a homework closes the next item and the re-upload.
+ * This toggle is the only way a teacher or assistant reopens that attempt.
  */
 export async function POST(
   req: NextRequest,
@@ -73,6 +73,9 @@ export async function POST(
       where: { id: body.submissionId },
       data: { allowRetake: body.allowRetake },
     });
+    // The student has seen the old order, often with the key. A retake gets a
+    // fresh draw and shuffle when they next open it.
+    if (body.allowRetake) await resetHomeworkExamView(updated.studentId, homeworkId, tx);
     await syncHomeworkContentProgress(
       updated.studentId,
       { type: ContentType.HOMEWORK, sourceId: homeworkId, title: hw.title },

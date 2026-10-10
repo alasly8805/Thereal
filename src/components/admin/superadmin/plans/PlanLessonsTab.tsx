@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/components/ui/Toast";
+import { admConfirm, admPrompt } from "@/components/admin/ui/kit";
 
 export function PlanLessonsTab({ planId }: { planId: string }) {
   const { success, error: toastError } = useToast();
@@ -64,11 +65,12 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
 
   const handleDeleteLesson = async (lesson: any) => {
     const hasProgress = lesson._count?.progress > 0;
-    const confirmed = confirm(
-      hasProgress
-        ? `تحذير: يوجد تقدم مسجل لطلاب في هذا الدرس. هل أنت متأكد من حذف "${lesson.title}"؟ سيتطلب ذلك كلمة مرور الحماية.`
-        : `هل أنت متأكد من حذف الدرس "${lesson.title}"؟`
-    );
+    const confirmed = await admConfirm({
+      title: `حذف الدرس "${lesson.title}"؟`,
+      text: hasProgress ? "يوجد تقدم مسجل لطلاب في هذا الدرس، وسيتطلب الحذف كلمة مرور الحماية." : undefined,
+      confirmLabel: "حذف الدرس",
+      danger: true,
+    });
     if (!confirmed) return;
 
     setDeletingId(lesson.id);
@@ -83,7 +85,7 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
         success("تم حذف الدرس بنجاح");
         fetchLessons();
       } else if (data.code === "PASSWORD_REQUIRED") {
-        const pw = prompt("أدخل كلمة مرور الحماية لحذف درس يحتوي على تقدم طلاب:");
+        const pw = await admPrompt({ title: "كلمة مرور الحماية", text: "هذا الدرس فيه تقدم طلاب. أدخل كلمة مرور الحماية لتأكيد الحذف.", inputLabel: "كلمة المرور", inputType: "password", confirmLabel: "حذف الدرس" });
         if (!pw) return;
         const res2 = await fetch(`/api/admin/superadmin/plans/${planId}/lessons/${lesson.id}`, {
           method: "DELETE",
@@ -115,7 +117,7 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
         <h3 className="font-bold text-lg text-[var(--ink)]">الدروس ({lessons.length})</h3>
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold border-none cursor-pointer transition-colors"
+          className="flex items-center gap-1.5 bg-[var(--brand)] hover:bg-[var(--brand-strong)] text-[var(--on-brand)] px-4 py-2 rounded-xl text-sm font-bold border-none cursor-pointer transition-colors"
         >
           <span className="text-lg leading-none">+</span>
           إضافة درس جديد
@@ -137,25 +139,25 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
               style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
             >
               <div className="flex gap-4 flex-1 min-w-0">
-                <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-black text-sm flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="w-8 h-8 rounded-full bg-[var(--info-soft)] text-[var(--info)] font-black text-sm flex items-center justify-center flex-shrink-0 mt-0.5">
                   {idx + 1}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-[var(--ink)] mb-1">{lesson.title}</div>
                   <div className="flex flex-wrap gap-1.5 text-xs">
                     {lesson.gatesNextLesson && (
-                      <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full font-semibold">
+                      <span className="bg-[var(--surface-2)] text-[var(--ink-2)] px-2 py-0.5 rounded-full font-semibold">
                         يقفل الدرس التالي
                       </span>
                     )}
                     {lesson.requiresQuiz && (
-                      <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-semibold">اختبار مطلوب</span>
+                      <span className="bg-[var(--warn-soft)] text-[var(--warn)] px-2 py-0.5 rounded-full font-semibold">اختبار مطلوب</span>
                     )}
                     {lesson.requiresHomework && (
-                      <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">واجب مطلوب</span>
+                      <span className="bg-[var(--info-soft)] text-[var(--info)] px-2 py-0.5 rounded-full font-semibold">واجب مطلوب</span>
                     )}
                     {lesson.hasProject && (
-                      <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">مشروع AI</span>
+                      <span className="bg-[color-mix(in_srgb,var(--violet)_12%,transparent)] text-[var(--violet)] px-2 py-0.5 rounded-full font-semibold">مشروع AI</span>
                     )}
                   </div>
                   {/* Sources preview */}
@@ -165,7 +167,7 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
                       {lesson.sources.map((s: any) => (
                         <span
                           key={s.id}
-                          className={`inline-block mr-2 px-1.5 py-0.5 rounded ${s.isDefault ? "bg-green-100 text-green-700 font-bold" : "bg-gray-100 text-gray-500"}`}
+                          className={`inline-block mr-2 px-1.5 py-0.5 rounded ${s.isDefault ? "bg-[var(--ok-soft)] text-[var(--ok)] font-bold" : "bg-[var(--surface-2)] text-[var(--ink-3)]"}`}
                         >
                           {s.video?.title || "فيديو"}{s.isDefault ? " ✓" : ""}
                         </span>
@@ -176,7 +178,7 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
                     <div className="mt-1 text-xs text-[var(--ink-3)]">
                       <span className="font-semibold">الاختبارات: </span>
                       {lesson.quizzes.map((q: any) => (
-                        <span key={q.id} className="inline-block mr-2 bg-yellow-50 text-yellow-700 px-1.5 py-0.5 rounded">
+                        <span key={q.id} className="inline-block mr-2 bg-[var(--warn-soft)] text-[var(--warn)] px-1.5 py-0.5 rounded">
                           {q.title}
                         </span>
                       ))}
@@ -188,7 +190,7 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
               <button
                 onClick={() => handleDeleteLesson(lesson)}
                 disabled={deletingId === lesson.id}
-                className="text-red-500 hover:text-red-700 bg-transparent border-none cursor-pointer font-bold text-xs px-2 py-1 rounded transition-colors disabled:opacity-50 flex-shrink-0"
+                className="text-[var(--danger)] hover:text-[var(--danger)] bg-transparent border-none cursor-pointer font-bold text-xs px-2 py-1 rounded transition-colors disabled:opacity-50 flex-shrink-0"
               >
                 {deletingId === lesson.id ? "جاري..." : "حذف"}
               </button>
@@ -205,7 +207,7 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
               <h3 className="text-base font-black text-[var(--ink)]">إضافة درس جديد</h3>
               <button
                 onClick={() => setShowAddModal(false)}
-                className="text-gray-400 hover:text-gray-600 bg-transparent border-none cursor-pointer text-xl font-bold leading-none"
+                className="text-[var(--ink-2)] hover:text-[var(--ink-2)] bg-transparent border-none cursor-pointer text-xl font-bold leading-none"
               >
                 &times;
               </button>
@@ -274,14 +276,14 @@ export function PlanLessonsTab({ planId }: { planId: string }) {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm border-none cursor-pointer disabled:opacity-50 transition-colors"
+                  className="flex-1 py-2 bg-[var(--brand)] hover:bg-[var(--brand-strong)] text-[var(--on-brand)] font-bold rounded-xl text-sm border-none cursor-pointer disabled:opacity-50 transition-colors"
                 >
                   {submitting ? "جاري الإضافة..." : "إضافة الدرس"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-[var(--ink-2)] font-bold rounded-xl text-sm border-none cursor-pointer"
+                  className="flex-1 py-2 bg-[var(--surface-2)] hover:bg-[var(--adm-hover)] text-[var(--ink-2)] font-bold rounded-xl text-sm border-none cursor-pointer"
                 >
                   إلغاء
                 </button>

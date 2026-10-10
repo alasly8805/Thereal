@@ -246,7 +246,7 @@ export function CurriculumPractice() {
             onClick={is100Mode ? startStandardMode : start100Marathon}
             className="w-full sm:w-auto min-h-11 rounded-2xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 px-5 py-2.5 text-xs sm:text-sm font-black text-white shadow-lg transition active:scale-95 cursor-pointer"
           >
-            {is100Mode ? "📚 الأسئلة الأساسية (105)" : "🔥 تحدي 100 سؤال من المنهج"}
+            {is100Mode ? `📚 كل أسئلة المنهج (${CURRICULUM_QUESTIONS.length})` : "🔥 تحدي 100 سؤال من المنهج"}
           </button>
         </div>
       </motion.section>
